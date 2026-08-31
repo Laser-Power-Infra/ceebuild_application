@@ -16,9 +16,7 @@ export async function GET(req: Request) {
     const limit = parseInt(searchParams.get('limit') || '100');
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      partyName: { not: null },
-    };
+    const where: any = {};
 
     // If itemFilter is provided, find all matching docket numbers from itemTable
     if (itemFilter) {
@@ -80,24 +78,30 @@ export async function GET(req: Request) {
     ]);
 
     // Fetch first item name for each docket in the current page
-    const docketNos = dockets.map((d) => d.docketNoQtnNo).filter(Boolean) as string[];
-    const firstItems = await prisma.itemTable.findMany({
-      where: {
-        docketNoQtnNo: { in: docketNos },
-      },
-      select: {
-        docketNoQtnNo: true,
-        itemNameParty: true,
-        ourItemName: true,
-      },
-      orderBy: { id: 'asc' },
-    });
-
     const firstItemMap: { [key: string]: string } = {};
-    for (const item of firstItems) {
-      if (item.docketNoQtnNo && !firstItemMap[item.docketNoQtnNo]) {
-        firstItemMap[item.docketNoQtnNo] = item.itemNameParty || item.ourItemName || '';
+    try {
+      const docketNos = dockets.map((d) => d.docketNoQtnNo).filter(Boolean) as string[];
+      if (docketNos.length > 0) {
+        const firstItems = await prisma.itemTable.findMany({
+          where: {
+            docketNoQtnNo: { in: docketNos },
+          },
+          select: {
+            docketNoQtnNo: true,
+            itemNameParty: true,
+            ourItemName: true,
+          },
+          orderBy: { id: 'asc' },
+        });
+
+        for (const item of firstItems) {
+          if (item.docketNoQtnNo && !firstItemMap[item.docketNoQtnNo]) {
+            firstItemMap[item.docketNoQtnNo] = item.itemNameParty || item.ourItemName || '';
+          }
+        }
       }
+    } catch (itemErr) {
+      console.error('Error fetching first items for dockets:', itemErr);
     }
 
     const docketsWithFirstItem = dockets.map((d) => ({
@@ -105,18 +109,23 @@ export async function GET(req: Request) {
       firstItemName: d.docketNoQtnNo ? firstItemMap[d.docketNoQtnNo] || '' : '',
     }));
 
-    const states = await prisma.dockerPartyName.findMany({
-      where: { partyName: { not: null } },
-      select: { state: true },
-      distinct: ['state'],
-    });
+    let stateOptionsList: string[] = [];
+    try {
+      const states = await prisma.dockerPartyName.findMany({
+        select: { state: true },
+        distinct: ['state'],
+      });
+      stateOptionsList = states.map((s) => s.state).filter(Boolean) as string[];
+    } catch (stateErr) {
+      console.error('Error fetching distinct states:', stateErr);
+    }
 
     return NextResponse.json({
       dockets: docketsWithFirstItem,
       totalCount,
       page,
-      totalPages: Math.ceil(totalCount / limit),
-      states: states.map((s) => s.state).filter(Boolean),
+      totalPages: Math.ceil(totalCount / limit) || 1,
+      states: stateOptionsList,
     });
   } catch (error) {
     console.error('Error fetching dockets:', error);
