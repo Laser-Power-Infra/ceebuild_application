@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ItemTable {
+  id             Int      @id @default(autoincrement())
+  uniqueNo       String?  @map("unique_no")
+  docketNoQtnNo  String?  @map("docket_no_qtn_no")
+  itemNameParty  String?  @map("item_name_party")
+  uom            String?
+  qty            String?
+  ourItemNot     String?  @map("our_item_not")
+  typeOfItem     String?  @map("type_of_item")
+  ourItemName    String?  @map("our_item_name")
+  size           String?
+  lengthInMtr    String?  @map("length_in_mtr")
+  weightPerPiece String?  @map("weight_per_piece")
+  price          String?
+  uomOfQtn       String?  @map("uom_of_qtn")
+  a              String?
+  freightPerKg   String?  @map("freight_per_kg")
+  status         String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("iteam-table")
+}
+
+model DockerPartyName {
+  id               Int      @id @default(autoincrement())
+  docketNoQtnNo    String?  @map("docket_no_qtn_no")
+  partyName        String?  @map("party_name")
+  address          String?
+  state            String?
+  utility          String?
+  deliveryLocation String?  @map("delivery_location")
+  price            String?
+  payment          String?
+  delivery         String?
+  warranty         String?
+  approval         String?
+  inspection       String?
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("docket-party-name")
+}
+
+model TreamAndConditions {
+  id         Int      @id @default(autoincrement())
+  price      String?
+  payment    String?
+  delivery   String?
+  warranty   String?
+  approval   String?
+  inspection String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("tream-and-conditions")
+}
+
+model EditLog {
+  id        Int      @id @default(autoincrement())
+  tableName String   @map("table_name")
+  recordId  Int      @map("record_id")
+  fieldName String   @map("field_name")
+  oldValue  String?  @map("old_value")
+  newValue  String?  @map("new_value")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("edit-logs")
+}
+
+model MasterValue {
+  id        Int      @id @default(autoincrement())
+  type      String   // e.g. 'PARTY_NAME', 'STATE', 'UTILITY', 'ADDRESS', 'STATUS'
+  value     String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("master-values")
+}
