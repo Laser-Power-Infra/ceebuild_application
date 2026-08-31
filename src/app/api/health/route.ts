@@ -1,8 +1,8 @@
-import { NextResponse } from 'next/server';
-
 export async function GET() {
-  return NextResponse.json({
-    status: 'okay',
-    timestamp: new Date().toISOString(),
-  });
+  return Response.json(
+    { status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() },
+    {
+      headers: { 'Access-Control-Allow-Origin': '*' },
+    }
+  );
 }
