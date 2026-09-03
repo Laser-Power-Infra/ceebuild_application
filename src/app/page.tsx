@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { autoDetectOurItemNot } from '@/lib/classifier';
 import {
   Search,
   Filter,
@@ -35,6 +36,10 @@ import {
   ToggleLeft,
   ToggleRight,
   PlusCircle,
+  Sparkles,
+  Wand2,
+  Brain,
+  HelpCircle,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -326,7 +331,138 @@ export default function Dashboard() {
 
   const showToast = (msg: string) => {
     setNotification(msg);
-    setTimeout(() => setNotification(null), 3500);
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  // AI Autofill state
+  const [aiProcessing, setAiProcessing] = useState<boolean>(false);
+  const [aiProgressText, setAiProgressText] = useState<string>('');
+
+  // AI Reasoning Explanation Modal state
+  const [reasoningModalOpen, setReasoningModalOpen] = useState<boolean>(false);
+  const [reasoningItemText, setReasoningItemText] = useState<string>('');
+  const [reasoningCategory, setReasoningCategory] = useState<string>('');
+  const [reasoningType, setReasoningType] = useState<string>('');
+  const [reasoningContent, setReasoningContent] = useState<string>('');
+  const [reasoningUserNote, setReasoningUserNote] = useState<string>('');
+  const [reasoningLoading, setReasoningLoading] = useState<boolean>(false);
+  const [savingKnowledge, setSavingKnowledge] = useState<boolean>(false);
+
+  const openReasoningModal = async (itemNameParty: string | null, typeOfItem: string | null, selectedCategory: string | null) => {
+    if (!itemNameParty || !selectedCategory) return;
+    setReasoningItemText(itemNameParty);
+    setReasoningCategory(selectedCategory);
+    setReasoningType(typeOfItem || 'N/A');
+    setReasoningContent('');
+    setReasoningUserNote('');
+    setReasoningLoading(true);
+    setReasoningModalOpen(true);
+
+    try {
+      const res = await fetch('/api/ai/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemNameParty,
+          typeOfItem: typeOfItem || '',
+          selectedCategory,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.reasoning) {
+        setReasoningContent(data.reasoning);
+        setReasoningUserNote(data.reasoning);
+      } else {
+        setReasoningContent(data.error || 'Categorized strictly based on raw item text specifications.');
+        setReasoningUserNote(data.error || 'Categorized strictly based on raw item text specifications.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setReasoningContent('Factual categorization based on raw item text specifications.');
+      setReasoningUserNote('Factual categorization based on raw item text specifications.');
+    } finally {
+      setReasoningLoading(false);
+    }
+  };
+
+  // Save manual correction to PostgreSQL AI Knowledge Base
+  const handleSaveAiKnowledge = async () => {
+    setSavingKnowledge(true);
+    try {
+      const res = await fetch('/api/ai/explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          saveToKnowledge: true,
+          itemNameParty: reasoningItemText,
+          typeOfItem: reasoningType,
+          selectedCategory: reasoningCategory,
+          userReason: reasoningUserNote || reasoningContent,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        showToast('🎓 Saved to AI Knowledge Base! AI will use this rule for future categorizations.');
+        setReasoningModalOpen(false);
+      } else {
+        showToast(`Error: ${data.error || 'Failed to save rule'}`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToast('Error: Failed to save knowledge rule');
+    } finally {
+      setSavingKnowledge(false);
+    }
+  };
+
+  // Handle Groq AI Categorization ("Autofill by AI")
+  const handleAiAutofill = async (targetDocketNo?: string) => {
+    setAiProcessing(true);
+    setAiProgressText(
+      targetDocketNo
+        ? `AI Analyzing Manufacturing/Trading items for Docket ${targetDocketNo}...`
+        : 'AI Analyzing & Categorizing Manufacturing/Trading items...'
+    );
+
+    try {
+      const res = await fetch('/api/ai/categorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          docketNoQtnNo: targetDocketNo || null,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'AI categorization failed');
+      }
+
+      if (data.updatedCount === 0) {
+        showToast('AI Check Complete: No unclassified Manufacturing/Trading items found.');
+      } else {
+        showToast(`✨ AI Autofill Complete! Categorized ${data.updatedCount} items.`);
+        // Refresh items table & docket map
+        await fetchItems();
+        await fetchDockets();
+        if (targetDocketNo) {
+          fetchItemsForDocket(targetDocketNo, true);
+        } else {
+          // Force refresh all currently cached expanded dockets so item count is never 0
+          Object.keys(docketItemsMap).forEach((dNo) => {
+            fetchItemsForDocket(dNo, true);
+          });
+        }
+      }
+    } catch (err: any) {
+      console.error('AI Error:', err);
+      showToast(`AI Error: ${err.message || 'Failed to complete AI categorization'}`);
+    } finally {
+      setAiProcessing(false);
+      setAiProgressText('');
+    }
   };
 
   // Login authentication handler
@@ -548,8 +684,8 @@ export default function Dashboard() {
   };
 
   // Fetch Items belonging to a specific docket number for sub-table accordion
-  const fetchItemsForDocket = async (docketNo: string) => {
-    if (!docketNo || docketItemsMap[docketNo]) return;
+  const fetchItemsForDocket = async (docketNo: string, forceRefresh: boolean = false) => {
+    if (!docketNo || (!forceRefresh && docketItemsMap[docketNo] && docketItemsMap[docketNo].length > 0)) return;
     setLoadingDocketItems((prev) => ({ ...prev, [docketNo]: true }));
     try {
       const res = await fetch(`/api/items?docketNoQtnNo=${encodeURIComponent(docketNo.trim())}&limit=200`);
@@ -705,6 +841,74 @@ export default function Dashboard() {
     }
   };
 
+  // Delete Docket & all associated items (Admin only)
+  const handleDeleteDocket = async (id: number, docketNo: string | null) => {
+    if (currentUser.role !== 'Admin') {
+      showToast('Error: Only Admin users can delete dockets.');
+      return;
+    }
+
+    const confirmMsg = `Are you sure you want to permanently delete Docket ${docketNo || '#' + id} and ALL of its associated items? This action cannot be undone.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      const res = await fetch(`/api/dockets?id=${id}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        setDockets((prev) => prev.filter((doc) => doc.id !== id));
+        setDocketTotalCount((prev) => Math.max(0, prev - 1));
+        if (docketNo) {
+          setDocketItemsMap((prev) => {
+            const copy = { ...prev };
+            delete copy[docketNo];
+            return copy;
+          });
+        }
+        showToast(`Docket ${docketNo || '#' + id} and all associated items permanently deleted.`);
+        fetchItems(); // Refresh items table
+        if (activeTab === 'logs') fetchLogs();
+      } else {
+        const data = await res.json();
+        showToast(`Error: ${data.error || 'Failed to delete docket'}`);
+      }
+    } catch (err) {
+      console.error('Error deleting docket:', err);
+      showToast('Error: Failed to delete docket');
+    }
+  };
+
+  // Delete single Item from DB
+  const handleDeleteItem = async (id: number, docketNo?: string | null) => {
+    if (!window.confirm(`Are you sure you want to delete Item #${id}? This action cannot be undone.`)) return;
+
+    try {
+      const res = await fetch(`/api/items?id=${id}`, {
+        method: 'DELETE',
+      });
+
+      if (res.ok) {
+        setItems((prev) => prev.filter((item) => item.id !== id));
+        setItemTotalCount((prev) => Math.max(0, prev - 1));
+        if (docketNo) {
+          setDocketItemsMap((prev) => ({
+            ...prev,
+            [docketNo]: (prev[docketNo] || []).filter((item) => item.id !== id),
+          }));
+        }
+        showToast(`Item #${id} permanently deleted.`);
+        if (activeTab === 'logs') fetchLogs();
+      } else {
+        const data = await res.json();
+        showToast(`Error: ${data.error || 'Failed to delete item'}`);
+      }
+    } catch (err) {
+      console.error('Error deleting item:', err);
+      showToast('Error: Failed to delete item');
+    }
+  };
+
   // General field updater for Terms
   const handleTermFieldUpdate = async (id: number, field: keyof TermCondition, value: string) => {
     const currentTerm = terms.find((t) => t.id === id);
@@ -815,14 +1019,23 @@ export default function Dashboard() {
 
     parsedItems.forEach((parsed, idx) => {
       const targetIndex = rowIndex + idx;
+      const rawName = parsed.itemNameParty || '';
+      const autoNot = rawName ? autoDetectOurItemNot(rawName) || 'MANUFACTURING' : 'MANUFACTURING';
+
+      const itemObj = {
+        itemNameParty: rawName,
+        uom: parsed.uom || '',
+        qty: parsed.qty || '',
+        ourItemNot: autoNot,
+      };
+
       if (targetIndex < newRows.length) {
         newRows[targetIndex] = {
-          itemNameParty: parsed.itemNameParty || newRows[targetIndex].itemNameParty,
-          uom: parsed.uom || newRows[targetIndex].uom,
-          qty: parsed.qty || newRows[targetIndex].qty,
+          ...newRows[targetIndex],
+          ...itemObj,
         };
       } else {
-        newRows.push(parsed);
+        newRows.push(itemObj);
       }
     });
 
@@ -918,12 +1131,7 @@ export default function Dashboard() {
         });
         fetchItems();
         if (targetDocketNo) {
-          setDocketItemsMap((prev) => {
-            const next = { ...prev };
-            delete next[targetDocketNo];
-            return next;
-          });
-          fetchItemsForDocket(targetDocketNo);
+          fetchItemsForDocket(targetDocketNo, true);
         }
         showToast(`Created Item #${created.id} under Docket ${targetDocketNo || 'N/A'}!`);
       }
@@ -1062,6 +1270,143 @@ export default function Dashboard() {
         <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center space-x-3 text-sm font-semibold animate-bounce">
           <CheckCircle className="w-5 h-5 text-emerald-200" />
           <span>{notification}</span>
+        </div>
+      )}
+
+      {/* AI Processing Overlay Modal & Animation */}
+      {aiProcessing && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-blue-100 text-center space-y-4 animate-in zoom-in-95 duration-200">
+            <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
+              <div className="absolute inset-0 rounded-full border-4 border-blue-200 animate-ping opacity-40"></div>
+              <div className="absolute inset-0 rounded-full border-4 border-blue-600 border-t-transparent animate-spin"></div>
+              <div className="bg-blue-600 text-white p-3.5 rounded-2xl shadow-lg">
+                <Sparkles className="w-8 h-8 animate-pulse" />
+              </div>
+            </div>
+            <div>
+              <h3 className="text-lg font-extrabold text-slate-900 flex items-center justify-center gap-2">
+                <span>AI Categorization Active</span>
+                <span className="text-xs bg-blue-100 text-blue-800 font-extrabold px-2 py-0.5 rounded-full">Groq AI</span>
+              </h3>
+              <p className="text-xs text-slate-600 font-semibold mt-1">
+                {aiProgressText || 'Analyzing raw item descriptions into standard categories...'}
+              </p>
+            </div>
+            <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+              <div className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 h-full w-full animate-pulse"></div>
+            </div>
+            <p className="text-[11px] text-slate-400 font-medium">
+              Processing MANUFACTURING & TRADING items with blank predictions
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* AI REASONING EXPLANATION MODAL */}
+      {reasoningModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl border border-blue-200 shadow-2xl max-w-lg w-full p-6 space-y-5 relative">
+            <button
+              onClick={() => setReasoningModalOpen(false)}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-slate-100 transition-all"
+              title="Close / Skip"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3 border-b border-slate-100 pb-3">
+              <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2.5 rounded-2xl text-white shadow-md">
+                <Brain className="w-6 h-6 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">
+                  AI Categorization Reasoning
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  Factual Context Explanation (No Speculation)
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2 text-xs">
+              <div>
+                <span className="font-extrabold text-slate-700 uppercase tracking-wider text-[10px]">
+                  Raw Item Description:
+                </span>
+                <p className="font-semibold text-slate-900 mt-0.5">{reasoningItemText}</p>
+              </div>
+              <div className="flex items-center space-x-4 pt-1">
+                <div>
+                  <span className="font-bold text-slate-500 text-[10px]">TYPE OF ITEM:</span>
+                  <span className="ml-1 font-extrabold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200">
+                    {reasoningType}
+                  </span>
+                </div>
+                <div>
+                  <span className="font-bold text-slate-500 text-[10px]">ASSIGNED CATEGORY:</span>
+                  <span className="ml-1 font-extrabold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                    {reasoningCategory}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-4 space-y-2">
+              <div className="flex items-center justify-between text-blue-900 font-extrabold text-xs">
+                <div className="flex items-center space-x-1.5">
+                  <Sparkles className="w-4 h-4 text-blue-600" />
+                  <span>AI Auto-Suggested Reason & User Notes:</span>
+                </div>
+                <span className="text-[10px] text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full font-bold">
+                  Teach AI Knowledge
+                </span>
+              </div>
+
+              {reasoningLoading ? (
+                <div className="flex items-center space-x-3 py-3 text-slate-600 text-xs font-semibold">
+                  <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Generating factual reasoning strictly from item text...</span>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <textarea
+                    rows={3}
+                    value={reasoningUserNote}
+                    onChange={(e) => setReasoningUserNote(e.target.value)}
+                    placeholder="Enter or edit why this item belongs to this category to teach AI..."
+                    className="w-full text-xs font-semibold text-slate-800 bg-white p-3 rounded-xl border border-blue-200 focus:outline-none focus:ring-2 focus:ring-blue-500/20 shadow-2xs leading-relaxed"
+                  />
+                  <p className="text-[10px] text-slate-500 italic">
+                    💡 You can edit or add notes above. Saving will teach AI to correctly categorize similar items on future rescans.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 pt-2">
+              <button
+                onClick={() => setReasoningModalOpen(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all"
+              >
+                Skip / Close
+              </button>
+              <button
+                onClick={handleSaveAiKnowledge}
+                disabled={savingKnowledge || reasoningLoading}
+                className="flex items-center space-x-1.5 px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all shadow-md"
+              >
+                {savingKnowledge ? (
+                  <span>Saving Rule...</span>
+                ) : (
+                  <>
+                    <Brain className="w-3.5 h-3.5 text-yellow-300" />
+                    <span>Save & Teach AI</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1325,8 +1670,17 @@ export default function Dashboard() {
         {activeTab === 'items' && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
-              <div>
+              <div className="flex items-center space-x-3">
                 <h2 className="text-sm font-bold text-slate-900">iteam-table Records</h2>
+                <button
+                  onClick={() => handleAiAutofill()}
+                  disabled={aiProcessing}
+                  className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-xs px-3.5 py-1.5 rounded-xl shadow-md transition-all animate-in fade-in"
+                  title="Automatically categorize MANUFACTURING/TRADING items using Groq AI"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                  <span>Autofill by AI</span>
+                </button>
               </div>
 
               {/* Pagination Controls */}
@@ -1393,6 +1747,7 @@ export default function Dashboard() {
                     <th className="p-3 whitespace-nowrap min-w-[140px]">Weight Per Pc</th>
                     <th className="p-3 whitespace-nowrap min-w-[120px]">Price</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[160px]">Status</th>
+                    <th className="p-3 whitespace-nowrap text-center min-w-[80px]">Action</th>
                   </tr>
 
                   {/* Filter Header Row */}
@@ -1455,7 +1810,7 @@ export default function Dashboard() {
                         }}
                         className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                       >
-                        <option value="">All</option>
+                        <option value="">All Statuses</option>
                         {masterSuggestions.STATUS.map((st) => (
                           <option key={st} value={st}>
                             {st}
@@ -1463,25 +1818,26 @@ export default function Dashboard() {
                         ))}
                       </select>
                     </td>
+                    <td className="p-2 min-w-[80px]"></td>
                   </tr>
                 </thead>
 
-                <tbody className="divide-y divide-slate-100 font-medium">
+                <tbody className="divide-y divide-slate-200">
                   {itemsLoading ? (
                     <tr>
-                      <td colSpan={12} className="p-10 text-center text-slate-400 font-semibold">
-                        Loading item table records...
+                      <td colSpan={13} className="p-8 text-center text-slate-500 font-medium">
+                        Loading items...
                       </td>
                     </tr>
                   ) : items.length === 0 ? (
                     <tr>
-                      <td colSpan={12} className="p-10 text-center text-slate-400 font-semibold">
-                        No item records found matching filters.
+                      <td colSpan={13} className="p-8 text-center text-slate-500 font-medium">
+                        No items found matching your filters.
                       </td>
                     </tr>
                   ) : (
                     items.map((item) => (
-                      <tr key={item.id} className="group hover:bg-slate-50/90 transition-colors align-top min-h-[44px]">
+                      <tr key={item.id} className="hover:bg-slate-50 transition-colors align-top min-h-[44px]">
                         {/* Sticky Body Cell 1: ID */}
                         <td className="p-3 text-slate-500 font-mono text-xs font-bold w-[80px] min-w-[80px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
                           #{item.id}
@@ -1548,19 +1904,36 @@ export default function Dashboard() {
                           />
                         </td>
 
-                        <td className="p-3 bg-blue-50/20 min-w-[220px]">
-                          <select
-                            value={item.ourItemName || ''}
-                            onChange={(e) => handleItemFieldUpdate(item.id, 'ourItemName', e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-extrabold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                          >
-                            <option value="">Select Item Name</option>
-                            {ourItemNameOptions.map((opt) => (
-                              <option key={opt} value={opt}>
-                                {opt}
-                              </option>
-                            ))}
-                          </select>
+                        <td className="p-3 bg-blue-50/20 min-w-[240px]">
+                          <div className="flex items-center space-x-1.5">
+                            <select
+                              value={item.ourItemName || ''}
+                              onChange={(e) => {
+                                handleItemFieldUpdate(item.id, 'ourItemName', e.target.value);
+                                if (e.target.value === 'OTHERS') {
+                                  openReasoningModal(item.itemNameParty, item.typeOfItem, e.target.value);
+                                }
+                              }}
+                              className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-extrabold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                            >
+                              <option value="">Select Item Name</option>
+                              {ourItemNameOptions.map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+
+                            {item.ourItemName && (
+                              <button
+                                onClick={() => openReasoningModal(item.itemNameParty, item.typeOfItem, item.ourItemName)}
+                                className="p-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg transition-all border border-blue-200 shrink-0"
+                                title="View AI Factual Reasoning & Explanation for this Category"
+                              >
+                                <Brain className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </td>
 
                         <td className="p-3 min-w-[140px]">
@@ -1605,6 +1978,16 @@ export default function Dashboard() {
                               </option>
                             ))}
                           </select>
+                        </td>
+
+                        <td className="p-3 text-center min-w-[80px]">
+                          <button
+                            onClick={() => handleDeleteItem(item.id, item.docketNoQtnNo)}
+                            className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white rounded-lg border border-rose-200 hover:border-rose-600 transition-all shadow-xs"
+                            title="Delete this Item"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </td>
                       </tr>
                     ))
@@ -1723,12 +2106,12 @@ export default function Dashboard() {
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-30 border-b border-slate-200 text-[11px] uppercase tracking-wider">
                   <tr>
-                    {/* STICKY COLUMN 1: ACTION PDF (width 140px) */}
-                    <th className="p-3 whitespace-nowrap bg-blue-600 text-white font-extrabold text-center w-[140px] min-w-[140px] sticky left-0 z-40 shadow-xs">
-                      ACTION PDF
+                    {/* STICKY COLUMN 1: ACTIONS PDF/AI/DELETE (width 230px) */}
+                    <th className="p-3 whitespace-nowrap bg-blue-600 text-white font-extrabold text-center w-[230px] min-w-[230px] sticky left-0 z-40 shadow-xs">
+                      ACTIONS (PDF / AI / DEL)
                     </th>
-                    {/* STICKY COLUMN 2: ID (width 80px, offset left 140px) */}
-                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[140px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    {/* STICKY COLUMN 2: ID (width 70px, offset left 230px) */}
+                    <th className="p-3 whitespace-nowrap w-[70px] min-w-[70px] sticky left-[230px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
                       ID
                     </th>
 
@@ -1750,10 +2133,10 @@ export default function Dashboard() {
 
                   {/* Filter Header Row */}
                   <tr className="bg-slate-50 border-t border-slate-200">
-                    <td className="p-2 w-[140px] min-w-[140px] text-center text-[10px] font-bold text-slate-400 sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      PDF Action
+                    <td className="p-2 w-[230px] min-w-[230px] text-center text-[10px] font-bold text-slate-400 sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
+                      PDF / AI / Delete Actions
                     </td>
-                    <td className="p-2 w-[80px] min-w-[80px] text-center text-[10px] font-bold text-slate-400 sticky left-[140px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    <td className="p-2 w-[70px] min-w-[70px] text-center text-[10px] font-bold text-slate-400 sticky left-[230px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
                       ID
                     </td>
 
@@ -1853,21 +2236,44 @@ export default function Dashboard() {
                       return (
                         <React.Fragment key={doc.id}>
                           <tr className="group hover:bg-slate-50/90 transition-colors align-top min-h-[44px]">
-                            {/* STICKY BODY CELL 1: GENERATE PDF ACTION BUTTON */}
-                            <td className="p-3 text-center w-[140px] min-w-[140px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
-                              <Link
-                                href={`/quotation/${doc.id}`}
-                                target="_blank"
-                                className="inline-flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] px-3 py-1.5 rounded-xl transition-all shadow-xs"
-                              >
-                                <FileText className="w-3.5 h-3.5" />
-                                <span>Generate PDF</span>
-                                <ExternalLink className="w-3 h-3 opacity-70" />
-                              </Link>
+                            {/* STICKY BODY CELL 1: GENERATE PDF, AI AUTOFILL & ADMIN DELETE BUTTONS */}
+                            <td className="p-2 text-center w-[230px] min-w-[230px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
+                              <div className="flex items-center justify-center space-x-1">
+                                <Link
+                                  href={`/quotation/${doc.id}`}
+                                  target="_blank"
+                                  className="inline-flex items-center space-x-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] px-2 py-1 rounded-xl transition-all shadow-xs"
+                                  title="Generate PDF Quotation"
+                                >
+                                  <FileText className="w-3 h-3" />
+                                  <span>PDF</span>
+                                  <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                                </Link>
+
+                                <button
+                                  onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
+                                  disabled={aiProcessing}
+                                  className="inline-flex items-center space-x-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-[11px] px-2 py-1 rounded-xl shadow-xs transition-all"
+                                  title="Autofill unclassified items for this docket using Groq AI"
+                                >
+                                  <Sparkles className="w-3 h-3 text-yellow-300 animate-pulse" />
+                                  <span>AI</span>
+                                </button>
+
+                                {currentUser.role === 'Admin' && (
+                                  <button
+                                    onClick={() => handleDeleteDocket(doc.id, doc.docketNoQtnNo)}
+                                    className="inline-flex items-center justify-center p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 hover:border-rose-600 rounded-xl transition-all shadow-xs"
+                                    title="Delete Docket & All Associated Items (Admin Only)"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
                             </td>
 
                             {/* STICKY BODY CELL 2: ID */}
-                            <td className="p-3 text-slate-500 font-mono text-xs font-bold w-[80px] min-w-[80px] sticky left-[140px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
+                            <td className="p-3 text-slate-500 font-mono text-xs font-bold w-[70px] min-w-[70px] sticky left-[230px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
                               #{doc.id}
                             </td>
 
@@ -2065,20 +2471,44 @@ export default function Dashboard() {
                                       </span>
                                     </div>
 
-                                    {/* Add Item to Docket Button */}
-                                    <button
-                                      onClick={() => {
-                                        setNewItemForm((prev) => ({
-                                          ...prev,
-                                          docketNoQtnNo: doc.docketNoQtnNo || '',
-                                        }));
-                                        setShowAddItemModal(true);
-                                      }}
-                                      className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
-                                    >
-                                      <Plus className="w-4 h-4" />
-                                      <span>Create Item inside Docket</span>
-                                    </button>
+                                    <div className="flex items-center space-x-2">
+                                      <button
+                                        onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
+                                        disabled={aiProcessing}
+                                        className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
+                                        title="Autofill items for this docket using Groq AI"
+                                      >
+                                        <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                                        <span>Autofill by AI</span>
+                                      </button>
+
+                                      {/* Add Item to Docket Button */}
+                                      <button
+                                        onClick={() => {
+                                          setNewItemForm((prev) => ({
+                                            ...prev,
+                                            docketNoQtnNo: doc.docketNoQtnNo || '',
+                                          }));
+                                          setShowAddItemModal(true);
+                                        }}
+                                        className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
+                                      >
+                                        <Plus className="w-4 h-4" />
+                                        <span>Create Item inside Docket</span>
+                                      </button>
+
+                                      {/* Delete Docket Button (Admin Only) */}
+                                      {currentUser.role === 'Admin' && (
+                                        <button
+                                          onClick={() => handleDeleteDocket(doc.id, doc.docketNoQtnNo)}
+                                          className="flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
+                                          title="Delete Docket & All Associated Items"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                          <span>Delete Docket</span>
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
 
                                   {/* Sub-table items list */}
@@ -2167,21 +2597,37 @@ export default function Dashboard() {
                                                   <option value="TRADING">TRADING</option>
                                                 </select>
                                               </td>
-                                              <td className="p-2.5 font-bold text-blue-700">
-                                                <select
-                                                  value={subItem.ourItemName || ''}
-                                                  onChange={(e) =>
-                                                    handleItemFieldUpdate(subItem.id, 'ourItemName', e.target.value, doc.docketNoQtnNo)
-                                                  }
-                                                  className="w-full p-1 border border-slate-200 rounded text-xs font-extrabold text-blue-700"
-                                                >
-                                                  <option value="">Select Item Name</option>
-                                                  {ourItemNameOptions.map((opt) => (
-                                                    <option key={opt} value={opt}>
-                                                      {opt}
-                                                    </option>
-                                                  ))}
-                                                </select>
+                                              <td className="p-2.5 font-bold text-blue-700 min-w-[200px]">
+                                                 <div className="flex items-center space-x-1.5">
+                                                   <select
+                                                     value={subItem.ourItemName || ''}
+                                                     onChange={(e) => {
+                                                       handleItemFieldUpdate(subItem.id, 'ourItemName', e.target.value, doc.docketNoQtnNo);
+                                                       if (e.target.value === 'OTHERS') {
+                                                         openReasoningModal(subItem.itemNameParty, subItem.typeOfItem, e.target.value);
+                                                       }
+                                                     }}
+                                                     className="w-full p-1 border border-slate-200 rounded text-xs font-extrabold text-blue-700"
+                                                   >
+                                                     <option value="">Select Item Name</option>
+                                                     <option value="OTHERS">OTHERS</option>
+                                                     {ourItemNameOptions.map((opt) => (
+                                                       <option key={opt} value={opt}>
+                                                         {opt}
+                                                       </option>
+                                                     ))}
+                                                   </select>
+
+                                                   {subItem.ourItemName && (
+                                                     <button
+                                                       onClick={() => openReasoningModal(subItem.itemNameParty, subItem.typeOfItem, subItem.ourItemName)}
+                                                       className="p-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded border border-blue-200 shrink-0"
+                                                       title="View AI Factual Reasoning & Explanation for this Category"
+                                                     >
+                                                       <Brain className="w-3.5 h-3.5" />
+                                                     </button>
+                                                   )}
+                                                 </div>
                                               </td>
                                               <td className="p-2.5">
                                                 <AutoResizeTextarea

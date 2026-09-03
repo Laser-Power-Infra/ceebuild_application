@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { autoDetectOurItemNotAsync } from '@/lib/classifier';
 
 export async function GET(req: Request) {
   try {
@@ -199,16 +200,26 @@ export async function POST(req: Request) {
         (it) => it && it.itemNameParty && it.itemNameParty.trim() !== ''
       );
       if (validItems.length > 0) {
+        const preparedItems = await Promise.all(
+          validItems.map(async (it) => {
+            const rawName = it.itemNameParty.trim();
+            const autoNot =
+              it.ourItemNot && it.ourItemNot.trim()
+                ? it.ourItemNot.trim()
+                : await autoDetectOurItemNotAsync(rawName);
+            return {
+              docketNoQtnNo: finalDocketNo,
+              itemNameParty: rawName,
+              uom: it.uom ? it.uom.trim() : null,
+              qty: it.qty ? it.qty.trim() : null,
+              ourItemNot: autoNot,
+              ourItemName: it.ourItemName || null,
+              status: it.status || 'Quoted',
+            };
+          })
+        );
         await prisma.itemTable.createMany({
-          data: validItems.map((it) => ({
-            docketNoQtnNo: finalDocketNo,
-            itemNameParty: it.itemNameParty.trim(),
-            uom: it.uom ? it.uom.trim() : null,
-            qty: it.qty ? it.qty.trim() : null,
-            ourItemNot: it.ourItemNot || null,
-            ourItemName: it.ourItemName || null,
-            status: it.status || 'Quoted',
-          })),
+          data: preparedItems,
         });
         createdItemsCount = validItems.length;
       }

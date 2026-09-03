@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, use, useRef } from 'react';
-import { Printer, ArrowLeft, Download, FileText, CheckCircle } from 'lucide-react';
+import { Printer, ArrowLeft, Download, FileText, CheckCircle, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 
 interface Docket {
@@ -53,6 +53,45 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
     }
     fetchData();
   }, [id]);
+
+  const [aiCategorizing, setAiCategorizing] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  const handleAiCategorize = async () => {
+    if (!docket) return;
+    setAiCategorizing(true);
+    try {
+      const res = await fetch('/api/ai/categorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          docketNoQtnNo: docket.docketNoQtnNo,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'AI categorization failed');
+
+      if (data.updatedCount === 0) {
+        showToast('AI Check Complete: No unclassified Manufacturing/Trading items found.');
+      } else {
+        showToast(`✨ AI Categorization Complete! Updated ${data.updatedCount} items.`);
+        // Refetch updated items for this quotation
+        const refreshedRes = await fetch(`/api/quotation/${id}`);
+        const refreshedData = await refreshedRes.json();
+        if (refreshedData.items) setItems(refreshedData.items);
+      }
+    } catch (err: any) {
+      console.error('AI Error:', err);
+      showToast(`AI Error: ${err.message || 'Categorization failed'}`);
+    } finally {
+      setAiCategorizing(false);
+    }
+  };
 
   // Download PDF function using html2pdf.js dynamically loaded
   const handleDownloadPDF = async () => {
@@ -179,6 +218,14 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
         }
       `}</style>
 
+      {/* Toast Notification */}
+      {notification && (
+        <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center space-x-3 text-sm font-semibold animate-bounce print:hidden">
+          <CheckCircle className="w-5 h-5 text-emerald-200" />
+          <span>{notification}</span>
+        </div>
+      )}
+
       {/* Top Action Bar (Hidden on Print) */}
       <div className="w-full max-w-4xl mb-6 flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-2xl border border-slate-300 shadow-md print:hidden">
         <Link
@@ -190,6 +237,25 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
         </Link>
 
         <div className="flex items-center space-x-3">
+          <button
+            onClick={handleAiCategorize}
+            disabled={aiCategorizing}
+            className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-sm px-4 py-2.5 rounded-xl shadow-md transition-all"
+            title="Autofill unclassified Manufacturing & Trading items using Groq AI"
+          >
+            {aiCategorizing ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                <span>AI Categorizing...</span>
+              </>
+            ) : (
+              <>
+                <Sparkles className="w-4 h-4 text-yellow-300 animate-pulse" />
+                <span>Autofill by AI</span>
+              </>
+            )}
+          </button>
+
           <button
             onClick={() => window.print()}
             className="flex items-center space-x-2 bg-slate-800 hover:bg-slate-900 text-white font-bold text-sm px-4 py-2.5 rounded-xl shadow-md transition-all"

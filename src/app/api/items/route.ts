@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { autoDetectOurItemNot, autoDetectOurItemNotAsync, extractKeyPhrases } from '@/lib/classifier';
 
 export async function GET(req: Request) {
   try {
@@ -123,13 +124,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Item Name is required' }, { status: 400 });
     }
 
+    // Auto-detect OUR ITEM/NOT if blank
+    const finalOurItemNot = (ourItemNot && ourItemNot.trim()) ? ourItemNot.trim() : await autoDetectOurItemNotAsync(itemNameParty);
+
     const created = await prisma.itemTable.create({
       data: {
         docketNoQtnNo: docketNoQtnNo ? docketNoQtnNo.trim() : null,
         itemNameParty: itemNameParty.trim(),
         uom: uom ? uom.trim() : null,
         qty: qty ? qty.trim() : null,
-        ourItemNot: ourItemNot || null,
+        ourItemNot: finalOurItemNot,
         typeOfItem: typeOfItem ? typeOfItem.trim() : null,
         ourItemName: ourItemName || null,
         size: size ? size.trim() : null,
@@ -184,6 +188,41 @@ export async function PUT(req: Request) {
             newValue: newVal,
           },
         });
+
+        // If user manually updated ourItemNot, extract candidate phrases, save rule to master-values, and update all matching items!
+        if (key === 'ourItemNot' && newVal && existing.itemNameParty) {
+          const newCat = newVal.toUpperCase();
+          const phrases = extractKeyPhrases(existing.itemNameParty);
+          const topPhrase = phrases[0] || '';
+
+          if (topPhrase) {
+            await prisma.masterValue.create({
+              data: {
+                type: 'KEYWORD_CLASSIFICATION_RULE',
+                value: JSON.stringify({
+                  keyword: topPhrase,
+                  category: newCat,
+                  sourceItem: existing.itemNameParty,
+                }),
+                isActive: true,
+              },
+            }).catch(console.error);
+          }
+
+          // Propagate change to all items sharing identical or similar description
+          try {
+            await prisma.itemTable.updateMany({
+              where: {
+                itemNameParty: { contains: existing.itemNameParty.trim(), mode: 'insensitive' },
+              },
+              data: {
+                ourItemNot: newCat,
+              },
+            });
+          } catch (batchErr) {
+            console.error('Error updating matching items batch:', batchErr);
+          }
+        }
       }
     }
 
