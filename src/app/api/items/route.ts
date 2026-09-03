@@ -128,8 +128,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Item Name is required' }, { status: 400 });
     }
 
-    // Auto-detect OUR ITEM/NOT if blank
-    const finalOurItemNot = (ourItemNot && ourItemNot.trim()) ? ourItemNot.trim() : await autoDetectOurItemNotAsync(itemNameParty);
+    // OUR ITEM/NOT automatic fill function is OFF (disabled per user request)
+    const finalOurItemNot = (ourItemNot && ourItemNot.trim()) ? ourItemNot.trim() : null;
 
     const created = await prisma.itemTable.create({
       data: {

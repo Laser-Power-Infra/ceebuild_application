@@ -28,8 +28,10 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { docketNoQtnNo, itemIds, forceAll, apiKey: customApiKey } = body;
 
-    const apiKey = customApiKey || process.env.GROQ_API_KEY;
-    if (!apiKey || !apiKey.trim()) {
+    const apiKey = (customApiKey || process.env.GROQ_API_KEY || '')
+      .replace(/^["']|["']$/g, '')
+      .trim();
+    if (!apiKey) {
       return NextResponse.json(
         {
           error:
@@ -57,12 +59,8 @@ export async function POST(req: Request) {
 
     const eligibleItems: any[] = [];
     for (const item of candidateItems) {
-      let ourItemNot = (item.ourItemNot || '').trim().toUpperCase();
-
-      if (!ourItemNot && item.itemNameParty) {
-        ourItemNot = autoDetectOurItemNot(item.itemNameParty) || 'MANUFACTURING';
-      }
-
+      const ourItemNot = (item.ourItemNot || '').trim().toUpperCase();
+      // OUR ITEM/NOT automatic fill function is OFF (disabled per user request)
       const isEligibleType = ourItemNot === 'MANUFACTURING' || ourItemNot === 'TRADING';
       const currentOurItemName = (item.ourItemName || '').trim();
       const isBlankPrediction = currentOurItemName === '';
@@ -251,13 +249,12 @@ ITEM_ID: [id] | TYPE OF ITEM: [Value] | Our item Name: [Value]`;
 
       // Active Groq Models array in priority order
       const candidateModels = [
-        'qwen/qwen3.8-27b',
         'groq/compound',
         'groq/compound-mini',
-        'qwen/qwen3.6-27b',
+        'qwen/qwen3.8-27b',
         'openai/gpt-oss-120b',
         'openai/gpt-oss-20b',
-        'allam-2-7b',
+        'llama-3.1-8b-instant',
       ];
 
       let groqRes: Response | null = null;
@@ -288,7 +285,22 @@ ITEM_ID: [id] | TYPE OF ITEM: [Value] | Our item Name: [Value]`;
             break;
           } else {
             lastErrorText = await res.text();
-            console.warn(`Groq Model "${modelName}" failed, trying fallback. Error:`, lastErrorText);
+            console.warn(`Groq Model "${modelName}" failed (${res.status}):`, lastErrorText);
+            if (
+              lastErrorText.includes('invalid_api_key') ||
+              lastErrorText.includes('do not have access to it') ||
+              lastErrorText.includes('model_not_found') ||
+              res.status === 401
+            ) {
+              console.error('❌ GROQ API KEY INVALID OR EXPIRED!');
+              return NextResponse.json(
+                {
+                  error:
+                    'Your Groq API Key is invalid or expired. Please generate a new free API key at https://console.groq.com/keys and update your GROQ_API_KEY in .env or enter it in the dashboard.',
+                },
+                { status: 401 }
+              );
+            }
           }
         } catch (e: any) {
           console.warn(`Groq Model "${modelName}" fetch error:`, e.message);

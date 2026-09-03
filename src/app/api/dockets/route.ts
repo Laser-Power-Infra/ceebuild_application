@@ -206,7 +206,7 @@ export async function POST(req: Request) {
             const autoNot =
               it.ourItemNot && it.ourItemNot.trim()
                 ? it.ourItemNot.trim()
-                : await autoDetectOurItemNotAsync(rawName);
+                : null;
             return {
               docketNoQtnNo: finalDocketNo,
               itemNameParty: rawName,

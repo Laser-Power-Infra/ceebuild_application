@@ -10,16 +10,16 @@ export const DEFAULT_KEYWORD_RULES: { [key in 'NO' | 'MANUFACTURING' | 'TRADING'
     "suspension clamp assembly", "tension clamp assembly", "cable tray", 
     "perforated tray", "smc board"
   ],
-  TRADING: [
-    "gi wire", "g.i. wire", "earth wire", "swg", "stay wire"
-  ],
   MANUFACTURING: [
     "channel", "angle", "flat", "strip", "stay set", "bracing", "v-cross", 
     "v-type", "anti-climbing", "earthmat", "earth mat", "earthing rod", 
     "earth rod", "ms rod", "spike earthing", "chemical earthing", 
-    "compound filled earthing", "bolt", "nut", "washer", "rivet", "clamp", "anchor",
-    "gi pipe", "g.i. pipe", "gi erw pipe", "name plate", "number plate", "phase plate",
-    "circuit plate", "danger plate", "danger board"
+    "compound filled earthing", "bolt", "nut", "washer", "rivet", "clamp", "anchor"
+  ],
+  TRADING: [
+    "gi wire", "g.i. wire", "earth wire", "swg", "stay wire", "name plate", 
+    "number plate", "phase plate", "circuit plate", "danger plate", 
+    "danger board", "gi pipe", "g.i. pipe", "gi erw pipe"
   ]
 };
 

@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Plus,
   CheckCircle,
+  AlertCircle,
   FileSpreadsheet,
   Building,
   FileText,
@@ -351,6 +352,127 @@ export default function Dashboard() {
   const [reasoningLoading, setReasoningLoading] = useState<boolean>(false);
   const [savingKnowledge, setSavingKnowledge] = useState<boolean>(false);
 
+  // Structural Calculator Queue & Modal State
+  const [structuralQueue, setStructuralQueue] = useState<Item[]>([]);
+  const [currentStructuralIndex, setCurrentStructuralIndex] = useState<number>(0);
+  const [structuralLoading, setStructuralLoading] = useState<boolean>(false);
+  const [structuralOptions, setStructuralOptions] = useState<any[]>([]);
+  const [selectedStructuralOption, setSelectedStructuralOption] = useState<any>(null);
+  const [showStructuralModal, setShowStructuralModal] = useState<boolean>(false);
+  const [customStructuralForm, setCustomStructuralForm] = useState({
+    sectionMm: '',
+    sectionalWtKgMtr: '',
+    lengthInMtr: '',
+    unitWtOfMemberKg: '',
+  });
+
+  // User Groq API Key state (saved in localStorage)
+  const [userGroqApiKey, setUserGroqApiKey] = useState<string>('');
+  const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(false);
+  const [structuralErrorMessage, setStructuralErrorMessage] = useState<string>('');
+
+  useEffect(() => {
+    const savedKey = localStorage.getItem('groq_api_key');
+    if (savedKey) {
+      setUserGroqApiKey(savedKey);
+    }
+  }, []);
+
+  const saveUserGroqApiKey = (key: string) => {
+    setUserGroqApiKey(key);
+    localStorage.setItem('groq_api_key', key.trim());
+    showToast('Saved Groq API Key!');
+  };
+
+  const fetchStructuralOptionsForItem = async (item: Item) => {
+    setStructuralLoading(true);
+    setStructuralOptions([]);
+    setSelectedStructuralOption(null);
+    setStructuralErrorMessage('');
+    setCustomStructuralForm({
+      sectionMm: '',
+      sectionalWtKgMtr: '',
+      lengthInMtr: '',
+      unitWtOfMemberKg: '',
+    });
+
+    const storedApiKey = userGroqApiKey || (typeof window !== 'undefined' ? localStorage.getItem('groq_api_key') || '' : '');
+
+    try {
+      const res = await fetch('/api/ai/structural', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId: item.id,
+          itemNameParty: item.itemNameParty,
+          apiKey: storedApiKey,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setStructuralErrorMessage(data.error || 'Failed to fetch AI structural calculations');
+      } else if (data.options && Array.isArray(data.options)) {
+        setStructuralOptions(data.options);
+        if (data.options.length > 0) {
+          const firstOpt = data.options[0];
+          setSelectedStructuralOption(firstOpt);
+          setCustomStructuralForm({
+            sectionMm: firstOpt.sectionCode || '',
+            sectionalWtKgMtr: firstOpt.sectionalWtKgMtr || '',
+            lengthInMtr: firstOpt.lengthMtr || '',
+            unitWtOfMemberKg: firstOpt.unitWtKg || '',
+          });
+        } else {
+          setStructuralErrorMessage('Groq AI returned no structural section options for this description.');
+        }
+      }
+    } catch (err: any) {
+      console.error('Error fetching structural options for item:', err);
+      setStructuralErrorMessage(err.message || 'Failed to connect to Groq AI API');
+    } finally {
+      setStructuralLoading(false);
+    }
+  };
+
+  const handleApplyStructuralOption = async () => {
+    const currentItem = structuralQueue[currentStructuralIndex];
+    if (!currentItem) return;
+
+    try {
+      setStructuralLoading(true);
+      await handleItemFieldUpdate(currentItem.id, 'sectionMm', customStructuralForm.sectionMm);
+      await handleItemFieldUpdate(currentItem.id, 'sectionalWtKgMtr', customStructuralForm.sectionalWtKgMtr);
+      await handleItemFieldUpdate(currentItem.id, 'lengthInMtr', customStructuralForm.lengthInMtr);
+      await handleItemFieldUpdate(currentItem.id, 'unitWtOfMemberKg', customStructuralForm.unitWtOfMemberKg);
+
+      showToast(`Saved Structural Section for Item #${currentItem.id}!`);
+
+      const nextIndex = currentStructuralIndex + 1;
+      if (nextIndex < structuralQueue.length) {
+        setCurrentStructuralIndex(nextIndex);
+        await fetchStructuralOptionsForItem(structuralQueue[nextIndex]);
+      } else {
+        setShowStructuralModal(false);
+        showToast('🎉 Completed Structural AI calculations for all BOM items!');
+      }
+    } catch (err) {
+      console.error('Error saving structural selection:', err);
+    } finally {
+      setStructuralLoading(false);
+    }
+  };
+
+  const handleSkipStructuralOption = async () => {
+    const nextIndex = currentStructuralIndex + 1;
+    if (nextIndex < structuralQueue.length) {
+      setCurrentStructuralIndex(nextIndex);
+      await fetchStructuralOptionsForItem(structuralQueue[nextIndex]);
+    } else {
+      setShowStructuralModal(false);
+    }
+  };
+
   const openReasoningModal = async (itemNameParty: string | null, typeOfItem: string | null, selectedCategory: string | null) => {
     if (!itemNameParty || !selectedCategory) return;
     setReasoningItemText(itemNameParty);
@@ -430,11 +552,13 @@ export default function Dashboard() {
     );
 
     try {
+      const storedApiKey = userGroqApiKey || (typeof window !== 'undefined' ? localStorage.getItem('groq_api_key') || '' : '');
       const res = await fetch('/api/ai/categorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           docketNoQtnNo: targetDocketNo || null,
+          apiKey: storedApiKey,
         }),
       });
 
@@ -451,13 +575,36 @@ export default function Dashboard() {
         await fetchItems();
         await fetchDockets();
         if (targetDocketNo) {
-          fetchItemsForDocket(targetDocketNo, true);
+          await fetchItemsForDocket(targetDocketNo, true);
         } else {
           // Force refresh all currently cached expanded dockets so item count is never 0
           Object.keys(docketItemsMap).forEach((dNo) => {
             fetchItemsForDocket(dNo, true);
           });
         }
+      }
+
+      // Collect candidate items for Structural Calculator (MANUFACTURING/TRADING items with blank sectionMm)
+      let candidates: Item[] = [];
+      if (targetDocketNo && docketItemsMap[targetDocketNo]) {
+        candidates = docketItemsMap[targetDocketNo].filter(
+          (it) =>
+            (it.ourItemNot === 'MANUFACTURING' || it.ourItemNot === 'TRADING') &&
+            (!it.sectionMm || it.sectionMm.trim() === '')
+        );
+      } else {
+        candidates = items.filter(
+          (it) =>
+            (it.ourItemNot === 'MANUFACTURING' || it.ourItemNot === 'TRADING') &&
+            (!it.sectionMm || it.sectionMm.trim() === '')
+        );
+      }
+
+      if (candidates.length > 0) {
+        setStructuralQueue(candidates);
+        setCurrentStructuralIndex(0);
+        setShowStructuralModal(true);
+        fetchStructuralOptionsForItem(candidates[0]);
       }
     } catch (err: any) {
       console.error('AI Error:', err);
@@ -1023,7 +1170,7 @@ export default function Dashboard() {
     parsedItems.forEach((parsed, idx) => {
       const targetIndex = rowIndex + idx;
       const rawName = parsed.itemNameParty || '';
-      const autoNot = rawName ? autoDetectOurItemNot(rawName) || 'MANUFACTURING' : 'MANUFACTURING';
+      const autoNot = '';
 
       const itemObj = {
         itemNameParty: rawName,
@@ -1408,6 +1555,253 @@ export default function Dashboard() {
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI STRUCTURAL SECTION CALCULATOR MODAL */}
+      {showStructuralModal && structuralQueue.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl border border-indigo-200 shadow-2xl max-w-2xl w-full p-6 space-y-5 relative max-h-[90vh] overflow-y-auto">
+            <button
+              onClick={() => setShowStructuralModal(false)}
+              className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-slate-100 transition-all"
+              title="Close Flow"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center space-x-3 border-b border-slate-100 pb-3">
+              <div className="bg-gradient-to-br from-indigo-600 to-purple-600 p-2.5 rounded-2xl text-white shadow-md">
+                <Building className="w-6 h-6 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                  <span>AI Structural Member Selection</span>
+                  <span className="text-xs bg-indigo-100 text-indigo-800 font-extrabold px-2 py-0.5 rounded-full">
+                    BOM Item {currentStructuralIndex + 1} of {structuralQueue.length}
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-500 font-medium">
+                  IS 808 Indian Substation Structural Engineer Suggestions
+                </p>
+              </div>
+            </div>
+
+            {/* Current Item Raw Description */}
+            <div className="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-4 space-y-1">
+              <span className="font-extrabold text-indigo-700 uppercase tracking-wider text-[10px]">
+                Target Item Description:
+              </span>
+              <p className="font-bold text-slate-900 text-xs">
+                #{structuralQueue[currentStructuralIndex]?.id} — {structuralQueue[currentStructuralIndex]?.itemNameParty}
+              </p>
+            </div>
+
+            {/* AI Suggested Options List */}
+            {structuralLoading ? (
+              <div className="p-8 text-center space-y-3 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
+                <p className="text-xs font-bold text-slate-700">
+                  Calculating IS 808 Sectional Weights & REC Cut Lengths for this item...
+                </p>
+              </div>
+            ) : structuralOptions.length === 0 ? (
+              <div className="p-5 bg-rose-50 border border-rose-200 rounded-2xl space-y-3 text-xs">
+                <div className="flex items-center space-x-2 text-rose-800 font-bold">
+                  <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                  <span>
+                    {structuralErrorMessage || 'Groq AI returned no structural section options.'}
+                  </span>
+                </div>
+                <p className="text-slate-600 text-[11px]">
+                  Please enter a valid <strong>Groq API Key</strong> below (from <code>console.groq.com</code>) to power AI structural calculations:
+                </p>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="password"
+                    placeholder="gsk_..."
+                    value={userGroqApiKey}
+                    onChange={(e) => setUserGroqApiKey(e.target.value)}
+                    className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                  <button
+                    onClick={() => {
+                      saveUserGroqApiKey(userGroqApiKey);
+                      if (structuralQueue[currentStructuralIndex]) {
+                        fetchStructuralOptionsForItem(structuralQueue[currentStructuralIndex]);
+                      }
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all shrink-0"
+                  >
+                    Save & Retry AI
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <label className="font-extrabold text-slate-700 text-xs block">
+                  Select an IS 808 Standard Member Profile:
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1">
+                  {structuralOptions.map((opt: any, idx: number) => {
+                    const isSelected = selectedStructuralOption === opt;
+                    return (
+                      <div
+                        key={idx}
+                        onClick={() => {
+                          setSelectedStructuralOption(opt);
+                          setCustomStructuralForm({
+                            sectionMm: opt.sectionCode || '',
+                            sectionalWtKgMtr: opt.sectionalWtKgMtr || '',
+                            lengthInMtr: opt.lengthMtr || '',
+                            unitWtOfMemberKg: opt.unitWtKg || '',
+                          });
+                        }}
+                        className={`cursor-pointer p-3.5 rounded-2xl border transition-all text-xs space-y-1.5 ${
+                          isSelected
+                            ? 'bg-indigo-50/90 border-indigo-600 shadow-md ring-2 ring-indigo-500/20'
+                            : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-indigo-900 font-mono text-xs">
+                            {opt.sectionCode}
+                          </span>
+                          <span
+                            className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                              isSelected ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-slate-300'
+                            }`}
+                          >
+                            {isSelected && <div className="w-1.5 h-1.5 bg-white rounded-full"></div>}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1 text-[11px] text-slate-600">
+                          <div>
+                            <span className="block text-[9px] text-slate-400 font-bold">Sec. Wt</span>
+                            <span className="font-bold text-slate-800">{opt.sectionalWtKgMtr} Kg/M</span>
+                          </div>
+                          <div>
+                            <span className="block text-[9px] text-slate-400 font-bold">Length</span>
+                            <span className="font-bold text-slate-800">{opt.lengthMtr} Mtr</span>
+                          </div>
+                          <div>
+                            <span className="block text-[9px] text-slate-400 font-bold">Unit Wt</span>
+                            <span className="font-bold text-indigo-700">{opt.unitWtKg} Kg</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Editable Form Inputs for Selected/Custom Values */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+              <span className="font-extrabold text-slate-700 text-xs block">
+                Selected / Customized Values for Item:
+              </span>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-600 mb-1">Section (mm)</label>
+                  <input
+                    type="text"
+                    value={customStructuralForm.sectionMm}
+                    onChange={(e) =>
+                      setCustomStructuralForm((prev) => ({ ...prev, sectionMm: e.target.value }))
+                    }
+                    placeholder="e.g. CH.125X65X6"
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-mono font-bold text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-600 mb-1">Sectional Wt (Kg/M)</label>
+                  <input
+                    type="text"
+                    value={customStructuralForm.sectionalWtKgMtr}
+                    onChange={(e) => {
+                      const secWt = parseFloat(e.target.value) || 0;
+                      const len = parseFloat(customStructuralForm.lengthInMtr) || 0;
+                      const calculatedUnitWt = secWt && len ? (secWt * len).toFixed(2) : customStructuralForm.unitWtOfMemberKg;
+                      setCustomStructuralForm((prev) => ({
+                        ...prev,
+                        sectionalWtKgMtr: e.target.value,
+                        unitWtOfMemberKg: calculatedUnitWt,
+                      }));
+                    }}
+                    placeholder="Kg/Mtr."
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-600 mb-1">Length (Mtr)</label>
+                  <input
+                    type="text"
+                    value={customStructuralForm.lengthInMtr}
+                    onChange={(e) => {
+                      const len = parseFloat(e.target.value) || 0;
+                      const secWt = parseFloat(customStructuralForm.sectionalWtKgMtr) || 0;
+                      const calculatedUnitWt = secWt && len ? (secWt * len).toFixed(2) : customStructuralForm.unitWtOfMemberKg;
+                      setCustomStructuralForm((prev) => ({
+                        ...prev,
+                        lengthInMtr: e.target.value,
+                        unitWtOfMemberKg: calculatedUnitWt,
+                      }));
+                    }}
+                    placeholder="Mtr."
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-600 mb-1">Unit Wt (Kg)</label>
+                  <input
+                    type="text"
+                    value={customStructuralForm.unitWtOfMemberKg}
+                    onChange={(e) =>
+                      setCustomStructuralForm((prev) => ({ ...prev, unitWtOfMemberKg: e.target.value }))
+                    }
+                    placeholder="Kg"
+                    className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg font-bold text-xs text-indigo-700"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-between border-t border-slate-100 pt-3">
+              <button
+                onClick={() => setShowStructuralModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs rounded-xl transition-all"
+              >
+                Cancel Flow
+              </button>
+
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={handleSkipStructuralOption}
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-extrabold text-xs rounded-xl transition-all"
+                >
+                  Skip Item
+                </button>
+                <button
+                  onClick={handleApplyStructuralOption}
+                  disabled={structuralLoading}
+                  className="flex items-center space-x-1.5 px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all shadow-md"
+                >
+                  {structuralLoading ? (
+                    <span>Saving...</span>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4 text-emerald-300" />
+                      <span>
+                        {currentStructuralIndex + 1 < structuralQueue.length ? 'Apply & Next Item' : 'Apply & Finish'}
+                      </span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1836,13 +2230,13 @@ export default function Dashboard() {
                 <tbody className="divide-y divide-slate-200">
                   {itemsLoading ? (
                     <tr>
-                      <td colSpan={13} className="p-8 text-center text-slate-500 font-medium">
+                      <td colSpan={17} className="p-8 text-center text-slate-500 font-medium">
                         Loading items...
                       </td>
                     </tr>
                   ) : items.length === 0 ? (
                     <tr>
-                      <td colSpan={13} className="p-8 text-center text-slate-500 font-medium">
+                      <td colSpan={17} className="p-8 text-center text-slate-500 font-medium">
                         No items found matching your filters.
                       </td>
                     </tr>
@@ -2590,6 +2984,10 @@ export default function Dashboard() {
                                             <th className="p-2.5 border-b border-slate-200">OUR ITEM/NOT</th>
                                             <th className="p-2.5 border-b border-slate-200 min-w-[180px]">Our item Name</th>
                                             <th className="p-2.5 border-b border-slate-200">SIZE</th>
+                                            <th className="p-2.5 border-b border-slate-200">Section (mm)</th>
+                                            <th className="p-2.5 border-b border-slate-200">Sectional Wt. (Kg/Mtr.)</th>
+                                            <th className="p-2.5 border-b border-slate-200">Length (Mtr.)</th>
+                                            <th className="p-2.5 border-b border-slate-200">Unit Wt. of Member (Kg)</th>
                                             <th className="p-2.5 border-b border-slate-200">PRICE</th>
                                             <th className="p-2.5 border-b border-slate-200">STATUS</th>
                                           </tr>
@@ -2678,6 +3076,42 @@ export default function Dashboard() {
                                                   onSave={(val) =>
                                                     handleItemFieldUpdate(subItem.id, 'size', val, doc.docketNoQtnNo)
                                                   }
+                                                />
+                                              </td>
+                                              <td className="p-2.5">
+                                                <AutoResizeTextarea
+                                                  defaultValue={subItem.sectionMm || ''}
+                                                  onSave={(val) =>
+                                                    handleItemFieldUpdate(subItem.id, 'sectionMm', val, doc.docketNoQtnNo)
+                                                  }
+                                                  placeholder="e.g. 125x65x6mm"
+                                                />
+                                              </td>
+                                              <td className="p-2.5">
+                                                <AutoResizeTextarea
+                                                  defaultValue={subItem.sectionalWtKgMtr || ''}
+                                                  onSave={(val) =>
+                                                    handleItemFieldUpdate(subItem.id, 'sectionalWtKgMtr', val, doc.docketNoQtnNo)
+                                                  }
+                                                  placeholder="Kg/Mtr."
+                                                />
+                                              </td>
+                                              <td className="p-2.5">
+                                                <AutoResizeTextarea
+                                                  defaultValue={subItem.lengthInMtr || ''}
+                                                  onSave={(val) =>
+                                                    handleItemFieldUpdate(subItem.id, 'lengthInMtr', val, doc.docketNoQtnNo)
+                                                  }
+                                                  placeholder="Mtr."
+                                                />
+                                              </td>
+                                              <td className="p-2.5">
+                                                <AutoResizeTextarea
+                                                  defaultValue={subItem.unitWtOfMemberKg || ''}
+                                                  onSave={(val) =>
+                                                    handleItemFieldUpdate(subItem.id, 'unitWtOfMemberKg', val, doc.docketNoQtnNo)
+                                                  }
+                                                  placeholder="Kg"
                                                 />
                                               </td>
                                               <td className="p-2.5 font-extrabold">
