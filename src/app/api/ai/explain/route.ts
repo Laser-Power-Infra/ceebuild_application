@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { PrismaClient } from '@prisma/client';
+import { getGroqApiKey, saveGroqApiKeyToDb } from '@/lib/groqHelper';
 
 const prisma = new PrismaClient();
 
@@ -47,9 +48,10 @@ export async function POST(req: Request) {
     }
 
     // Otherwise generate auto-reasoning using Groq AI
-    const apiKey = (customApiKey || process.env.GROQ_API_KEY || '')
-      .replace(/^["']|["']$/g, '')
-      .trim();
+    const apiKey = await getGroqApiKey(customApiKey);
+    if (customApiKey && customApiKey.startsWith('gsk_')) {
+      await saveGroqApiKeyToDb(customApiKey);
+    }
 
     if (!apiKey) {
       return NextResponse.json(

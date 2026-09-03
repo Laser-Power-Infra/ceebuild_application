@@ -23,14 +23,17 @@ const ALLOWED_OUR_ITEM_NAMES = [
 
 const ALLOWED_TYPES_OF_ITEM = ['CHANNEL', 'ROD', 'PIPE', 'NONE'];
 
+import { getGroqApiKey, saveGroqApiKeyToDb } from '@/lib/groqHelper';
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { docketNoQtnNo, itemIds, forceAll, apiKey: customApiKey } = body;
 
-    const apiKey = (customApiKey || process.env.GROQ_API_KEY || '')
-      .replace(/^["']|["']$/g, '')
-      .trim();
+    const apiKey = await getGroqApiKey(customApiKey);
+    if (customApiKey && customApiKey.startsWith('gsk_')) {
+      await saveGroqApiKeyToDb(customApiKey);
+    }
     if (!apiKey) {
       return NextResponse.json(
         {
