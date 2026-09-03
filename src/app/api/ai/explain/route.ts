@@ -6,7 +6,7 @@ const prisma = new PrismaClient();
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { itemNameParty, typeOfItem, selectedCategory, saveToKnowledge, userReason } = body;
+    const { itemNameParty, typeOfItem, selectedCategory, saveToKnowledge, userReason, apiKey: customApiKey } = body;
 
     if (!itemNameParty || !selectedCategory) {
       return NextResponse.json({ error: 'Missing itemNameParty or selectedCategory' }, { status: 400 });
@@ -47,11 +47,14 @@ export async function POST(req: Request) {
     }
 
     // Otherwise generate auto-reasoning using Groq AI
-    const apiKey = process.env.GROQ_API_KEY;
+    const apiKey = (customApiKey || process.env.GROQ_API_KEY || '')
+      .replace(/^["']|["']$/g, '')
+      .trim();
+
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'GROQ_API_KEY environment variable is missing.' },
-        { status: 500 }
+        { error: 'Groq API Key is missing. Please enter your Groq API key in Settings or update GROQ_API_KEY in .env.' },
+        { status: 400 }
       );
     }
 
@@ -71,12 +74,12 @@ Assigned Category: "${selectedCategory}"
 Explain the categorization reason concisely:`;
 
     const candidateModels = [
-      'qwen/qwen3.8-27b',
       'groq/compound',
       'groq/compound-mini',
-      'qwen/qwen3.6-27b',
+      'qwen/qwen3.8-27b',
       'openai/gpt-oss-120b',
       'openai/gpt-oss-20b',
+      'llama-3.1-8b-instant',
     ];
 
     let groqRes: Response | null = null;

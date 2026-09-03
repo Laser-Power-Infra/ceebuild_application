@@ -484,6 +484,7 @@ export default function Dashboard() {
     setReasoningModalOpen(true);
 
     try {
+      const storedApiKey = userGroqApiKey || (typeof window !== 'undefined' ? localStorage.getItem('groq_api_key') || '' : '');
       const res = await fetch('/api/ai/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -491,6 +492,7 @@ export default function Dashboard() {
           itemNameParty,
           typeOfItem: typeOfItem || '',
           selectedCategory,
+          apiKey: storedApiKey,
         }),
       });
 
