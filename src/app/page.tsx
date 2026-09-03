@@ -54,7 +54,10 @@ interface Item {
   typeOfItem: string | null;
   ourItemName: string | null;
   size: string | null;
+  sectionMm: string | null;
+  sectionalWtKgMtr: string | null;
   lengthInMtr: string | null;
+  unitWtOfMemberKg: string | null;
   weightPerPiece: string | null;
   price: string | null;
   uomOfQtn: string | null;
@@ -1744,6 +1747,10 @@ export default function Dashboard() {
                     <th className="p-3 whitespace-nowrap min-w-[160px]">TYPE OF ITEM</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[220px]">Our item Name</th>
                     <th className="p-3 whitespace-nowrap min-w-[140px]">SIZE</th>
+                    <th className="p-3 whitespace-nowrap min-w-[140px]">Section (mm)</th>
+                    <th className="p-3 whitespace-nowrap min-w-[160px]">Sectional Wt. (Kg/Mtr.)</th>
+                    <th className="p-3 whitespace-nowrap min-w-[130px]">Length (Mtr.)</th>
+                    <th className="p-3 whitespace-nowrap min-w-[180px]">Unit Wt. of Member (Kg)</th>
                     <th className="p-3 whitespace-nowrap min-w-[140px]">Weight Per Pc</th>
                     <th className="p-3 whitespace-nowrap min-w-[120px]">Price</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[160px]">Status</th>
@@ -1799,6 +1806,10 @@ export default function Dashboard() {
                     <td className="p-2 min-w-[160px]"></td>
                     <td className="p-2 min-w-[220px]"></td>
                     <td className="p-2 min-w-[140px]"></td>
+                    <td className="p-2 min-w-[140px]"></td>
+                    <td className="p-2 min-w-[160px]"></td>
+                    <td className="p-2 min-w-[130px]"></td>
+                    <td className="p-2 min-w-[180px]"></td>
                     <td className="p-2 min-w-[140px]"></td>
                     <td className="p-2 min-w-[120px]"></td>
                     <td className="p-2 min-w-[160px]">
@@ -1940,6 +1951,38 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.size || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'size', val)}
+                          />
+                        </td>
+
+                        <td className="p-3 min-w-[140px]">
+                          <AutoResizeTextarea
+                            defaultValue={item.sectionMm || ''}
+                            onSave={(val) => handleItemFieldUpdate(item.id, 'sectionMm', val)}
+                            placeholder="e.g. 125x65x6mm"
+                          />
+                        </td>
+
+                        <td className="p-3 min-w-[160px]">
+                          <AutoResizeTextarea
+                            defaultValue={item.sectionalWtKgMtr || ''}
+                            onSave={(val) => handleItemFieldUpdate(item.id, 'sectionalWtKgMtr', val)}
+                            placeholder="Kg/Mtr."
+                          />
+                        </td>
+
+                        <td className="p-3 min-w-[130px]">
+                          <AutoResizeTextarea
+                            defaultValue={item.lengthInMtr || ''}
+                            onSave={(val) => handleItemFieldUpdate(item.id, 'lengthInMtr', val)}
+                            placeholder="Mtr."
+                          />
+                        </td>
+
+                        <td className="p-3 min-w-[180px]">
+                          <AutoResizeTextarea
+                            defaultValue={item.unitWtOfMemberKg || ''}
+                            onSave={(val) => handleItemFieldUpdate(item.id, 'unitWtOfMemberKg', val)}
+                            placeholder="Kg"
                           />
                         </td>
 

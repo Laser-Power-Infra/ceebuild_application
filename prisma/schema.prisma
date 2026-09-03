@@ -8,25 +8,28 @@ datasource db {
 }
 
 model ItemTable {
-  id             Int      @id @default(autoincrement())
-  uniqueNo       String?  @map("unique_no")
-  docketNoQtnNo  String?  @map("docket_no_qtn_no")
-  itemNameParty  String?  @map("item_name_party")
-  uom            String?
-  qty            String?
-  ourItemNot     String?  @map("our_item_not")
-  typeOfItem     String?  @map("type_of_item")
-  ourItemName    String?  @map("our_item_name")
-  size           String?
-  lengthInMtr    String?  @map("length_in_mtr")
-  weightPerPiece String?  @map("weight_per_piece")
-  price          String?
-  uomOfQtn       String?  @map("uom_of_qtn")
-  a              String?
-  freightPerKg   String?  @map("freight_per_kg")
-  status         String?
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
+  id               Int      @id @default(autoincrement())
+  uniqueNo         String?  @map("unique_no")
+  docketNoQtnNo    String?  @map("docket_no_qtn_no")
+  itemNameParty    String?  @map("item_name_party")
+  uom              String?
+  qty              String?
+  ourItemNot       String?  @map("our_item_not")
+  typeOfItem       String?  @map("type_of_item")
+  ourItemName      String?  @map("our_item_name")
+  size             String?
+  sectionMm        String?  @map("section_mm")
+  sectionalWtKgMtr String?  @map("sectional_wt_kg_mtr")
+  lengthInMtr      String?  @map("length_in_mtr")
+  unitWtOfMemberKg String?  @map("unit_wt_of_member_kg")
+  weightPerPiece   String?  @map("weight_per_piece")
+  price            String?
+  uomOfQtn         String?  @map("uom_of_qtn")
+  a                String?
+  freightPerKg     String?  @map("freight_per_kg")
+  status           String?
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
 
   @@map("iteam-table")
 }
