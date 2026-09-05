@@ -1402,10 +1402,10 @@ export default function Dashboard() {
             </button>
           </form>
 
-          <div className="pt-4 border-t border-slate-100 text-center text-[11px] text-slate-400">
+          {/* <div className="pt-4 border-t border-slate-100 text-center text-[11px] text-slate-400">
             Authorized Users: <strong className="text-slate-600">admin / admin</strong> or{' '}
             <strong className="text-slate-600">tanmoy / tanmoy</strong>
-          </div>
+          </div> */}
         </div>
       </div>
     );
