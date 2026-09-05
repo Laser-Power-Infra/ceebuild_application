@@ -91,13 +91,13 @@ export async function POST(req: Request) {
     });
 
     const validClassifiedDbItems = classifiedDbItems.filter(
-      (item) => (item.ourItemName || '').trim() !== '' && (item.itemNameParty || '').trim() !== ''
+      (item: any) => (item.ourItemName || '').trim() !== '' && (item.itemNameParty || '').trim() !== ''
     );
 
     let dbExemplarsPromptText = '';
     if (validClassifiedDbItems.length > 0) {
       const dbExamplesList = validClassifiedDbItems.map(
-        (item) =>
+        (item: any) =>
           `- Description: "${item.itemNameParty}" -> TYPE OF ITEM: ${item.typeOfItem || 'NONE'} | Our item Name: ${item.ourItemName}`
       );
       dbExemplarsPromptText = `\n\n=== RECENTLY USER-CLASSIFIED DATABASE EXEMPLARS (LEARN PATTERNS FROM THESE) ===\n${dbExamplesList.join('\n')}\n=== END DATABASE EXEMPLARS ===\n`;
@@ -154,7 +154,7 @@ ${parsedRules.join('\n\n')}
 
       const itemsPromptText = batch
         .map(
-          (item) =>
+          (item: any) =>
             `ITEM_ID: ${item.id} | ITEM NAME- PARTY: "${item.itemNameParty || 'N/A'}"`
         )
         .join('\n');
