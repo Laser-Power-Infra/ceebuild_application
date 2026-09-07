@@ -1,15 +1,15 @@
 import { prisma } from '@/lib/prisma';
 
 export async function getGroqApiKey(customApiKey?: string): Promise<string> {
-  // 1. Explicit key passed in request or user state
-  if (customApiKey && typeof customApiKey === 'string' && customApiKey.trim().startsWith('gsk_')) {
-    return customApiKey.replace(/^["']|["']$/g, '').trim();
-  }
-
-  // 2. Check environment variable GROQ_API_KEY
+  // 1. Primary: Check environment variable GROQ_API_KEY from .env
   const envKey = (process.env.GROQ_API_KEY || '').replace(/^["']|["']$/g, '').trim();
   if (envKey && envKey.startsWith('gsk_')) {
     return envKey;
+  }
+
+  // 2. Secondary: Explicit key passed in request or user state
+  if (customApiKey && typeof customApiKey === 'string' && customApiKey.trim().startsWith('gsk_')) {
+    return customApiKey.replace(/^["']|["']$/g, '').trim();
   }
 
   // 3. Fallback to PostgreSQL database master-values table
@@ -34,8 +34,8 @@ export async function getGroqApiKey(customApiKey?: string): Promise<string> {
     console.error('Error fetching Groq API key from DB:', err);
   }
 
-  // 4. Return any non-empty customApiKey or envKey as last resort
-  return customApiKey?.trim() || envKey || '';
+  // 4. Return any non-empty envKey or customApiKey as last resort
+  return envKey || customApiKey?.trim() || '';
 }
 
 export async function saveGroqApiKeyToDb(apiKey: string): Promise<boolean> {
