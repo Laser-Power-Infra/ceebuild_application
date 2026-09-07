@@ -1319,8 +1319,13 @@ export default function Dashboard() {
     setItemFilters({ docketNoQtnNo: '', itemNameParty: '', ourItemNot: '', ourItemName: [], status: '' });
     setDocketFilters({ docketNoQtnNo: '', partyName: '', itemFilter: '', state: '' });
     setLogTableFilter('');
+    setDocketItemsMap({});
     setItemPage(1);
     setDocketPage(1);
+    fetchDockets();
+    fetchItems();
+    fetchMasterValues();
+    showToast('Refetched fresh docket & item data from database!');
   };
 
   // IF AUTH IS LOADING -> SHOW CLEAN SPINNER TO PREVENT FLASHING SIGN IN SCREEN
@@ -2016,13 +2021,14 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {/* Reset Filters */}
+              {/* Reset Filters & Refetch Data */}
               <button
                 onClick={clearAllFilters}
-                className="flex items-center space-x-1.5 text-xs font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3.5 py-2 rounded-xl transition-all"
+                className="flex items-center space-x-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3.5 py-2 rounded-xl transition-all shadow-xs"
+                title="Refetch fresh docket and item records directly from PostgreSQL database"
               >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Reset Filters</span>
+                <RefreshCw className={`w-3.5 h-3.5 ${docketsLoading || itemsLoading ? 'animate-spin' : ''}`} />
+                <span>Refresh & Reset Data</span>
               </button>
             </div>
 
