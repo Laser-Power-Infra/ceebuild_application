@@ -28,6 +28,7 @@ interface Item {
   uom: string | null;
   price: string | null;
   uomOfQtn: string | null;
+  unitWtOfMemberKg?: string | null;
 }
 
 export default function QuotationPage({ params }: { params: Promise<{ id: string }> }) {
@@ -444,7 +445,7 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
                     <td className="p-2.5 border border-blue-300 text-center font-extrabold">{item.qty || '-'}</td>
                     <td className="p-2.5 border border-blue-300 text-center">{item.uom || '-'}</td>
                     <td className="p-2.5 border border-blue-300 text-center font-extrabold">{item.price || '-'}</td>
-                    <td className="p-2.5 border border-blue-300 text-center">{item.uomOfQtn || '-'}</td>
+                    <td className="p-2.5 border border-blue-300 text-center font-bold">{item.uomOfQtn || item.unitWtOfMemberKg || item.uom || '-'}</td>
                   </tr>
                 ))
               )}

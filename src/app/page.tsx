@@ -2133,18 +2133,27 @@ export default function Dashboard() {
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-30 border-b border-slate-200 text-[11px] uppercase tracking-wider">
                   <tr>
-                    {/* Sticky Column 1: ID (width 80px) */}
-                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-0 z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    {/* Sticky Column 1: ID (width 70px) */}
+                    <th className="p-3 whitespace-nowrap w-[70px] min-w-[70px] sticky left-0 z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
                       ID
                     </th>
-                    {/* Sticky Column 2: Docket / Qtn No (width 170px, offset left 80px) */}
-                    <th className="p-3 whitespace-nowrap w-[170px] min-w-[170px] sticky left-[80px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    {/* Sticky Column 2: Docket / Qtn No (width 150px, offset left 70px) */}
+                    <th className="p-3 whitespace-nowrap w-[150px] min-w-[150px] sticky left-[70px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
                       DOCKET / QTN NO
                     </th>
+                    {/* Sticky Column 3: Item Name Party (width 260px, offset left 220px) */}
+                    <th className="p-3 whitespace-nowrap w-[260px] min-w-[260px] sticky left-[220px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                      ITEM NAME- PARTY
+                    </th>
+                    {/* Sticky Column 4: UOM (width 80px, offset left 480px) */}
+                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[480px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                      UOM
+                    </th>
+                    {/* Sticky Column 5: QTY (width 80px, offset left 560px) */}
+                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[560px] z-40 bg-slate-100 border-r-2 border-slate-400 shadow-xs">
+                      QTY
+                    </th>
 
-                    <th className="p-3 whitespace-nowrap min-w-[280px]">ITEM NAME- PARTY</th>
-                    <th className="p-3 whitespace-nowrap min-w-[90px]">UOM</th>
-                    <th className="p-3 whitespace-nowrap min-w-[90px]">QTY</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[180px]">OUR ITEM/NOT</th>
                     <th className="p-3 whitespace-nowrap min-w-[160px]">TYPE OF ITEM</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[220px]">Our item Name</th>
@@ -2161,10 +2170,10 @@ export default function Dashboard() {
 
                   {/* Filter Header Row */}
                   <tr className="bg-slate-50 border-t border-slate-200">
-                    <td className="p-2 w-[80px] min-w-[80px] sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs text-center font-bold text-slate-400 text-[10px]">
+                    <td className="p-2 w-[70px] min-w-[70px] sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs text-center font-bold text-slate-400 text-[10px]">
                       ID
                     </td>
-                    <td className="p-2 w-[170px] min-w-[170px] sticky left-[80px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    <td className="p-2 w-[150px] min-w-[150px] sticky left-[70px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
                       <input
                         type="text"
                         placeholder="Filter Docket..."
@@ -2176,7 +2185,7 @@ export default function Dashboard() {
                         className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="p-2 min-w-[280px]">
+                    <td className="p-2 w-[260px] min-w-[260px] sticky left-[220px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
                       <input
                         type="text"
                         placeholder="Filter Item..."
@@ -2188,8 +2197,8 @@ export default function Dashboard() {
                         className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="p-2 min-w-[90px]"></td>
-                    <td className="p-2 min-w-[90px]"></td>
+                    <td className="p-2 w-[80px] min-w-[80px] sticky left-[480px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs"></td>
+                    <td className="p-2 w-[80px] min-w-[80px] sticky left-[560px] z-30 bg-slate-100 border-r-2 border-slate-400 shadow-xs"></td>
                     <td className="p-2 min-w-[180px]">
                       <select
                         value={itemFilters.ourItemNot}
@@ -2250,14 +2259,14 @@ export default function Dashboard() {
                     </tr>
                   ) : (
                     items.map((item) => (
-                      <tr key={item.id} className="hover:bg-slate-50 transition-colors align-top min-h-[44px]">
+                      <tr key={item.id} className="hover:bg-slate-50 transition-colors align-top min-h-[44px] group">
                         {/* Sticky Body Cell 1: ID */}
-                        <td className="p-3 text-slate-500 font-mono text-xs font-bold w-[80px] min-w-[80px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
+                        <td className="p-3 text-slate-500 font-mono text-xs font-bold w-[70px] min-w-[70px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
                           #{item.id}
                         </td>
 
                         {/* Sticky Body Cell 2: Docket No */}
-                        <td className="p-3 w-[170px] min-w-[170px] sticky left-[80px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs font-bold text-blue-600">
+                        <td className="p-3 w-[150px] min-w-[150px] sticky left-[70px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs font-bold text-blue-600">
                           {currentUser.role === 'Admin' ? (
                             <AutoResizeTextarea
                               defaultValue={item.docketNoQtnNo || ''}
@@ -2271,7 +2280,8 @@ export default function Dashboard() {
                           )}
                         </td>
 
-                        <td className="p-3 min-w-[280px]">
+                        {/* Sticky Body Cell 3: Item Name */}
+                        <td className="p-3 w-[260px] min-w-[260px] sticky left-[220px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
                           <AutoResizeTextarea
                             defaultValue={item.itemNameParty || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'itemNameParty', val)}
@@ -2279,21 +2289,23 @@ export default function Dashboard() {
                           />
                         </td>
 
-                        <td className="p-3 min-w-[90px]">
+                        {/* Sticky Body Cell 4: UOM */}
+                        <td className="p-3 w-[80px] min-w-[80px] sticky left-[480px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
                           <input
                             type="text"
                             defaultValue={item.uom || ''}
                             onBlur={(e) => handleItemFieldUpdate(item.id, 'uom', e.target.value)}
-                            className="w-20 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs text-slate-700 focus:outline-none"
+                            className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 focus:outline-none"
                           />
                         </td>
 
-                        <td className="p-3 min-w-[90px]">
+                        {/* Sticky Body Cell 5: QTY */}
+                        <td className="p-3 w-[80px] min-w-[80px] sticky left-[560px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-slate-400 shadow-xs">
                           <input
                             type="text"
                             defaultValue={item.qty || ''}
                             onBlur={(e) => handleItemFieldUpdate(item.id, 'qty', e.target.value)}
-                            className="w-20 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none"
+                            className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 font-extrabold focus:outline-none"
                           />
                         </td>
 
@@ -2985,10 +2997,10 @@ export default function Dashboard() {
                                       <table className="w-full text-left border-collapse text-xs border border-slate-200 rounded-lg">
                                         <thead className="bg-slate-100 text-slate-800 font-bold uppercase text-[10px]">
                                           <tr>
-                                            <th className="p-2.5 border-b border-slate-200">Item ID</th>
-                                            <th className="p-2.5 border-b border-slate-200 min-w-[220px]">ITEM NAME- PARTY</th>
-                                            <th className="p-2.5 border-b border-slate-200">UOM</th>
-                                            <th className="p-2.5 border-b border-slate-200">QTY</th>
+                                            <th className="p-2.5 border-b border-slate-200 w-[75px] min-w-[75px] sticky left-0 z-20 bg-slate-100 border-r border-slate-200 shadow-xs">Item ID</th>
+                                            <th className="p-2.5 border-b border-slate-200 w-[240px] min-w-[240px] sticky left-[75px] z-20 bg-slate-100 border-r border-slate-200 shadow-xs">ITEM NAME- PARTY</th>
+                                            <th className="p-2.5 border-b border-slate-200 w-[80px] min-w-[80px] sticky left-[315px] z-20 bg-slate-100 border-r border-slate-200 shadow-xs">UOM</th>
+                                            <th className="p-2.5 border-b border-slate-200 w-[80px] min-w-[80px] sticky left-[395px] z-20 bg-slate-100 border-r-2 border-slate-300 shadow-xs">QTY</th>
                                             <th className="p-2.5 border-b border-slate-200">OUR ITEM/NOT</th>
                                             <th className="p-2.5 border-b border-slate-200 min-w-[180px]">Our item Name</th>
                                             <th className="p-2.5 border-b border-slate-200">SIZE</th>
@@ -3002,9 +3014,9 @@ export default function Dashboard() {
                                         </thead>
                                         <tbody className="divide-y divide-slate-100 font-medium">
                                           {docketItems.map((subItem) => (
-                                            <tr key={subItem.id} className="hover:bg-slate-50">
-                                              <td className="p-2.5 font-mono text-slate-500 font-bold">#{subItem.id}</td>
-                                              <td className="p-2.5">
+                                            <tr key={subItem.id} className="hover:bg-slate-50 group">
+                                              <td className="p-2.5 font-mono text-slate-500 font-bold w-[75px] min-w-[75px] sticky left-0 z-10 bg-white group-hover:bg-slate-50 border-r border-slate-200 shadow-xs">#{subItem.id}</td>
+                                              <td className="p-2.5 w-[240px] min-w-[240px] sticky left-[75px] z-10 bg-white group-hover:bg-slate-50 border-r border-slate-200 shadow-xs">
                                                 <AutoResizeTextarea
                                                   defaultValue={subItem.itemNameParty || ''}
                                                   onSave={(val) =>
@@ -3012,7 +3024,7 @@ export default function Dashboard() {
                                                   }
                                                 />
                                               </td>
-                                              <td className="p-2.5">
+                                              <td className="p-2.5 w-[80px] min-w-[80px] sticky left-[315px] z-10 bg-white group-hover:bg-slate-50 border-r border-slate-200 shadow-xs">
                                                 <input
                                                   type="text"
                                                   defaultValue={subItem.uom || ''}
@@ -3022,7 +3034,7 @@ export default function Dashboard() {
                                                   className="w-16 p-1 border border-slate-200 rounded text-xs"
                                                 />
                                               </td>
-                                              <td className="p-2.5 font-bold">
+                                              <td className="p-2.5 font-bold w-[80px] min-w-[80px] sticky left-[395px] z-10 bg-white group-hover:bg-slate-50 border-r-2 border-slate-300 shadow-xs">
                                                 <input
                                                   type="text"
                                                   defaultValue={subItem.qty || ''}

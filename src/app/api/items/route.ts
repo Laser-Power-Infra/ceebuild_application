@@ -147,7 +147,7 @@ export async function POST(req: Request) {
         unitWtOfMemberKg: unitWtOfMemberKg ? unitWtOfMemberKg.trim() : null,
         weightPerPiece: weightPerPiece ? weightPerPiece.trim() : null,
         price: price ? price.trim() : null,
-        uomOfQtn: uomOfQtn ? uomOfQtn.trim() : null,
+        uomOfQtn: (uomOfQtn && uomOfQtn.trim()) ? uomOfQtn.trim() : (unitWtOfMemberKg && unitWtOfMemberKg.trim() ? unitWtOfMemberKg.trim() : null),
         status: status || 'Quoted',
       },
     });
