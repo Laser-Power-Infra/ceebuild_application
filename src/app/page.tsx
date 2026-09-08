@@ -2145,7 +2145,6 @@ export default function Dashboard() {
                     <th className="p-3 whitespace-nowrap min-w-[280px]">ITEM NAME- PARTY</th>
                     <th className="p-3 whitespace-nowrap min-w-[90px]">UOM</th>
                     <th className="p-3 whitespace-nowrap min-w-[90px]">QTY</th>
-                    <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[130px]">UOM OF QTN</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[180px]">OUR ITEM/NOT</th>
                     <th className="p-3 whitespace-nowrap min-w-[160px]">TYPE OF ITEM</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[220px]">Our item Name</th>
@@ -2191,7 +2190,6 @@ export default function Dashboard() {
                     </td>
                     <td className="p-2 min-w-[90px]"></td>
                     <td className="p-2 min-w-[90px]"></td>
-                    <td className="p-2 min-w-[130px]"></td>
                     <td className="p-2 min-w-[180px]">
                       <select
                         value={itemFilters.ourItemNot}
@@ -2296,16 +2294,6 @@ export default function Dashboard() {
                             defaultValue={item.qty || ''}
                             onBlur={(e) => handleItemFieldUpdate(item.id, 'qty', e.target.value)}
                             className="w-20 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-semibold text-slate-800 focus:outline-none"
-                          />
-                        </td>
-
-                        <td className="p-3 bg-blue-50/30 min-w-[130px]">
-                          <input
-                            type="text"
-                            placeholder={item.uom || 'Nos.'}
-                            defaultValue={item.uomOfQtn || ''}
-                            onBlur={(e) => handleItemFieldUpdate(item.id, 'uomOfQtn', e.target.value)}
-                            className="w-24 bg-white border border-slate-300 rounded px-2 py-1 text-xs font-bold text-blue-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           />
                         </td>
 
@@ -3001,7 +2989,6 @@ export default function Dashboard() {
                                             <th className="p-2.5 border-b border-slate-200 min-w-[220px]">ITEM NAME- PARTY</th>
                                             <th className="p-2.5 border-b border-slate-200">UOM</th>
                                             <th className="p-2.5 border-b border-slate-200">QTY</th>
-                                            <th className="p-2.5 border-b border-slate-200 bg-blue-50 text-blue-900 font-extrabold">UOM OF QTN</th>
                                             <th className="p-2.5 border-b border-slate-200">OUR ITEM/NOT</th>
                                             <th className="p-2.5 border-b border-slate-200 min-w-[180px]">Our item Name</th>
                                             <th className="p-2.5 border-b border-slate-200">SIZE</th>
@@ -3043,17 +3030,6 @@ export default function Dashboard() {
                                                     handleItemFieldUpdate(subItem.id, 'qty', e.target.value, doc.docketNoQtnNo)
                                                   }
                                                   className="w-16 p-1 border border-slate-200 rounded text-xs font-extrabold"
-                                                />
-                                              </td>
-                                              <td className="p-2.5 bg-blue-50/40">
-                                                <input
-                                                  type="text"
-                                                  placeholder={subItem.uom || 'Nos.'}
-                                                  defaultValue={subItem.uomOfQtn || ''}
-                                                  onBlur={(e) =>
-                                                    handleItemFieldUpdate(subItem.id, 'uomOfQtn', e.target.value, doc.docketNoQtnNo)
-                                                  }
-                                                  className="w-20 p-1 border border-blue-200 rounded text-xs font-bold text-blue-800 bg-white"
                                                 />
                                               </td>
                                               <td className="p-2.5">
