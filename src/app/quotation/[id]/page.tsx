@@ -417,16 +417,16 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
             Annexure–A (Price Bid)
           </div>
 
-          <table className="w-full table-fixed text-left border-collapse border border-blue-400 text-xs">
+          <table className="w-full table-auto border-collapse border border-blue-400 text-xs">
             <thead className="bg-[#e0f2fe] text-blue-900 font-extrabold border-b border-blue-400 text-[11px] uppercase">
               <tr>
-                <th className="p-2 border border-blue-400 text-center w-[5%] leading-tight font-extrabold">SL NO</th>
-                <th className="p-2 border border-blue-400 text-left w-[33%] leading-tight font-extrabold">PARTY ITEM NAME</th>
-                <th className="p-2 border border-blue-400 text-left w-[20%] leading-tight font-extrabold">OUR ITEM NAME</th>
-                <th className="p-2 border border-blue-400 text-center w-[8%] leading-tight font-extrabold">QTY</th>
-                <th className="p-2 border border-blue-400 text-center w-[7%] leading-tight font-extrabold">UNIT</th>
-                <th className="p-2 border border-blue-400 text-center w-[12%] leading-tight font-extrabold">RATE/UNIT</th>
-                <th className="p-2 border border-blue-400 text-center w-[15%] leading-tight font-extrabold">UNIT OF QUOTATION</th>
+                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">SL NO</th>
+                <th className="p-2 border border-blue-400 text-left leading-tight font-extrabold">PARTY ITEM NAME</th>
+                <th className="p-2 border border-blue-400 text-left leading-tight font-extrabold">OUR ITEM NAME</th>
+                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">QTY</th>
+                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">UNIT</th>
+                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">RATE/UNIT</th>
+                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">UNIT OF QUOTATION</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-blue-200 font-medium">
@@ -439,13 +439,13 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
               ) : (
                 items.map((item, idx) => (
                   <tr key={item.id} className="keep-together hover:bg-slate-50">
-                    <td className="p-2.5 border border-blue-300 text-center font-bold">{idx + 1}</td>
-                    <td className="p-2.5 border border-blue-300 text-left font-semibold leading-snug break-words">{item.itemNameParty || '-'}</td>
-                    <td className="p-2.5 border border-blue-300 text-left text-blue-900 font-bold break-words">{item.ourItemName || '-'}</td>
-                    <td className="p-2.5 border border-blue-300 text-center font-extrabold">{item.qty || '-'}</td>
-                    <td className="p-2.5 border border-blue-300 text-center">{item.uom || '-'}</td>
-                    <td className="p-2.5 border border-blue-300 text-center font-extrabold">{item.price || '-'}</td>
-                    <td className="p-2.5 border border-blue-300 text-center font-bold">{item.uomOfQtn || item.unitWtOfMemberKg || item.uom || '-'}</td>
+                    <td className="p-2 border border-blue-300 text-center font-bold whitespace-nowrap">{idx + 1}</td>
+                    <td className="p-2 border border-blue-300 text-left font-semibold leading-snug break-words">{item.itemNameParty || '-'}</td>
+                    <td className="p-2 border border-blue-300 text-left text-blue-900 font-bold break-words">{item.ourItemName || '-'}</td>
+                    <td className="p-2 border border-blue-300 text-center font-extrabold whitespace-nowrap">{item.qty || '-'}</td>
+                    <td className="p-2 border border-blue-300 text-center whitespace-nowrap">{item.uom || '-'}</td>
+                    <td className="p-2 border border-blue-300 text-center font-extrabold whitespace-nowrap">{item.price || '-'}</td>
+                    <td className="p-2 border border-blue-300 text-center font-bold whitespace-nowrap">{item.uomOfQtn || item.unitWtOfMemberKg || item.uom || '-'}</td>
                   </tr>
                 ))
               )}
