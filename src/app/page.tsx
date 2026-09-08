@@ -2994,29 +2994,29 @@ export default function Dashboard() {
                                     </div>
                                   ) : (
                                     <div className="overflow-x-auto">
-                                      <table className="w-full text-left border-collapse text-xs border border-slate-200 rounded-lg">
+                                      <table className="w-full text-left border-separate border-spacing-0 text-xs border border-slate-200 rounded-lg table-fixed">
                                         <thead className="bg-slate-100 text-slate-800 font-bold uppercase text-[10px]">
                                           <tr>
-                                            <th className="p-2.5 border-b border-slate-200 w-[75px] min-w-[75px] sticky left-0 z-20 bg-slate-100 border-r border-slate-200 shadow-xs">Item ID</th>
-                                            <th className="p-2.5 border-b border-slate-200 w-[240px] min-w-[240px] sticky left-[75px] z-20 bg-slate-100 border-r border-slate-200 shadow-xs">ITEM NAME- PARTY</th>
-                                            <th className="p-2.5 border-b border-slate-200 w-[80px] min-w-[80px] sticky left-[315px] z-20 bg-slate-100 border-r border-slate-200 shadow-xs">UOM</th>
-                                            <th className="p-2.5 border-b border-slate-200 w-[80px] min-w-[80px] sticky left-[395px] z-20 bg-slate-100 border-r-2 border-slate-300 shadow-xs">QTY</th>
-                                            <th className="p-2.5 border-b border-slate-200">OUR ITEM/NOT</th>
-                                            <th className="p-2.5 border-b border-slate-200 min-w-[180px]">Our item Name</th>
-                                            <th className="p-2.5 border-b border-slate-200">SIZE</th>
-                                            <th className="p-2.5 border-b border-slate-200">Section (mm)</th>
-                                            <th className="p-2.5 border-b border-slate-200">Sectional Wt. (Kg/Mtr.)</th>
-                                            <th className="p-2.5 border-b border-slate-200">Length (Mtr.)</th>
-                                            <th className="p-2.5 border-b border-slate-200">Unit Wt. of Member (Kg)</th>
-                                            <th className="p-2.5 border-b border-slate-200">PRICE</th>
-                                            <th className="p-2.5 border-b border-slate-200">STATUS</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[75px] min-w-[75px] max-w-[75px] sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs">Item ID</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[240px] min-w-[240px] max-w-[240px] sticky left-[75px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">ITEM NAME- PARTY</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[80px] min-w-[80px] max-w-[80px] sticky left-[315px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">UOM</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-30 bg-slate-100 border-r-2 border-slate-400 shadow-md">QTY</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[150px] min-w-[150px]">OUR ITEM/NOT</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[200px] min-w-[200px]">Our item Name</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">SIZE</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[160px] min-w-[160px]">Unit Wt. of Member (Kg)</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[120px] min-w-[120px] bg-blue-50/80">PRICE</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">Section (mm)</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[160px] min-w-[160px]">Sectional Wt. (Kg/Mtr.)</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[120px] min-w-[120px]">Length (Mtr.)</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">STATUS</th>
                                           </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100 font-medium">
                                           {docketItems.map((subItem) => (
                                             <tr key={subItem.id} className="hover:bg-slate-50 group">
-                                              <td className="p-2.5 font-mono text-slate-500 font-bold w-[75px] min-w-[75px] sticky left-0 z-10 bg-white group-hover:bg-slate-50 border-r border-slate-200 shadow-xs">#{subItem.id}</td>
-                                              <td className="p-2.5 w-[240px] min-w-[240px] sticky left-[75px] z-10 bg-white group-hover:bg-slate-50 border-r border-slate-200 shadow-xs">
+                                              <td className="p-2.5 font-mono text-slate-500 font-bold w-[75px] min-w-[75px] max-w-[75px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">#{subItem.id}</td>
+                                              <td className="p-2.5 w-[240px] min-w-[240px] max-w-[240px] sticky left-[75px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
                                                 <AutoResizeTextarea
                                                   defaultValue={subItem.itemNameParty || ''}
                                                   onSave={(val) =>
@@ -3024,7 +3024,7 @@ export default function Dashboard() {
                                                   }
                                                 />
                                               </td>
-                                              <td className="p-2.5 w-[80px] min-w-[80px] sticky left-[315px] z-10 bg-white group-hover:bg-slate-50 border-r border-slate-200 shadow-xs">
+                                              <td className="p-2.5 w-[80px] min-w-[80px] max-w-[80px] sticky left-[315px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
                                                 <input
                                                   type="text"
                                                   defaultValue={subItem.uom || ''}
@@ -3034,7 +3034,7 @@ export default function Dashboard() {
                                                   className="w-16 p-1 border border-slate-200 rounded text-xs"
                                                 />
                                               </td>
-                                              <td className="p-2.5 font-bold w-[80px] min-w-[80px] sticky left-[395px] z-10 bg-white group-hover:bg-slate-50 border-r-2 border-slate-300 shadow-xs">
+                                              <td className="p-2.5 font-bold w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-b border-slate-400 shadow-md">
                                                 <input
                                                   type="text"
                                                   defaultValue={subItem.qty || ''}
@@ -3044,7 +3044,7 @@ export default function Dashboard() {
                                                   className="w-16 p-1 border border-slate-200 rounded text-xs font-extrabold"
                                                 />
                                               </td>
-                                              <td className="p-2.5">
+                                              <td className="p-2.5 border-b border-slate-200">
                                                 <select
                                                   value={subItem.ourItemNot || ''}
                                                   onChange={(e) =>
@@ -3058,7 +3058,7 @@ export default function Dashboard() {
                                                   <option value="TRADING">TRADING</option>
                                                 </select>
                                               </td>
-                                              <td className="p-2.5 font-bold text-blue-700 min-w-[200px]">
+                                              <td className="p-2.5 font-bold text-blue-700 w-[200px] min-w-[200px] border-b border-slate-200">
                                                  <div className="flex items-center space-x-1.5">
                                                    <select
                                                      value={subItem.ourItemName || ''}
@@ -3090,7 +3090,7 @@ export default function Dashboard() {
                                                    )}
                                                  </div>
                                               </td>
-                                              <td className="p-2.5">
+                                              <td className="p-2.5 border-b border-slate-200">
                                                 <AutoResizeTextarea
                                                   defaultValue={subItem.size || ''}
                                                   onSave={(val) =>
@@ -3098,34 +3098,7 @@ export default function Dashboard() {
                                                   }
                                                 />
                                               </td>
-                                              <td className="p-2.5">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.sectionMm || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'sectionMm', val, doc.docketNoQtnNo)
-                                                  }
-                                                  placeholder="e.g. 125x65x6mm"
-                                                />
-                                              </td>
-                                              <td className="p-2.5">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.sectionalWtKgMtr || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'sectionalWtKgMtr', val, doc.docketNoQtnNo)
-                                                  }
-                                                  placeholder="Kg/Mtr."
-                                                />
-                                              </td>
-                                              <td className="p-2.5">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.lengthInMtr || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'lengthInMtr', val, doc.docketNoQtnNo)
-                                                  }
-                                                  placeholder="Mtr."
-                                                />
-                                              </td>
-                                              <td className="p-2.5">
+                                              <td className="p-2.5 border-b border-slate-200">
                                                 <AutoResizeTextarea
                                                   defaultValue={subItem.unitWtOfMemberKg || ''}
                                                   onSave={(val) =>
@@ -3134,7 +3107,7 @@ export default function Dashboard() {
                                                   placeholder="Kg"
                                                 />
                                               </td>
-                                              <td className="p-2.5 font-extrabold">
+                                              <td className="p-2.5 font-extrabold border-b border-slate-200 bg-blue-50/30">
                                                 <input
                                                   type="text"
                                                   defaultValue={subItem.price || ''}
@@ -3144,7 +3117,34 @@ export default function Dashboard() {
                                                   className="w-20 p-1 border border-slate-200 rounded text-xs font-extrabold"
                                                 />
                                               </td>
-                                              <td className="p-2.5">
+                                              <td className="p-2.5 border-b border-slate-200">
+                                                <AutoResizeTextarea
+                                                  defaultValue={subItem.sectionMm || ''}
+                                                  onSave={(val) =>
+                                                    handleItemFieldUpdate(subItem.id, 'sectionMm', val, doc.docketNoQtnNo)
+                                                  }
+                                                  placeholder="e.g. 125x65x6mm"
+                                                />
+                                              </td>
+                                              <td className="p-2.5 border-b border-slate-200">
+                                                <AutoResizeTextarea
+                                                  defaultValue={subItem.sectionalWtKgMtr || ''}
+                                                  onSave={(val) =>
+                                                    handleItemFieldUpdate(subItem.id, 'sectionalWtKgMtr', val, doc.docketNoQtnNo)
+                                                  }
+                                                  placeholder="Kg/Mtr."
+                                                />
+                                              </td>
+                                              <td className="p-2.5 border-b border-slate-200">
+                                                <AutoResizeTextarea
+                                                  defaultValue={subItem.lengthInMtr || ''}
+                                                  onSave={(val) =>
+                                                    handleItemFieldUpdate(subItem.id, 'lengthInMtr', val, doc.docketNoQtnNo)
+                                                  }
+                                                  placeholder="Mtr."
+                                                />
+                                              </td>
+                                              <td className="p-2.5 border-b border-slate-200">
                                                 <select
                                                   value={subItem.status || ''}
                                                   onChange={(e) =>
