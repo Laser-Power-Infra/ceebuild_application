@@ -442,7 +442,7 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
                     <td className="p-2 border border-blue-300 text-center font-extrabold whitespace-nowrap">{item.qty || '-'}</td>
                     <td className="p-2 border border-blue-300 text-center whitespace-nowrap">{item.uom || '-'}</td>
                     <td className="p-2 border border-blue-300 text-center font-extrabold whitespace-nowrap">{item.price || '-'}</td>
-                    <td className="p-2 border border-blue-300 text-center font-bold whitespace-nowrap">{item.uomOfQtn || item.unitWtOfMemberKg || item.uom || '-'}</td>
+                    <td className="p-2 border border-blue-300 text-center font-bold whitespace-nowrap">{item.unitWtOfMemberKg || '-'}</td>
                   </tr>
                 ))
               )}
