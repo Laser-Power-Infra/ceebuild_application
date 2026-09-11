@@ -293,6 +293,7 @@ export default function Dashboard() {
       ourItemNot?: string;
       ourItemName?: string;
       size?: string;
+      weightPerPiece?: string;
       unitWtOfMemberKg?: string;
       price?: string;
       sectionMm?: string;
@@ -308,6 +309,7 @@ export default function Dashboard() {
       ourItemNot: '',
       ourItemName: '',
       size: '',
+      weightPerPiece: '',
       unitWtOfMemberKg: '',
       price: '',
     },
@@ -1231,17 +1233,19 @@ export default function Dashboard() {
         } else if (norm === 'size' || norm.includes('spec') || norm.includes('dimension')) {
           tempMap[cIndex] = 'size';
           matchesCount++;
+        } else if (norm.includes('member') || norm.includes('ofmember') || norm.includes('wtofmember') || norm.includes('memberwt')) {
+          tempMap[cIndex] = 'unitWtOfMemberKg';
+          matchesCount++;
         } else if (
           norm.includes('unitwt') ||
           norm.includes('unitweight') ||
-          norm.includes('wtofmember') ||
-          norm.includes('memberwt') ||
-          norm.includes('unitwtkg') ||
-          norm.includes('weightkg') ||
+          norm.includes('weightperpiece') ||
+          norm.includes('weightperpc') ||
+          norm.includes('weightpc') ||
           norm === 'weight' ||
           norm === 'wt'
         ) {
-          tempMap[cIndex] = 'unitWtOfMemberKg';
+          tempMap[cIndex] = 'weightPerPiece';
           matchesCount++;
         } else if (
           norm === 'price' ||
@@ -1289,6 +1293,7 @@ export default function Dashboard() {
           ourItemNot: '',
           ourItemName: '',
           size: '',
+          weightPerPiece: '',
           unitWtOfMemberKg: '',
           price: '',
           sectionMm: '',
@@ -1319,8 +1324,9 @@ export default function Dashboard() {
         const ourItemNot = row[3] ? String(row[3]).trim() : '';
         const ourItemName = row[4] ? String(row[4]).trim() : '';
         const size = row[5] ? String(row[5]).trim() : '';
-        const unitWtOfMemberKg = row[6] ? String(row[6]).trim() : '';
-        const price = row[7] ? String(row[7]).trim() : '';
+        const weightPerPiece = row[6] ? String(row[6]).trim() : '';
+        const unitWtOfMemberKg = row[7] ? String(row[7]).trim() : '';
+        const price = row[8] ? String(row[8]).trim() : '';
 
         if (itemName || qty || uom) {
           result.push({
@@ -1330,6 +1336,7 @@ export default function Dashboard() {
             ourItemNot: ourItemNot,
             ourItemName: ourItemName,
             size: size,
+            weightPerPiece: weightPerPiece,
             unitWtOfMemberKg: unitWtOfMemberKg,
             price: price,
             status: 'Quoted',
@@ -1406,7 +1413,7 @@ export default function Dashboard() {
   const handleOpenAddDocketModal = () => {
     fetchNextDocketNo();
     setDocketItemsForm([
-      { itemNameParty: '', uom: '', qty: '', ourItemNot: '', ourItemName: '', size: '', unitWtOfMemberKg: '', price: '' },
+      { itemNameParty: '', uom: '', qty: '', ourItemNot: '', ourItemName: '', size: '', weightPerPiece: '', unitWtOfMemberKg: '', price: '' },
     ]);
     setDocketItemViewMode('boxes');
     setShowAddDocketModal(true);
@@ -2371,8 +2378,8 @@ export default function Dashboard() {
                     <th className="p-3 whitespace-nowrap min-w-[140px]">Section (mm)</th>
                     <th className="p-3 whitespace-nowrap min-w-[160px]">Sectional Wt. (Kg/Mtr.)</th>
                     <th className="p-3 whitespace-nowrap min-w-[130px]">Length (Mtr.)</th>
+                    <th className="p-3 whitespace-nowrap bg-blue-50/80 text-blue-900 font-extrabold min-w-[130px]">Unit Wt.</th>
                     <th className="p-3 whitespace-nowrap min-w-[180px]">Unit Wt. of Member (Kg)</th>
-                    <th className="p-3 whitespace-nowrap min-w-[140px]">Weight Per Pc</th>
                     <th className="p-3 whitespace-nowrap min-w-[120px]">Price</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[160px]">Status</th>
                     <th className="p-3 whitespace-nowrap text-center min-w-[80px]">Action</th>
@@ -2602,18 +2609,19 @@ export default function Dashboard() {
                           />
                         </td>
 
+                        <td className="p-3 bg-blue-50/20 min-w-[130px]">
+                          <AutoResizeTextarea
+                            defaultValue={item.weightPerPiece || ''}
+                            onSave={(val) => handleItemFieldUpdate(item.id, 'weightPerPiece', val)}
+                            placeholder="Unit Wt."
+                          />
+                        </td>
+
                         <td className="p-3 min-w-[180px]">
                           <AutoResizeTextarea
                             defaultValue={item.unitWtOfMemberKg || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'unitWtOfMemberKg', val)}
                             placeholder="Kg"
-                          />
-                        </td>
-
-                        <td className="p-3 min-w-[140px]">
-                          <AutoResizeTextarea
-                            defaultValue={item.weightPerPiece || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'weightPerPiece', val)}
                           />
                         </td>
 
@@ -3283,6 +3291,7 @@ export default function Dashboard() {
                                             <th className="p-2.5 border-b border-slate-300 w-[150px] min-w-[150px]">OUR ITEM/NOT</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[200px] min-w-[200px]">Our item Name</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">SIZE</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[130px] min-w-[130px] bg-blue-50/80 text-blue-900 font-extrabold">Unit Wt.</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[160px] min-w-[160px]">Unit Wt. of Member (Kg)</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[120px] min-w-[120px] bg-blue-50/80">PRICE</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">Section (mm)</th>
@@ -3375,6 +3384,15 @@ export default function Dashboard() {
                                                   onSave={(val) =>
                                                     handleItemFieldUpdate(subItem.id, 'size', val, doc.docketNoQtnNo)
                                                   }
+                                                />
+                                              </td>
+                                              <td className="p-2.5 border-b border-slate-200 bg-blue-50/20">
+                                                <AutoResizeTextarea
+                                                  defaultValue={subItem.weightPerPiece || ''}
+                                                  onSave={(val) =>
+                                                    handleItemFieldUpdate(subItem.id, 'weightPerPiece', val, doc.docketNoQtnNo)
+                                                  }
+                                                  placeholder="Unit Wt."
                                                 />
                                               </td>
                                               <td className="p-2.5 border-b border-slate-200">
@@ -4327,6 +4345,23 @@ export default function Dashboard() {
                             />
                           </div>
 
+                          {/* Unit Wt. */}
+                          <div>
+                            <label className="font-bold text-slate-700">Unit Wt.:</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. 5.2"
+                              value={row.weightPerPiece || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, weightPerPiece: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white text-xs font-medium"
+                            />
+                          </div>
+
                           {/* Unit Wt. of Member (Kg) */}
                           <div>
                             <label className="font-bold text-slate-700">Unit Wt. of Member (Kg):</label>
@@ -4377,7 +4412,8 @@ export default function Dashboard() {
                           <th className="p-2 w-32">OUR ITEM / NOT</th>
                           <th className="p-2 w-40">Our item Name</th>
                           <th className="p-2 w-28">SIZE</th>
-                          <th className="p-2 w-32">Unit Wt. (Kg)</th>
+                          <th className="p-2 w-28 bg-blue-50/80 text-blue-900 font-extrabold">Unit Wt.</th>
+                          <th className="p-2 w-32">Unit Wt. of Member (Kg)</th>
                           <th className="p-2 w-28">PRICE</th>
                           <th className="p-2 w-10 text-center">Action</th>
                         </tr>
@@ -4474,6 +4510,20 @@ export default function Dashboard() {
                                   );
                                 }}
                                 className="w-full p-1.5 border border-slate-200 rounded-lg text-xs"
+                              />
+                            </td>
+                            <td className="p-2 bg-blue-50/30">
+                              <input
+                                type="text"
+                                placeholder="Unit Wt."
+                                value={row.weightPerPiece || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, weightPerPiece: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs font-medium"
                               />
                             </td>
                             <td className="p-2">

@@ -224,6 +224,7 @@ export async function POST(req: Request) {
               ourItemNot: autoNot,
               ourItemName: it.ourItemName || null,
               size: it.size ? it.size.trim() : null,
+              weightPerPiece: it.weightPerPiece ? it.weightPerPiece.trim() : null,
               unitWtOfMemberKg: it.unitWtOfMemberKg ? it.unitWtOfMemberKg.trim() : null,
               price: it.price ? it.price.trim() : null,
               sectionMm: it.sectionMm ? it.sectionMm.trim() : null,
