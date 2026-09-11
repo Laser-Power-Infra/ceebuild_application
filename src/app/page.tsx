@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { autoDetectOurItemNot } from '@/lib/classifier';
 import {
   Search,
@@ -41,6 +41,13 @@ import {
   Wand2,
   Brain,
   HelpCircle,
+  Upload,
+  FileUp,
+  Table,
+  LayoutGrid,
+  Paperclip,
+  File,
+  Download,
 } from 'lucide-react';
 import Link from 'next/link';
 
@@ -82,6 +89,7 @@ interface DockerParty {
   warranty: string | null;
   approval: string | null;
   inspection: string | null;
+  attachments?: string | null;
   firstItemName?: string | null;
   createdAt: string;
 }
@@ -276,10 +284,38 @@ export default function Dashboard() {
     inspection: '',
   });
 
-  // Dynamic Item Row Boxes in Add Docket Modal (Supports Excel Copy-Paste)
+  // Dynamic Item Row Boxes in Add Docket Modal (Supports Excel Drag-&-Drop, Copy-Paste & Smart Column Tracking)
   const [docketItemsForm, setDocketItemsForm] = useState<
-    Array<{ itemNameParty: string; uom: string; qty: string }>
-  >([{ itemNameParty: '', uom: '', qty: '' }]);
+    Array<{
+      itemNameParty: string;
+      uom: string;
+      qty: string;
+      ourItemNot?: string;
+      ourItemName?: string;
+      size?: string;
+      unitWtOfMemberKg?: string;
+      price?: string;
+      sectionMm?: string;
+      sectionalWtKgMtr?: string;
+      lengthInMtr?: string;
+      status?: string;
+    }>
+  >([
+    {
+      itemNameParty: '',
+      uom: '',
+      qty: '',
+      ourItemNot: '',
+      ourItemName: '',
+      size: '',
+      unitWtOfMemberKg: '',
+      price: '',
+    },
+  ]);
+
+  const [docketItemViewMode, setDocketItemViewMode] = useState<'boxes' | 'table'>('boxes');
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [newItemForm, setNewItemForm] = useState({
@@ -972,6 +1008,52 @@ export default function Dashboard() {
     }
   };
 
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+
+  const handleUploadDocketAttachment = async (file: File): Promise<string | null> => {
+    setUploadingAttachment(true);
+    try {
+      showToast(`Uploading attachment "${file.name}" to S3 server...`);
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to upload attachment');
+
+      showToast(`✨ Uploaded attachment to S3: "${data.originalName}"`);
+      return data.filename;
+    } catch (err: any) {
+      console.error('Attachment upload error:', err);
+      showToast(`Error uploading attachment: ${err.message || 'Upload failed'}`);
+      return null;
+    } finally {
+      setUploadingAttachment(false);
+    }
+  };
+
+  const parseAttachments = (attachmentsStr?: string | null): string[] => {
+    if (!attachmentsStr) return [];
+    try {
+      if (attachmentsStr.trim().startsWith('[')) {
+        return JSON.parse(attachmentsStr);
+      }
+      return attachmentsStr.split(',').map((s) => s.trim()).filter(Boolean);
+    } catch (e) {
+      return [attachmentsStr];
+    }
+  };
+
+  const getAttachmentUrl = (filename: string) => {
+    if (!filename) return '#';
+    if (filename.startsWith('http://') || filename.startsWith('https://')) return filename;
+    return `http://192.168.1.190:8500/ceebuild-docket/${encodeURIComponent(filename)}`;
+  };
+
   // General field updater for DockerPartyName
   const handleDocketFieldUpdate = async (id: number, field: keyof DockerParty, value: string) => {
     const currentDoc = dockets.find((d) => d.id === id);
@@ -1082,123 +1164,251 @@ export default function Dashboard() {
     }
   };
 
-  // Helper to parse TSV rows from Excel clipboard, handling quoted multiline cells
-  const parseExcelClipboard = (text: string): Array<{ itemNameParty: string; uom: string; qty: string }> => {
-    if (!text) return [];
-
-    const rows: string[][] = [];
-    let currentRow: string[] = [];
-    let currentCell = '';
-    let inQuotes = false;
-
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
-      const nextChar = text[i + 1];
-
-      if (char === '"') {
-        if (inQuotes && nextChar === '"') {
-          currentCell += '"';
-          i++;
-        } else {
-          inQuotes = !inQuotes;
-        }
-      } else if (char === '\t' && !inQuotes) {
-        currentRow.push(currentCell.trim());
-        currentCell = '';
-      } else if ((char === '\r' || char === '\n') && !inQuotes) {
-        if (char === '\r' && nextChar === '\n') {
-          i++;
-        }
-        currentRow.push(currentCell.trim());
-        if (currentRow.some((c) => c !== '')) {
-          rows.push(currentRow);
-        }
-        currentRow = [];
-        currentCell = '';
-      } else {
-        currentCell += char;
-      }
-    }
-
-    if (currentCell !== '' || currentRow.length > 0) {
-      currentRow.push(currentCell.trim());
-      if (currentRow.some((c) => c !== '')) {
-        rows.push(currentRow);
-      }
-    }
-
-    return rows.map((cols) => {
-      let itemName = cols[0] || '';
-      let uom = cols[1] || '';
-      let qty = cols[2] || '';
-
-      if (cols.length === 1 && cols[0].includes('\t')) {
-        const parts = cols[0].split('\t').map((p) => p.trim());
-        itemName = parts[0] || '';
-        uom = parts[1] || '';
-        qty = parts[2] || '';
-      }
-
-      if (itemName.startsWith('"') && itemName.endsWith('"')) {
-        itemName = itemName.slice(1, -1).trim();
-      }
-      itemName = itemName.replace(/^"+|"+$/g, '').trim();
-
-      return {
-        itemNameParty: itemName,
-        uom: uom,
-        qty: qty,
-      };
+  // Dynamically load SheetJS (XLSX) library on demand
+  const loadXLSX = async () => {
+    if ((window as any).XLSX) return (window as any).XLSX;
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      script.onload = () => resolve((window as any).XLSX);
+      script.onerror = reject;
+      document.body.appendChild(script);
     });
   };
 
-  // Excel Bulk Copy-Paste Handler for item boxes in Add Docket Modal
+  // Smart Column Header Tracking & Mapper for Excel / CSV / TSV matrices
+  const parseTabularDataWithHeaderTracking = (matrix: string[][]) => {
+    if (!matrix || matrix.length === 0) return [];
+
+    const cleanMatrix = matrix.filter(
+      (row) => Array.isArray(row) && row.some((cell) => cell && String(cell).trim() !== '')
+    );
+    if (cleanMatrix.length === 0) return [];
+
+    let headerIndex = -1;
+    const colMap: { [key: number]: string } = {};
+
+    const normalizeHeader = (str: string) => (str || '').toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    for (let r = 0; r < Math.min(3, cleanMatrix.length); r++) {
+      const row = cleanMatrix[r];
+      let matchesCount = 0;
+      const tempMap: { [key: number]: string } = {};
+
+      row.forEach((cell, cIndex) => {
+        const norm = normalizeHeader(cell || '');
+        if (!norm) return;
+
+        if (
+          norm.includes('itemnameparty') ||
+          norm.includes('partyitemname') ||
+          norm.includes('itemname') ||
+          norm.includes('partyitem') ||
+          norm.includes('description') ||
+          norm.includes('particulars') ||
+          norm === 'items' ||
+          norm === 'item'
+        ) {
+          tempMap[cIndex] = 'itemNameParty';
+          matchesCount++;
+        } else if (norm === 'uom' || norm.includes('unitof') || norm === 'unit' || norm === 'units' || norm === 'uomofqtn') {
+          tempMap[cIndex] = 'uom';
+          matchesCount++;
+        } else if (norm === 'qty' || norm.includes('quantity') || norm === 'quantities' || norm === 'nos') {
+          tempMap[cIndex] = 'qty';
+          matchesCount++;
+        } else if (
+          norm.includes('ouritemnot') ||
+          norm.includes('mfgtrading') ||
+          norm.includes('ouritemornot') ||
+          norm.includes('type')
+        ) {
+          tempMap[cIndex] = 'ourItemNot';
+          matchesCount++;
+        } else if (norm.includes('ouritemname') || norm.includes('ouritem') || norm.includes('category') || norm.includes('standardname')) {
+          tempMap[cIndex] = 'ourItemName';
+          matchesCount++;
+        } else if (norm === 'size' || norm.includes('spec') || norm.includes('dimension')) {
+          tempMap[cIndex] = 'size';
+          matchesCount++;
+        } else if (
+          norm.includes('unitwt') ||
+          norm.includes('unitweight') ||
+          norm.includes('wtofmember') ||
+          norm.includes('memberwt') ||
+          norm.includes('unitwtkg') ||
+          norm.includes('weightkg') ||
+          norm === 'weight' ||
+          norm === 'wt'
+        ) {
+          tempMap[cIndex] = 'unitWtOfMemberKg';
+          matchesCount++;
+        } else if (
+          norm === 'price' ||
+          norm === 'rate' ||
+          norm.includes('rateunit') ||
+          norm.includes('unitprice') ||
+          norm.includes('pricers') ||
+          norm.includes('raters')
+        ) {
+          tempMap[cIndex] = 'price';
+          matchesCount++;
+        } else if (norm.includes('sectionmm') || norm === 'section') {
+          tempMap[cIndex] = 'sectionMm';
+          matchesCount++;
+        } else if (norm.includes('sectionalwt')) {
+          tempMap[cIndex] = 'sectionalWtKgMtr';
+          matchesCount++;
+        } else if (norm.includes('length')) {
+          tempMap[cIndex] = 'lengthInMtr';
+          matchesCount++;
+        } else if (norm === 'status') {
+          tempMap[cIndex] = 'status';
+          matchesCount++;
+        }
+      });
+
+      if (matchesCount >= 1) {
+        headerIndex = r;
+        Object.assign(colMap, tempMap);
+        break;
+      }
+    }
+
+    const startRow = headerIndex >= 0 ? headerIndex + 1 : 0;
+    const result: Array<any> = [];
+
+    for (let i = startRow; i < cleanMatrix.length; i++) {
+      const row = cleanMatrix[i];
+
+      if (headerIndex >= 0 && Object.keys(colMap).length > 0) {
+        const itemRow: any = {
+          itemNameParty: '',
+          uom: '',
+          qty: '',
+          ourItemNot: '',
+          ourItemName: '',
+          size: '',
+          unitWtOfMemberKg: '',
+          price: '',
+          sectionMm: '',
+          sectionalWtKgMtr: '',
+          lengthInMtr: '',
+          status: 'Quoted',
+        };
+
+        row.forEach((cellVal, colIdx) => {
+          const val = cellVal ? String(cellVal).trim() : '';
+          const fieldKey = colMap[colIdx];
+          if (fieldKey) {
+            itemRow[fieldKey] = val;
+          }
+        });
+
+        if (!itemRow.itemNameParty && row[0]) {
+          itemRow.itemNameParty = String(row[0]).trim();
+        }
+
+        if (itemRow.itemNameParty || itemRow.qty || itemRow.price) {
+          result.push(itemRow);
+        }
+      } else {
+        const itemName = row[0] ? String(row[0]).trim() : '';
+        const uom = row[1] ? String(row[1]).trim() : '';
+        const qty = row[2] ? String(row[2]).trim() : '';
+        const ourItemNot = row[3] ? String(row[3]).trim() : '';
+        const ourItemName = row[4] ? String(row[4]).trim() : '';
+        const size = row[5] ? String(row[5]).trim() : '';
+        const unitWtOfMemberKg = row[6] ? String(row[6]).trim() : '';
+        const price = row[7] ? String(row[7]).trim() : '';
+
+        if (itemName || qty || uom) {
+          result.push({
+            itemNameParty: itemName,
+            uom: uom,
+            qty: qty,
+            ourItemNot: ourItemNot,
+            ourItemName: ourItemName,
+            size: size,
+            unitWtOfMemberKg: unitWtOfMemberKg,
+            price: price,
+            status: 'Quoted',
+          });
+        }
+      }
+    }
+
+    return result;
+  };
+
+  // Excel / CSV File Drag & Drop Handler with Smart Header Tracking
+  const handleDropExcelFile = async (file: File) => {
+    try {
+      showToast(`Reading Excel file "${file.name}"...`);
+      const XLSX = await loadXLSX();
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      const worksheet = workbook.Sheets[firstSheetName];
+      const matrix: string[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, raw: false });
+      const parsedItems = parseTabularDataWithHeaderTracking(matrix);
+
+      if (parsedItems.length > 0) {
+        setDocketItemsForm(parsedItems);
+        showToast(`✨ Tracked headers & auto-filled ${parsedItems.length} item boxes from "${file.name}"!`);
+      } else {
+        showToast(`Warning: No valid item rows found in file "${file.name}".`);
+      }
+    } catch (err: any) {
+      console.error('Excel parse error:', err);
+      showToast(`Error reading Excel file: ${err.message || 'Invalid format'}`);
+    }
+  };
+
+  // Clipboard Paste Handler with Smart Column Header Tracking
   const handlePasteItems = (
     e: React.ClipboardEvent,
     rowIndex: number,
-    targetField: 'itemNameParty' | 'uom' | 'qty'
+    targetField?: string
   ) => {
     const pasteData = e.clipboardData.getData('text');
     if (!pasteData) return;
 
-    const parsedItems = parseExcelClipboard(pasteData);
-    if (parsedItems.length <= 1 && !pasteData.includes('\t') && !pasteData.includes('\n')) {
-      return; // Normal single line paste
+    if (!pasteData.includes('\t') && !pasteData.includes('\n')) {
+      return; // Single value paste
     }
 
     e.preventDefault();
+    const rawLines = pasteData.split(/\r?\n/).filter((l) => l.trim() !== '');
+    const matrix = rawLines.map((line) => line.split('\t').map((cell) => cell.replace(/^"+|"+$/g, '').trim()));
+
+    const parsedItems = parseTabularDataWithHeaderTracking(matrix);
+    if (parsedItems.length === 0) return;
+
     const newRows = [...docketItemsForm];
 
     parsedItems.forEach((parsed, idx) => {
       const targetIndex = rowIndex + idx;
-      const rawName = parsed.itemNameParty || '';
-      const autoNot = '';
-
-      const itemObj = {
-        itemNameParty: rawName,
-        uom: parsed.uom || '',
-        qty: parsed.qty || '',
-        ourItemNot: autoNot,
-      };
-
       if (targetIndex < newRows.length) {
         newRows[targetIndex] = {
           ...newRows[targetIndex],
-          ...itemObj,
+          ...parsed,
         };
       } else {
-        newRows.push(itemObj);
+        newRows.push(parsed);
       }
     });
 
     setDocketItemsForm(newRows);
-    showToast(`Pasted & created ${parsedItems.length} item rows from Excel!`);
+    showToast(`✨ Auto-filled ${parsedItems.length} item boxes from Excel clipboard!`);
   };
 
-  // Open Add Docket Modal and compute next incremental number
   const handleOpenAddDocketModal = () => {
     fetchNextDocketNo();
-    setDocketItemsForm([{ itemNameParty: '', uom: '', qty: '' }]);
+    setDocketItemsForm([
+      { itemNameParty: '', uom: '', qty: '', ourItemNot: '', ourItemName: '', size: '', unitWtOfMemberKg: '', price: '' },
+    ]);
+    setDocketItemViewMode('boxes');
     setShowAddDocketModal(true);
   };
 
@@ -2561,55 +2771,56 @@ export default function Dashboard() {
 
             <div className="overflow-x-auto max-h-[680px]">
               <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-30 border-b border-slate-200 text-[11px] uppercase tracking-wider">
+                <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-30 border-b border-slate-200 text-[10px] uppercase tracking-wider">
                   <tr>
-                    {/* STICKY COLUMN 1: ACTIONS PDF/AI/DELETE (width 230px) */}
-                    <th className="p-3 whitespace-nowrap bg-blue-600 text-white font-extrabold text-center w-[230px] min-w-[230px] sticky left-0 z-40 shadow-xs">
-                      ACTIONS (PDF / AI / DEL)
+                    {/* STICKY COLUMN 1: ACTIONS (width 120px) */}
+                    <th className="py-2 px-2 whitespace-nowrap bg-blue-600 text-white font-extrabold text-center w-[120px] min-w-[120px] sticky left-0 z-40 shadow-xs">
+                      ACTIONS
                     </th>
-                    {/* STICKY COLUMN 2: ID (width 70px, offset left 230px) */}
-                    <th className="p-3 whitespace-nowrap w-[70px] min-w-[70px] sticky left-[230px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    {/* STICKY COLUMN 2: ID (width 50px, offset left 120px) */}
+                    <th className="py-2 px-2 whitespace-nowrap w-[50px] min-w-[50px] sticky left-[120px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs text-center">
                       ID
                     </th>
 
-                    <th className="p-3 whitespace-nowrap min-w-[200px]">DOCKET / QTN NO</th>
-                    <th className="p-3 whitespace-nowrap bg-blue-50/80 text-blue-900 font-extrabold min-w-[260px]">
+                    <th className="py-2 px-2.5 whitespace-nowrap w-[130px] min-w-[130px]">DOCKET / QTN NO</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-blue-50/80 text-blue-900 font-extrabold w-[210px] min-w-[210px]">
                       FIRST ITEM NAME
                     </th>
-                    <th className="p-3 whitespace-nowrap min-w-[240px]">PARTY NAME</th>
-                    <th className="p-3 whitespace-nowrap min-w-[140px]">STATE</th>
-                    <th className="p-3 whitespace-nowrap min-w-[120px]">UTILITY</th>
-                    <th className="p-3 whitespace-nowrap min-w-[200px]">DELIVERY LOCATION</th>
-                    <th className="p-3 whitespace-nowrap bg-purple-50 min-w-[220px]">Price Condition</th>
-                    <th className="p-3 whitespace-nowrap bg-purple-50 min-w-[220px]">Payment Condition</th>
-                    <th className="p-3 whitespace-nowrap bg-purple-50 min-w-[220px]">Delivery Condition</th>
-                    <th className="p-3 whitespace-nowrap bg-purple-50 min-w-[220px]">Warranty Condition</th>
-                    <th className="p-3 whitespace-nowrap bg-purple-50 min-w-[220px]">Approval Condition</th>
-                    <th className="p-3 whitespace-nowrap bg-purple-50 min-w-[220px]">Inspection Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap w-[200px] min-w-[200px]">PARTY NAME</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap w-[110px] min-w-[110px]">STATE</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap w-[100px] min-w-[100px]">UTILITY</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap w-[160px] min-w-[160px]">DELIVERY LOCATION</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-emerald-50 text-emerald-900 font-extrabold w-[180px] min-w-[180px]">ATTACHMENTS</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Price Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Payment Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Delivery Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Warranty Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Approval Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Inspection Condition</th>
                   </tr>
 
                   {/* Filter Header Row */}
                   <tr className="bg-slate-50 border-t border-slate-200">
-                    <td className="p-2 w-[230px] min-w-[230px] text-center text-[10px] font-bold text-slate-400 sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      PDF / AI / Delete Actions
+                    <td className="p-1.5 w-[120px] min-w-[120px] text-center text-[10px] font-bold text-slate-400 sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
+                      PDF / AI / Delete
                     </td>
-                    <td className="p-2 w-[70px] min-w-[70px] text-center text-[10px] font-bold text-slate-400 sticky left-[230px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    <td className="p-1.5 w-[50px] min-w-[50px] text-center text-[10px] font-bold text-slate-400 sticky left-[120px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
                       ID
                     </td>
 
-                    <td className="p-2 min-w-[200px]">
+                    <td className="p-1.5 w-[130px] min-w-[130px]">
                       <input
                         type="text"
-                        placeholder="Filter Docket..."
+                        placeholder="Filter..."
                         value={docketFilters.docketNoQtnNo}
                         onChange={(e) => {
                           setDocketFilters((prev) => ({ ...prev, docketNoQtnNo: e.target.value }));
                           setDocketPage(1);
                         }}
-                        className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-1.5 py-0.5 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="p-2 min-w-[260px] bg-blue-50/50">
+                    <td className="p-1.5 w-[210px] min-w-[210px] bg-blue-50/50">
                       <input
                         type="text"
                         placeholder="Filter Item Name..."
@@ -2618,10 +2829,10 @@ export default function Dashboard() {
                           setDocketFilters((prev) => ({ ...prev, itemFilter: e.target.value }));
                           setDocketPage(1);
                         }}
-                        className="w-full px-2 py-1 text-xs border border-blue-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-1.5 py-0.5 text-xs border border-blue-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="p-2 min-w-[240px]">
+                    <td className="p-1.5 w-[200px] min-w-[200px]">
                       <input
                         type="text"
                         placeholder="Filter Party..."
@@ -2630,17 +2841,17 @@ export default function Dashboard() {
                           setDocketFilters((prev) => ({ ...prev, partyName: e.target.value }));
                           setDocketPage(1);
                         }}
-                        className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-1.5 py-0.5 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="p-2 min-w-[140px]">
+                    <td className="p-1.5 w-[110px] min-w-[110px]">
                       <select
                         value={docketFilters.state}
                         onChange={(e) => {
                           setDocketFilters((prev) => ({ ...prev, state: e.target.value }));
                           setDocketPage(1);
                         }}
-                        className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        className="w-full px-1 py-0.5 text-[11px] border border-slate-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
                       >
                         <option value="">All States</option>
                         {stateOptions.map((st) => (
@@ -2650,27 +2861,28 @@ export default function Dashboard() {
                         ))}
                       </select>
                     </td>
-                    <td className="p-2 min-w-[120px]"></td>
-                    <td className="p-2 min-w-[200px]"></td>
-                    <td className="p-2 min-w-[220px]"></td>
-                    <td className="p-2 min-w-[220px]"></td>
-                    <td className="p-2 min-w-[220px]"></td>
-                    <td className="p-2 min-w-[220px]"></td>
-                    <td className="p-2 min-w-[220px]"></td>
-                    <td className="p-2 min-w-[220px]"></td>
+                    <td className="p-1.5 w-[100px] min-w-[100px]"></td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
+                    <td className="p-1.5 w-[180px] min-w-[180px] bg-emerald-50/50"></td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
                   </tr>
                 </thead>
 
                 <tbody className="divide-y divide-slate-100 font-medium">
                   {docketsLoading ? (
                     <tr>
-                      <td colSpan={14} className="p-10 text-center text-slate-400 font-semibold">
+                      <td colSpan={15} className="p-8 text-center text-slate-400 font-semibold">
                         Loading docket party records...
                       </td>
                     </tr>
                   ) : dockets.length === 0 ? (
                     <tr>
-                      <td colSpan={14} className="p-10 text-center text-slate-400 font-semibold">
+                      <td colSpan={15} className="p-8 text-center text-slate-400 font-semibold">
                         No docket party records found matching filters.
                       </td>
                     </tr>
@@ -2692,36 +2904,35 @@ export default function Dashboard() {
 
                       return (
                         <React.Fragment key={doc.id}>
-                          <tr className="group hover:bg-slate-50/90 transition-colors align-top min-h-[44px]">
-                            {/* STICKY BODY CELL 1: GENERATE PDF, AI AUTOFILL & ADMIN DELETE BUTTONS */}
-                            <td className="p-2 text-center w-[230px] min-w-[230px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
+                          <tr className="group hover:bg-slate-50/90 transition-colors align-top">
+                            {/* STICKY BODY CELL 1: ACTIONS (width 120px) */}
+                            <td className="p-1.5 text-center w-[120px] min-w-[120px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
                               <div className="flex items-center justify-center space-x-1">
                                 <Link
                                   href={`/quotation/${doc.id}`}
                                   target="_blank"
-                                  className="inline-flex items-center space-x-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] px-2 py-1 rounded-xl transition-all shadow-xs"
+                                  className="inline-flex items-center space-x-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] px-1.5 py-0.5 rounded-lg transition-all shadow-2xs"
                                   title="Generate PDF Quotation"
                                 >
                                   <FileText className="w-3 h-3" />
                                   <span>PDF</span>
-                                  <ExternalLink className="w-2.5 h-2.5 opacity-70" />
                                 </Link>
 
                                 <button
                                   onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
                                   disabled={aiProcessing}
-                                  className="inline-flex items-center space-x-1 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-[11px] px-2 py-1 rounded-xl shadow-xs transition-all"
+                                  className="inline-flex items-center space-x-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-extrabold text-[10px] px-1.5 py-0.5 rounded-lg shadow-2xs transition-all"
                                   title="Autofill unclassified items for this docket using Groq AI"
                                 >
-                                  <Sparkles className="w-3 h-3 text-yellow-300 animate-pulse" />
+                                  <Sparkles className="w-2.5 h-2.5 text-yellow-300" />
                                   <span>AI</span>
                                 </button>
 
                                 {currentUser.role === 'Admin' && (
                                   <button
                                     onClick={() => handleDeleteDocket(doc.id, doc.docketNoQtnNo)}
-                                    className="inline-flex items-center justify-center p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 hover:border-rose-600 rounded-xl transition-all shadow-xs"
-                                    title="Delete Docket & All Associated Items (Admin Only)"
+                                    className="inline-flex items-center justify-center p-1 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 rounded-lg transition-all"
+                                    title="Delete Docket (Admin Only)"
                                   >
                                     <Trash2 className="w-3 h-3" />
                                   </button>
@@ -2729,38 +2940,38 @@ export default function Dashboard() {
                               </div>
                             </td>
 
-                            {/* STICKY BODY CELL 2: ID */}
-                            <td className="p-3 text-slate-500 font-mono text-xs font-bold w-[70px] min-w-[70px] sticky left-[230px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
+                            {/* STICKY BODY CELL 2: ID (width 50px, offset left 120px) */}
+                            <td className="p-1.5 text-slate-500 font-mono text-[11px] font-bold text-center w-[50px] min-w-[50px] sticky left-[120px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
                               #{doc.id}
                             </td>
 
-                            {/* DOCKET NO WITH ARROW BUTTON TOGGLE */}
-                            <td className="p-3 min-w-[200px]">
-                              <div className="flex items-center space-x-2">
+                            {/* DOCKET NO WITH TOGGLE */}
+                            <td className="p-1.5 w-[130px] min-w-[130px]">
+                              <div className="flex items-center space-x-1">
                                 <button
                                   onClick={() => toggleDocketExpand(doc.id, doc.docketNoQtnNo)}
-                                  className={`p-1.5 rounded-lg border transition-all ${
+                                  className={`p-1 rounded-md border transition-all ${
                                     isExpanded
                                       ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
                                       : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
                                   }`}
-                                  title={isExpanded ? 'Collapse Items' : 'Expand & View Items'}
+                                  title={isExpanded ? 'Collapse Items' : 'Expand Items'}
                                 >
                                   {isExpanded ? (
-                                    <ChevronDown className="w-4 h-4" />
+                                    <ChevronDown className="w-3.5 h-3.5" />
                                   ) : (
-                                    <ChevronRight className="w-4 h-4" />
+                                    <ChevronRight className="w-3.5 h-3.5" />
                                   )}
                                 </button>
-                                <div className="flex-1">
+                                <div className="flex-1 min-w-0">
                                   {currentUser.role === 'Admin' ? (
                                     <AutoResizeTextarea
                                       defaultValue={doc.docketNoQtnNo || ''}
                                       onSave={(val) => handleDocketFieldUpdate(doc.id, 'docketNoQtnNo', val)}
-                                      className="font-bold text-blue-600"
+                                      className="font-bold text-blue-600 text-xs"
                                     />
                                   ) : (
-                                    <span className="font-bold text-blue-600 px-2 py-1 block text-xs">
+                                    <span className="font-bold text-blue-600 px-1 py-0.5 block text-xs truncate">
                                       {doc.docketNoQtnNo || '-'}
                                     </span>
                                   )}
@@ -2769,58 +2980,126 @@ export default function Dashboard() {
                             </td>
 
                             {/* FIRST ITEM NAME PREVIEW CELL */}
-                            <td className="p-3 min-w-[260px] bg-blue-50/20">
+                            <td className="p-1.5 w-[210px] min-w-[210px] bg-blue-50/20">
                               {doc.firstItemName ? (
                                 <div
-                                  className="inline-flex items-center space-x-1.5 bg-white border border-blue-200 text-blue-900 rounded-lg px-2.5 py-1 text-xs font-bold shadow-2xs max-w-[250px] truncate"
+                                  className="inline-flex items-center space-x-1 bg-white border border-blue-200 text-blue-900 rounded-md px-2 py-0.5 text-xs font-bold shadow-2xs max-w-[200px] truncate"
                                   title={doc.firstItemName}
                                 >
-                                  <Package className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-                                  <span className="truncate">{doc.firstItemName}</span>
+                                  <Package className="w-3 h-3 text-blue-600 shrink-0" />
+                                  <span className="truncate text-[11px]">{doc.firstItemName}</span>
                                 </div>
                               ) : (
-                                <span className="text-slate-400 italic text-[11px]">No items listed</span>
+                                <span className="text-slate-400 italic text-[10px]">No items listed</span>
                               )}
                             </td>
 
-                            <td className="p-3 min-w-[240px]">
+                            <td className="p-1.5 w-[200px] min-w-[200px]">
                               <AutoResizeTextarea
                                 defaultValue={doc.partyName || ''}
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'partyName', val)}
                                 placeholder="Party Name..."
-                                className="font-bold text-slate-900"
+                                className="font-bold text-slate-900 text-xs"
                               />
                             </td>
 
-                            <td className="p-3 min-w-[140px]">
+                            <td className="p-1.5 w-[110px] min-w-[110px]">
                               <AutoResizeTextarea
                                 defaultValue={doc.state || ''}
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'state', val)}
+                                className="text-xs"
                               />
                             </td>
 
-                            <td className="p-3 min-w-[120px]">
+                            <td className="p-1.5 w-[100px] min-w-[100px]">
                               <AutoResizeTextarea
                                 defaultValue={doc.utility || ''}
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'utility', val)}
+                                className="text-xs"
                               />
                             </td>
 
-                            <td className="p-3 min-w-[200px]">
+                            <td className="p-1.5 w-[160px] min-w-[160px]">
                               <AutoResizeTextarea
                                 defaultValue={doc.deliveryLocation || ''}
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'deliveryLocation', val)}
+                                className="text-xs"
                               />
                             </td>
 
+                            {/* COMPACT ATTACHMENTS CELL */}
+                            <td className="p-1.5 w-[180px] min-w-[180px] bg-emerald-50/20">
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between">
+                                  <label className="cursor-pointer inline-flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-1.5 py-0.5 rounded-md transition-all shadow-2xs">
+                                    <Paperclip className="w-2.5 h-2.5" />
+                                    <span>+ Attach File</span>
+                                    <input
+                                      type="file"
+                                      className="hidden"
+                                      onChange={async (e) => {
+                                        if (e.target.files && e.target.files[0]) {
+                                          const file = e.target.files[0];
+                                          const uploadedName = await handleUploadDocketAttachment(file);
+                                          if (uploadedName) {
+                                            const currentAtts = parseAttachments(doc.attachments);
+                                            const updatedAtts = [...currentAtts, uploadedName];
+                                            handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
+                                          }
+                                        }
+                                      }}
+                                    />
+                                  </label>
+                                </div>
+
+                                <div className="flex flex-col gap-1 max-h-[85px] overflow-y-auto">
+                                  {parseAttachments(doc.attachments).map((att, attIdx) => {
+                                    const attUrl = getAttachmentUrl(att);
+                                    const parts = att.split('_');
+                                    const displayName = parts.length > 2 ? parts.slice(2).join('_') : att;
+
+                                    return (
+                                      <div key={attIdx} className="flex items-center justify-between bg-white border border-emerald-200 rounded px-1.5 py-0.5 text-[11px] shadow-2xs">
+                                        <a
+                                          href={attUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="flex items-center space-x-1 text-emerald-800 hover:text-emerald-950 font-bold truncate max-w-[130px]"
+                                          title={`View Document: ${att}`}
+                                        >
+                                          <File className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
+                                          <span className="truncate">{displayName}</span>
+                                          <ExternalLink className="w-2 h-2 text-emerald-400 shrink-0" />
+                                        </a>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            if (window.confirm(`Delete attachment "${displayName}"?`)) {
+                                              const currentAtts = parseAttachments(doc.attachments);
+                                              const updatedAtts = currentAtts.filter((_, i) => i !== attIdx);
+                                              handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
+                                            }
+                                          }}
+                                          className="text-rose-500 hover:text-rose-700 font-bold ml-1 p-0.5"
+                                          title="Remove Attachment"
+                                        >
+                                          <X className="w-2.5 h-2.5" />
+                                        </button>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </td>
+
                             {/* Terms Condition Dropdowns */}
-                            <td className="p-3 bg-purple-50/30 min-w-[220px]">
+                            <td className="p-1.5 bg-purple-50/30 w-[160px] min-w-[160px]">
                               <select
                                 value={doc.price || ''}
                                 onChange={(e) => handleDocketFieldUpdate(doc.id, 'price', e.target.value)}
-                                className="w-full bg-white border border-purple-200 rounded-md px-2 py-1.5 text-xs font-semibold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+                                className="w-full bg-white border border-purple-200 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-purple-900 focus:outline-none"
                               >
-                                <option value="">Select Price Condition</option>
+                                <option value="">Select Price</option>
                                 {termsDropdowns.price.map((opt, i) => (
                                   <option key={i} value={opt}>
                                     {opt}
@@ -3789,120 +4068,457 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* LOWER SECTION: ITEM BOXES WITH EXCEL BULK COPY-PASTE SUPPORT */}
-              <div className="border-t border-slate-200 pt-4 space-y-3">
+              {/* LOWER SECTION: EXCEL DRAG & DROP + SMART HEADER TRACKED ITEM BOXES */}
+              <div className="border-t border-slate-200 pt-4 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h4 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
                       <Package className="w-4 h-4 text-emerald-600" />
-                      Add Line Items (Excel Copy-Paste Supported)
+                      Add Line Items (Excel Drag & Drop + Copy-Paste + Smart Header Tracking)
                     </h4>
                     <p className="text-[11px] text-slate-500 font-medium">
-                      Copy multiple item rows from Excel and paste into any box below to auto-generate item entries.
+                      Drag & drop an Excel file or paste rows. Headers automatically map to <span className="font-bold text-slate-700">ITEM NAME, UOM, QTY, OUR ITEM/NOT, Our item Name, SIZE, Unit Wt. of Member (Kg), PRICE</span>.
                     </p>
                   </div>
 
                   <div className="flex items-center space-x-2">
+                    {/* View Mode Toggle */}
+                    <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setDocketItemViewMode('boxes')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center space-x-1 transition-all ${
+                          docketItemViewMode === 'boxes'
+                            ? 'bg-white text-blue-700 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                        title="Box Card View"
+                      >
+                        <LayoutGrid className="w-3.5 h-3.5" />
+                        <span>Boxes</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDocketItemViewMode('table')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center space-x-1 transition-all ${
+                          docketItemViewMode === 'table'
+                            ? 'bg-white text-blue-700 shadow-xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                        title="Table Preview View"
+                      >
+                        <Table className="w-3.5 h-3.5" />
+                        <span>Table</span>
+                      </button>
+                    </div>
+
                     <button
                       type="button"
                       onClick={() =>
-                        setDocketItemsForm((prev) => [...prev, { itemNameParty: '', uom: '', qty: '' }])
+                        setDocketItemsForm((prev) => [
+                          ...prev,
+                          { itemNameParty: '', uom: '', qty: '', ourItemNot: '', ourItemName: '', size: '', unitWtOfMemberKg: '', price: '' },
+                        ])
                       }
                       className="inline-flex items-center space-x-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-extrabold text-xs px-3 py-1.5 rounded-xl transition-all"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add Row Box</span>
                     </button>
+
                     {docketItemsForm.length > 1 && (
                       <button
                         type="button"
-                        onClick={() => setDocketItemsForm([{ itemNameParty: '', uom: '', qty: '' }])}
+                        onClick={() =>
+                          setDocketItemsForm([
+                            { itemNameParty: '', uom: '', qty: '', ourItemNot: '', ourItemName: '', size: '', unitWtOfMemberKg: '', price: '' },
+                          ])
+                        }
                         className="text-xs text-rose-600 font-bold hover:underline px-2"
                       >
-                        Reset Rows
+                        Reset
                       </button>
                     )}
                   </div>
                 </div>
 
-                {/* ITEM BOXES LIST */}
-                <div className="space-y-3.5 max-h-[320px] overflow-y-auto pr-1">
-                  {docketItemsForm.map((row, index) => (
-                    <div
-                      key={index}
-                      className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 relative group space-y-2"
-                    >
-                      <div className="flex items-center justify-between text-xs font-extrabold text-slate-600">
-                        <span>Item Box #{index + 1}</span>
-                        {docketItemsForm.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setDocketItemsForm((prev) => prev.filter((_, i) => i !== index))
-                            }
-                            className="text-rose-600 hover:text-rose-700 font-bold p-1 rounded hover:bg-rose-50"
-                            title="Remove Box"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
-                        <div className="sm:col-span-1">
-                          <label className="font-bold text-slate-700">ITEM NAME - PARTY *:</label>
-                          <textarea
-                            rows={2}
-                            placeholder="Paste or type item name..."
-                            value={row.itemNameParty}
-                            onPaste={(e) => handlePasteItems(e, index, 'itemNameParty')}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setDocketItemsForm((prev) =>
-                                prev.map((r, i) => (i === index ? { ...r, itemNameParty: val } : r))
-                              );
-                            }}
-                            className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 font-bold text-xs resize-y leading-snug"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="font-bold text-slate-700">UOM:</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. NOS / SET / kg"
-                            value={row.uom}
-                            onPaste={(e) => handlePasteItems(e, index, 'uom')}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setDocketItemsForm((prev) =>
-                                prev.map((r, i) => (i === index ? { ...r, uom: val } : r))
-                              );
-                            }}
-                            className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="font-bold text-slate-700">QTY:</label>
-                          <input
-                            type="text"
-                            placeholder="e.g. 100"
-                            value={row.qty}
-                            onPaste={(e) => handlePasteItems(e, index, 'qty')}
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              setDocketItemsForm((prev) =>
-                                prev.map((r, i) => (i === index ? { ...r, qty: val } : r))
-                              );
-                            }}
-                            className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-bold text-slate-900"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
+                {/* EXCEL DRAG & DROP ZONE */}
+                <div
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDraggingFile(true);
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    setIsDraggingFile(false);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDraggingFile(false);
+                    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+                      handleDropExcelFile(e.dataTransfer.files[0]);
+                    }
+                  }}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`p-3.5 border-2 border-dashed rounded-2xl cursor-pointer transition-all text-center flex flex-col items-center justify-center space-y-1 ${
+                    isDraggingFile
+                      ? 'border-blue-500 bg-blue-50/80 scale-[1.005]'
+                      : 'border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/60'
+                  }`}
+                >
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={(e) => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleDropExcelFile(e.target.files[0]);
+                      }
+                    }}
+                    accept=".xlsx, .xls, .csv, .tsv, .txt"
+                    className="hidden"
+                  />
+                  <div className="flex items-center space-x-2 text-blue-700 font-extrabold text-xs">
+                    <FileSpreadsheet className="w-5 h-5 text-emerald-600 animate-bounce" />
+                    <span>Drag & Drop Excel (.xlsx, .xls, .csv) File or Click to Upload & Auto-Fill</span>
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-medium">
+                    Automatically tracks headers: <span className="font-bold text-slate-700">Item ID | ITEM NAME- PARTY | UOM | QTY | OUR ITEM/NOT | Our item Name | SIZE | Unit Wt. of Member (Kg) | PRICE</span>
+                  </p>
                 </div>
+
+                {/* VIEW MODE 1: BOX CARDS VIEW */}
+                {docketItemViewMode === 'boxes' ? (
+                  <div className="space-y-3.5 max-h-[360px] overflow-y-auto pr-1">
+                    {docketItemsForm.map((row, index) => (
+                      <div
+                        key={index}
+                        className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 relative group space-y-2.5 shadow-2xs hover:border-blue-300 transition-all"
+                      >
+                        <div className="flex items-center justify-between text-xs font-extrabold text-slate-700">
+                          <span className="flex items-center gap-1.5 text-blue-900">
+                            <Package className="w-3.5 h-3.5 text-blue-600" />
+                            Item Box #{index + 1}
+                          </span>
+                          {docketItemsForm.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => setDocketItemsForm((prev) => prev.filter((_, i) => i !== index))}
+                              className="text-rose-600 hover:text-rose-700 font-bold p-1 rounded hover:bg-rose-50"
+                              title="Remove Box"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+
+                        {/* FIELDS GRID */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                          {/* ITEM NAME - PARTY */}
+                          <div className="sm:col-span-2 md:col-span-4">
+                            <label className="font-bold text-slate-700">ITEM NAME - PARTY *:</label>
+                            <textarea
+                              rows={2}
+                              placeholder="Paste or type item name..."
+                              value={row.itemNameParty || ''}
+                              onPaste={(e) => handlePasteItems(e, index)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, itemNameParty: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 font-bold text-xs resize-y leading-snug"
+                            />
+                          </div>
+
+                          {/* UOM */}
+                          <div>
+                            <label className="font-bold text-slate-700">UOM:</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. NOS / SET / kg"
+                              value={row.uom || ''}
+                              onPaste={(e) => handlePasteItems(e, index)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, uom: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold"
+                            />
+                          </div>
+
+                          {/* QTY */}
+                          <div>
+                            <label className="font-bold text-slate-700">QTY:</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. 100"
+                              value={row.qty || ''}
+                              onPaste={(e) => handlePasteItems(e, index)}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, qty: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-bold text-slate-900"
+                            />
+                          </div>
+
+                          {/* OUR ITEM / NOT */}
+                          <div>
+                            <label className="font-bold text-slate-700">OUR ITEM / NOT:</label>
+                            <select
+                              value={row.ourItemNot || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, ourItemNot: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-bold"
+                            >
+                              <option value="">Select Option</option>
+                              <option value="MANUFACTURING">MANUFACTURING</option>
+                              <option value="NO">NO</option>
+                              <option value="TRADING">TRADING</option>
+                            </select>
+                          </div>
+
+                          {/* Our item Name */}
+                          <div>
+                            <label className="font-bold text-slate-700">Our Item Name:</label>
+                            <select
+                              value={row.ourItemName || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, ourItemName: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-extrabold text-blue-700"
+                            >
+                              <option value="">Select Category</option>
+                              <option value="OTHERS">OTHERS</option>
+                              {ourItemNameOptions.map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* SIZE */}
+                          <div>
+                            <label className="font-bold text-slate-700">SIZE:</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. 100x50mm"
+                              value={row.size || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, size: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white text-xs font-medium"
+                            />
+                          </div>
+
+                          {/* Unit Wt. of Member (Kg) */}
+                          <div>
+                            <label className="font-bold text-slate-700">Unit Wt. of Member (Kg):</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. 12.5"
+                              value={row.unitWtOfMemberKg || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, unitWtOfMemberKg: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white text-xs font-medium"
+                            />
+                          </div>
+
+                          {/* PRICE */}
+                          <div>
+                            <label className="font-bold text-slate-700">PRICE:</label>
+                            <input
+                              type="text"
+                              placeholder="e.g. 450.00"
+                              value={row.price || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDocketItemsForm((prev) =>
+                                  prev.map((r, i) => (i === index ? { ...r, price: val } : r))
+                                );
+                              }}
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white text-xs font-extrabold text-blue-900"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  /* VIEW MODE 2: TABLE PREVIEW VIEW */
+                  <div className="overflow-x-auto max-h-[360px] border border-slate-200 rounded-2xl bg-white shadow-xs">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-10 border-b border-slate-200 text-[10px] uppercase">
+                        <tr>
+                          <th className="p-2 w-8 text-center">#</th>
+                          <th className="p-2 min-w-[200px]">ITEM NAME - PARTY *</th>
+                          <th className="p-2 w-20">UOM</th>
+                          <th className="p-2 w-20">QTY</th>
+                          <th className="p-2 w-32">OUR ITEM / NOT</th>
+                          <th className="p-2 w-40">Our item Name</th>
+                          <th className="p-2 w-28">SIZE</th>
+                          <th className="p-2 w-32">Unit Wt. (Kg)</th>
+                          <th className="p-2 w-28">PRICE</th>
+                          <th className="p-2 w-10 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 font-medium">
+                        {docketItemsForm.map((row, index) => (
+                          <tr key={index} className="hover:bg-slate-50 transition-colors">
+                            <td className="p-2 font-bold text-center text-slate-400">{index + 1}</td>
+                            <td className="p-2">
+                              <textarea
+                                rows={1}
+                                value={row.itemNameParty || ''}
+                                onPaste={(e) => handlePasteItems(e, index)}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, itemNameParty: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs font-bold focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={row.uom || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, uom: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={row.qty || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, qty: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs font-bold"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <select
+                                value={row.ourItemNot || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, ourItemNot: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs font-bold"
+                              >
+                                <option value="">Select</option>
+                                <option value="MANUFACTURING">MANUFACTURING</option>
+                                <option value="NO">NO</option>
+                                <option value="TRADING">TRADING</option>
+                              </select>
+                            </td>
+                            <td className="p-2">
+                              <select
+                                value={row.ourItemName || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, ourItemName: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs font-bold text-blue-700"
+                              >
+                                <option value="">Select Category</option>
+                                <option value="OTHERS">OTHERS</option>
+                                {ourItemNameOptions.map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={row.size || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, size: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={row.unitWtOfMemberKg || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, unitWtOfMemberKg: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs"
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                value={row.price || ''}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setDocketItemsForm((prev) =>
+                                    prev.map((r, i) => (i === index ? { ...r, price: val } : r))
+                                  );
+                                }}
+                                className="w-full p-1.5 border border-slate-200 rounded-lg text-xs font-bold text-blue-900"
+                              />
+                            </td>
+                            <td className="p-2 text-center">
+                              {docketItemsForm.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDocketItemsForm((prev) => prev.filter((_, i) => i !== index))}
+                                  className="text-rose-600 hover:text-rose-800 p-1 rounded hover:bg-rose-50"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">

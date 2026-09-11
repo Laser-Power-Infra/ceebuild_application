@@ -150,6 +150,7 @@ export async function POST(req: Request) {
       warranty,
       approval,
       inspection,
+      attachments,
       items = [],
       userName = 'Admin',
       userId = 'USR-ADMIN-01',
@@ -175,8 +176,15 @@ export async function POST(req: Request) {
       finalDocketNo = `CEE-${String(nextNumber).padStart(6, '0')}`;
     }
 
+    // Prepare attachments JSON string
+    const attachmentsJson = attachments
+      ? typeof attachments === 'string'
+        ? attachments
+        : JSON.stringify(attachments)
+      : null;
+
     // Create Docket
-    const createdDocket = await prisma.dockerPartyName.create({
+    const createdDocket = await (prisma.dockerPartyName as any).create({
       data: {
         docketNoQtnNo: finalDocketNo,
         partyName: partyName.trim(),
@@ -190,6 +198,7 @@ export async function POST(req: Request) {
         warranty: warranty || null,
         approval: approval || null,
         inspection: inspection || null,
+        attachments: attachmentsJson,
       },
     });
 
@@ -214,6 +223,13 @@ export async function POST(req: Request) {
               qty: it.qty ? it.qty.trim() : null,
               ourItemNot: autoNot,
               ourItemName: it.ourItemName || null,
+              size: it.size ? it.size.trim() : null,
+              unitWtOfMemberKg: it.unitWtOfMemberKg ? it.unitWtOfMemberKg.trim() : null,
+              price: it.price ? it.price.trim() : null,
+              sectionMm: it.sectionMm ? it.sectionMm.trim() : null,
+              sectionalWtKgMtr: it.sectionalWtKgMtr ? it.sectionalWtKgMtr.trim() : null,
+              lengthInMtr: it.lengthInMtr ? it.lengthInMtr.trim() : null,
+              uomOfQtn: it.uomOfQtn || it.unitWtOfMemberKg || it.uom || null,
               status: it.status || 'Quoted',
             };
           })
