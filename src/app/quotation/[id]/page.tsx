@@ -113,12 +113,12 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
 
       const element = quotationRef.current;
       const opt = {
-        margin: [8, 8, 8, 8],
+        margin: [6, 6, 6, 6],
         filename: `CEEBUILD_Quotation_${docket.docketNoQtnNo || docket.id}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, letterRendering: true },
+        html2canvas: { scale: 2, useCORS: true, logging: false, letterRendering: true, scrollY: 0 },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['avoid-all', 'css', 'legacy'], before: '.html2pdf__page-break', avoid: ['tr', '.keep-together'] },
+        pagebreak: { mode: ['css', 'legacy'], before: '.page-break-before', avoid: ['tr', '.keep-together'] },
       };
 
       await (window as any).html2pdf().set(opt).from(element).save();
@@ -408,11 +408,8 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
           </div>
         </div>
 
-        {/* Explicit Hard Page Break Directive for PDF and Print */}
-        <div className="html2pdf__page-break page-break-before" style={{ pageBreakBefore: 'always', breakBefore: 'page' }} />
-
-        {/* Annexure A Section (Guaranteed to start on Page 2) */}
-        <div className="space-y-4 pt-2">
+        {/* Annexure A Section (Guaranteed to start on Page 2 without trailing blank pages) */}
+        <div className="page-break-before space-y-4 pt-2" style={{ pageBreakBefore: 'always', breakBefore: 'page' }}>
           <div className="annexure-banner bg-[#0284c7] text-white p-2.5 text-center font-extrabold text-sm uppercase tracking-wider rounded-xs border border-blue-400 box-border w-full">
             Annexure–A (Price Bid)
           </div>
