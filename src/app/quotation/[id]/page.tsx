@@ -116,9 +116,20 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
         margin: [6, 6, 6, 6],
         filename: `CEEBUILD_Quotation_${docket.docketNoQtnNo || docket.id}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 2, useCORS: true, logging: false, letterRendering: true, scrollY: 0 },
+        html2canvas: {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          letterRendering: true,
+          scrollY: 0,
+          scrollX: 0,
+        },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'], before: '.page-break-before', avoid: ['tr', '.keep-together'] },
+        pagebreak: {
+          mode: ['css', 'legacy'],
+          before: '.page-break-before',
+          avoid: ['tr', '.keep-together'],
+        },
       };
 
       await (window as any).html2pdf().set(opt).from(element).save();
@@ -157,6 +168,17 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
     );
   }
 
+  const CHUNK_SIZE = 20;
+  const itemChunks: Item[][] = [];
+  if (items.length === 0) {
+    itemChunks.push([]);
+  } else {
+    for (let i = 0; i < items.length; i += CHUNK_SIZE) {
+      itemChunks.push(items.slice(i, i + CHUNK_SIZE));
+    }
+  }
+  const totalPages = 1 + itemChunks.length;
+
   return (
     <div className="quotation-wrapper min-h-screen bg-slate-200 text-slate-900 font-sans p-4 sm:p-8 flex flex-col items-center">
       {/* Global CSS for Print and PDF Alignment */}
@@ -164,7 +186,7 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
         @media print {
           @page {
             size: A4 portrait;
-            margin: 10mm;
+            margin: 6mm;
           }
           html, body {
             background-color: white !important;
@@ -186,20 +208,19 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
             width: 100% !important;
             display: block !important;
           }
-          .quotation-paper {
-            max-width: 100% !important;
-            width: 100% !important;
+          .pdf-page {
             border: none !important;
             box-shadow: none !important;
-            padding: 0 !important;
             margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            page-break-after: always !important;
+            break-after: page !important;
+            min-height: 0 !important;
           }
-          .html2pdf__page-break, .page-break-before {
+          .page-break-before {
             break-before: page !important;
             page-break-before: always !important;
-            height: 0 !important;
-            margin: 0 !important;
-            padding: 0 !important;
           }
           .keep-together {
             break-inside: avoid !important;
@@ -288,173 +309,214 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
       {/* Printable Quotation Document Container */}
       <div
         ref={quotationRef}
-        className="quotation-paper w-full max-w-4xl bg-white border border-blue-200 shadow-xl rounded-none p-6 sm:p-10 space-y-5 text-xs text-slate-900 leading-relaxed font-sans"
+        className="w-full max-w-4xl space-y-6 print:space-y-0"
       >
-        {/* PAGE 1 COVER LETTER SECTION (KEPT TOGETHER TO PREVENT SLICING SIGNATURE) */}
-        <div className="keep-together space-y-4">
-          {/* Header Block with Official Company Logo */}
-          <div className="border border-blue-400 grid grid-cols-1 md:grid-cols-4 overflow-hidden rounded-xs">
-            <div className="md:col-span-3 bg-[#0284c7] text-white p-3.5 space-y-1.5 font-medium text-[11px] leading-snug">
-              <div>
-                <strong className="text-white font-bold">Head Office : </strong>
-                <span>ADVENTZ INFINITY@5, 19th Floor Near Technopolis, Sector V, Salt Lake, Kolkata-700091, WB, India.</span>
+        {/* PAGE 1: COVER LETTER & COMMERCIAL TERMS */}
+        <div className="pdf-page bg-white p-2 box-border shadow-md">
+          <div className="pdf-page-frame border-2 border-[#0284c7] p-5 sm:p-7 bg-white flex flex-col justify-between min-h-[268mm] box-border text-xs text-slate-900 leading-relaxed font-sans">
+            <div className="space-y-3">
+              {/* Header Block with Official Company Logo */}
+              <div className="border border-blue-400 grid grid-cols-4 overflow-hidden rounded-none">
+                <div className="col-span-3 bg-[#0284c7] text-white p-2.5 space-y-1 font-medium text-[10.5px] leading-snug">
+                  <div>
+                    <strong className="text-white font-bold">Head Office : </strong>
+                    <span>ADVENTZ INFINITY@5, 19th Floor Near Technopolis, Sector V, Salt Lake, Kolkata-700091, WB, India.</span>
+                  </div>
+                  <div>
+                    <strong className="text-white font-bold">Factory Address : </strong>
+                    <span>Clipcon Complex, NH-6, Dhulagorh, Sankrail Howrah-711302</span>
+                  </div>
+                  <div>
+                    <strong className="text-white font-bold">Email id : </strong>
+                    <span>Info@ceebuildcompany.com</span>
+                  </div>
+                  <div>
+                    <strong className="text-white font-bold">Phone : </strong>
+                    <span>(+91) 9674766820</span>
+                  </div>
+                </div>
+                <div className="bg-white flex flex-col justify-center items-center p-2 border-l border-blue-400">
+                  <img src="/ceebuild-logo.png" alt="CEEBUILD Logo" className="max-h-12 w-auto object-contain" />
+                </div>
               </div>
-              <div>
-                <strong className="text-white font-bold">Factory Address : </strong>
-                <span>Clipcon Complex, NH-6, Dhulagorh, Sankrail Howrah-711302</span>
+
+              {/* Offer No Header Strip */}
+              <div className="grid grid-cols-4 border border-blue-400 font-bold text-xs">
+                <div className="bg-[#0284c7] text-white p-2 text-[11px] tracking-wider uppercase">OFFER NO</div>
+                <div className="col-span-3 p-2 border-l border-blue-400 text-xs font-extrabold text-blue-900 bg-slate-50">
+                  {docket.docketNoQtnNo || 'CEE-000000'}
+                </div>
               </div>
-              <div>
-                <strong className="text-white font-bold">Email id : </strong>
-                <span>Info@ceebuildcompany.com</span>
+
+              {/* Recipient Party Info */}
+              <div className="border border-blue-400 p-2.5 bg-slate-50 space-y-0.5 text-xs">
+                <p className="font-bold text-slate-800">TO,</p>
+                <p className="font-extrabold text-xs text-slate-900 uppercase pl-3">
+                  {docket.partyName || '<PARTY NAME>'}
+                </p>
+                <p className="text-slate-700 pl-3 whitespace-pre-line font-medium text-[11px] leading-snug">
+                  {docket.address || '<ADDRESS>'}
+                </p>
               </div>
-              <div>
-                <strong className="text-white font-bold">Phone : </strong>
-                <span>(+91) 9674766820</span>
+
+              {/* Subject Strip */}
+              <div className="grid grid-cols-4 border border-blue-400 font-bold text-xs">
+                <div className="bg-[#0284c7] text-white p-1.5 text-[11px]">SUB: Offer For Supply under</div>
+                <div className="col-span-3 p-1.5 border-l border-blue-400 text-[11px] font-extrabold text-slate-900 bg-slate-50">
+                  {docket.utility || '<UTILITY>'}
+                </div>
+              </div>
+
+              {/* Cover Letter Body */}
+              <div className="space-y-1.5 text-slate-800 text-[11px] leading-relaxed font-medium">
+                <p>
+                  We are pleased to submit our offer for your kind consideration. This offer has been prepared in accordance with the technical requirements and commercial discussions held, and is subject to the terms and conditions outlined below. The detailed price schedule for the proposed scope of supply is enclosed herewith as Annexure–A for your reference.
+                </p>
+                <p>
+                  We trust that our proposal meets your requirements and assures you of our commitment to quality, reliability, and timely execution. We look forward to the opportunity of working with your esteemed organization and request you to kindly review the enclosed details.
+                </p>
+                <p>
+                  Please feel free to contact us for any clarification or additional information required.
+                </p>
+              </div>
+
+              {/* Terms & Conditions Section */}
+              <div className="border border-blue-400 rounded-none overflow-hidden">
+                <div className="bg-[#0284c7] text-white px-2.5 py-1 font-bold text-[11px]">
+                  Terms & Conditions :
+                </div>
+                <div className="p-2 bg-white space-y-1 text-[11px] divide-y divide-slate-100 font-medium">
+                  <div className="grid grid-cols-3 pt-0.5">
+                    <span className="font-bold text-blue-900">1. Price :</span>
+                    <span className="col-span-2 text-slate-800">{docket.price || '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 pt-0.5">
+                    <span className="font-bold text-blue-900">2. Payment Terms :</span>
+                    <span className="col-span-2 text-slate-800">{docket.payment || '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 pt-0.5">
+                    <span className="font-bold text-blue-900">3. Delivery :</span>
+                    <span className="col-span-2 text-slate-800">{docket.delivery || '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 pt-0.5">
+                    <span className="font-bold text-blue-900">4. Warranty :</span>
+                    <span className="col-span-2 text-slate-800">{docket.warranty || '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 pt-0.5">
+                    <span className="font-bold text-blue-900">5. Approval :</span>
+                    <span className="col-span-2 text-slate-800">{docket.approval || '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 pt-0.5">
+                    <span className="font-bold text-blue-900">6. Inspection :</span>
+                    <span className="col-span-2 text-slate-800">{docket.inspection || '-'}</span>
+                  </div>
+                  <div className="grid grid-cols-3 pt-0.5">
+                    <span className="font-bold text-blue-900">7. Delivery Destination :</span>
+                    <span className="col-span-2 text-slate-800">{docket.deliveryLocation || '-'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Signature & Enclosure Block */}
+              <div className="pt-1 space-y-0.5 font-medium text-[11px] text-slate-800">
+                <p className="font-bold">Thanks & Regards,</p>
+                <p className="font-extrabold text-blue-900">For CEEBUILD COMPANY PRIVATE LIMITED</p>
+                <p className="font-bold pt-0.5">Ms. Puja Agarwal</p>
+                <p className="text-slate-600">Contact: 88200 44755 / 96747 55238</p>
+
+                <div className="pt-1 flex items-center space-x-2 text-[11px] font-bold text-blue-900">
+                  <span>Enclosed :</span>
+                  <span className="underline text-blue-600">Annexure-A (Price Bid)</span>
+                </div>
               </div>
             </div>
-            <div className="bg-white flex flex-col justify-center items-center p-3 border-l border-blue-400">
-              <img src="/ceebuild-logo.png" alt="CEEBUILD Logo" className="max-h-14 w-auto object-contain" />
-            </div>
-          </div>
 
-          {/* Offer No Header Strip */}
-          <div className="grid grid-cols-4 border border-blue-400 font-bold">
-            <div className="bg-[#0284c7] text-white p-2.5 text-xs tracking-wider">OFFER NO</div>
-            <div className="col-span-3 p-2.5 border-l border-blue-400 text-sm font-extrabold text-blue-900 bg-slate-50">
-              {docket.docketNoQtnNo || 'CEE-000000'}
-            </div>
-          </div>
-
-          {/* Recipient Party Info */}
-          <div className="border border-blue-400 p-3.5 bg-slate-50 space-y-1 text-xs">
-            <p className="font-bold text-slate-800">TO,</p>
-            <p className="font-extrabold text-sm text-slate-900 uppercase pl-4">
-              {docket.partyName || '<PARTY NAME>'}
-            </p>
-            <p className="text-slate-700 pl-4 whitespace-pre-line font-medium">
-              {docket.address || '<ADDRESS>'}
-            </p>
-          </div>
-
-          {/* Subject Strip */}
-          <div className="grid grid-cols-4 border border-blue-400 font-bold">
-            <div className="bg-[#0284c7] text-white p-2 text-xs">SUB: Offer For Supply under</div>
-            <div className="col-span-3 p-2 border-l border-blue-400 text-xs font-extrabold text-slate-900 bg-slate-50">
-              {docket.utility || '<UTILITY>'}
-            </div>
-          </div>
-
-          {/* Cover Letter Body */}
-          <div className="space-y-2 text-slate-800 text-xs leading-relaxed font-medium">
-            <p>
-              We are pleased to submit our offer for your kind consideration. This offer has been prepared in accordance with the technical requirements and commercial discussions held, and is subject to the terms and conditions outlined below. The detailed price schedule for the proposed scope of supply is enclosed herewith as Annexure–A for your reference.
-            </p>
-            <p>
-              We trust that our proposal meets your requirements and assures you of our commitment to quality, reliability, and timely execution. We look forward to the opportunity of working with your esteemed organization and request you to kindly review the enclosed details.
-            </p>
-            <p>
-              Please feel free to contact us for any clarification or additional information required.
-            </p>
-          </div>
-
-          {/* Terms & Conditions Section */}
-          <div className="border border-blue-400 rounded-xs overflow-hidden keep-together">
-            <div className="bg-[#0284c7] text-white px-3 py-1.5 font-bold text-xs">
-              Terms & Conditions :
-            </div>
-            <div className="p-2.5 bg-white space-y-1.5 text-xs divide-y divide-slate-100 font-medium">
-              <div className="grid grid-cols-3 pt-0.5">
-                <span className="font-bold text-blue-900">1. Price :</span>
-                <span className="col-span-2 text-slate-800">{docket.price || '-'}</span>
-              </div>
-              <div className="grid grid-cols-3 pt-0.5">
-                <span className="font-bold text-blue-900">2. Payment Terms :</span>
-                <span className="col-span-2 text-slate-800">{docket.payment || '-'}</span>
-              </div>
-              <div className="grid grid-cols-3 pt-0.5">
-                <span className="font-bold text-blue-900">3. Delivery :</span>
-                <span className="col-span-2 text-slate-800">{docket.delivery || '-'}</span>
-              </div>
-              <div className="grid grid-cols-3 pt-0.5">
-                <span className="font-bold text-blue-900">4. Warranty :</span>
-                <span className="col-span-2 text-slate-800">{docket.warranty || '-'}</span>
-              </div>
-              <div className="grid grid-cols-3 pt-0.5">
-                <span className="font-bold text-blue-900">5. Approval :</span>
-                <span className="col-span-2 text-slate-800">{docket.approval || '-'}</span>
-              </div>
-              <div className="grid grid-cols-3 pt-0.5">
-                <span className="font-bold text-blue-900">6. Inspection :</span>
-                <span className="col-span-2 text-slate-800">{docket.inspection || '-'}</span>
-              </div>
-              <div className="grid grid-cols-3 pt-0.5">
-                <span className="font-bold text-blue-900">7. Delivery Destination :</span>
-                <span className="col-span-2 text-slate-800">{docket.deliveryLocation || '-'}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Signature & Enclosure Block */}
-          <div className="pt-2 space-y-1 font-medium text-xs text-slate-800 keep-together">
-            <p className="font-bold">Thanks & Regards,</p>
-            <p className="font-extrabold text-blue-900">For CEEBUILD COMPANY PRIVATE LIMITED</p>
-            <p className="font-bold pt-1">Ms. Puja Agarwal</p>
-            <p className="text-slate-600">Contact: 88200 44755 / 96747 55238</p>
-
-            <div className="pt-2 flex items-center space-x-2 text-xs font-bold text-blue-900">
-              <span>Enclosed :</span>
-              <span className="underline text-blue-600">Annexure-A (Price Bid)</span>
+            {/* Document Footer for Page 1 */}
+            <div className="pt-2 mt-3 border-t border-slate-300 flex justify-between items-center text-[10px] text-slate-500 font-mono">
+              <span>Offer Ref: #{docket.docketNoQtnNo || docket.id}</span>
+              <span>Page 1 of {totalPages}</span>
+              <span>CEEBUILD Company (P) Ltd.</span>
             </div>
           </div>
         </div>
 
-        {/* Annexure A Section (Guaranteed to start on Page 2 without trailing blank pages) */}
-        <div className="page-break-before space-y-4 pt-2" style={{ pageBreakBefore: 'always', breakBefore: 'page' }}>
-          <div className="annexure-banner bg-[#0284c7] text-white p-2.5 text-center font-extrabold text-sm uppercase tracking-wider rounded-xs border border-blue-400 box-border w-full">
-            Annexure–A (Price Bid)
+        {/* ANNEXURE A PAGES (EACH WITH A COMPLETE 4-SIDED BLUE BORDER FRAME - 20 ITEMS PER SHEET) */}
+        {itemChunks.map((chunk, chunkIdx) => (
+          <div
+            key={chunkIdx}
+            className="page-break-before pdf-page bg-white p-2 box-border shadow-md"
+            style={{ pageBreakBefore: 'always', breakBefore: 'page' }}
+          >
+            <div className="pdf-page-frame border-2 border-[#0284c7] p-5 sm:p-7 bg-white flex flex-col justify-between min-h-[268mm] box-border text-xs text-slate-900 leading-relaxed font-sans">
+              <div className="space-y-3">
+                {/* Annexure Banner */}
+                <div className="annexure-banner bg-[#0284c7] text-white p-2 text-center font-extrabold text-xs uppercase tracking-wider rounded-none border border-blue-500 box-border w-full flex justify-between items-center px-3">
+                  <span className="tracking-wide">Annexure–A (Price Bid)</span>
+                  <span className="text-[10px] font-semibold normal-case bg-blue-900/60 px-2.5 py-0.5 rounded border border-blue-300/30">
+                    Sheet {chunkIdx + 1} of {itemChunks.length}
+                  </span>
+                </div>
+
+                {/* Table with Explicit Cell Borders and Fixed Proportions */}
+                <table className="w-full table-fixed border-collapse border border-blue-400 text-[10px] m-0 p-0 box-border">
+                  <thead className="bg-[#e0f2fe] text-blue-900 font-extrabold uppercase text-[9.5px]">
+                    <tr>
+                      <th className="w-[7%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">SL NO</th>
+                      <th className="w-[33%] p-1.5 border border-blue-400 text-left font-extrabold">PARTY ITEM NAME</th>
+                      <th className="w-[24%] p-1.5 border border-blue-400 text-left font-extrabold">OUR ITEM NAME</th>
+                      <th className="w-[9%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">QTY</th>
+                      <th className="w-[7%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">UNIT</th>
+                      <th className="w-[10%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">RATE/UNIT</th>
+                      <th className="w-[10%] p-1.5 border border-blue-400 text-center font-extrabold leading-tight">UNIT OF QTN</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-blue-200 font-medium">
+                    {chunk.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="p-6 text-center text-slate-500 font-semibold border border-blue-300">
+                          No quotation items listed under offer #{docket.docketNoQtnNo}.
+                        </td>
+                      </tr>
+                    ) : (
+                      chunk.map((item, idx) => (
+                        <tr key={item.id} className="hover:bg-slate-50 border-b border-blue-200">
+                          <td className="p-1.5 border border-blue-300 text-center font-bold text-slate-700 whitespace-nowrap">
+                            {chunkIdx * CHUNK_SIZE + idx + 1}
+                          </td>
+                          <td className="p-1.5 border border-blue-300 text-left font-medium leading-tight text-slate-800 break-words">
+                            {item.itemNameParty || '-'}
+                          </td>
+                          <td className="p-1.5 border border-blue-300 text-left text-blue-900 font-bold leading-tight break-words">
+                            {item.ourItemName || '-'}
+                          </td>
+                          <td className="p-1.5 border border-blue-300 text-center font-bold text-slate-800 whitespace-nowrap">
+                            {item.qty || '-'}
+                          </td>
+                          <td className="p-1.5 border border-blue-300 text-center text-slate-700 whitespace-nowrap">
+                            {item.uom || '-'}
+                          </td>
+                          <td className="p-1.5 border border-blue-300 text-center font-extrabold text-blue-900 whitespace-nowrap">
+                            {item.price || '-'}
+                          </td>
+                          <td className="p-1.5 border border-blue-300 text-center font-bold text-slate-700 whitespace-nowrap">
+                            {item.unitWtOfMemberKg || '-'}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Document Footer */}
+              <div className="pt-2 mt-3 border-t border-slate-300 flex justify-between items-center text-[10px] text-slate-500 font-mono">
+                <span>Offer Ref: #{docket.docketNoQtnNo || docket.id}</span>
+                <span>Page {chunkIdx + 2} of {totalPages}</span>
+                <span>CEEBUILD Company (P) Ltd.</span>
+              </div>
+            </div>
           </div>
-
-          <table className="w-full table-auto border-collapse border border-blue-400 text-xs">
-            <thead className="bg-[#e0f2fe] text-blue-900 font-extrabold border-b border-blue-400 text-[11px] uppercase">
-              <tr>
-                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">SL NO</th>
-                <th className="p-2 border border-blue-400 text-left leading-tight font-extrabold">PARTY ITEM NAME</th>
-                <th className="p-2 border border-blue-400 text-left leading-tight font-extrabold">OUR ITEM NAME</th>
-                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">QTY</th>
-                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">UNIT</th>
-                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">RATE/UNIT</th>
-                <th className="p-2 border border-blue-400 text-center whitespace-nowrap leading-tight font-extrabold">UNIT OF QUOTATION</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-blue-200 font-medium">
-              {items.length === 0 ? (
-                <tr className="keep-together">
-                  <td colSpan={7} className="p-6 text-center text-slate-500 font-semibold">
-                    No quotation items listed under offer #{docket.docketNoQtnNo}.
-                  </td>
-                </tr>
-              ) : (
-                items.map((item, idx) => (
-                  <tr key={item.id} className="keep-together hover:bg-slate-50">
-                    <td className="p-2 border border-blue-300 text-center font-bold whitespace-nowrap">{idx + 1}</td>
-                    <td className="p-2 border border-blue-300 text-left font-semibold leading-snug break-words">{item.itemNameParty || '-'}</td>
-                    <td className="p-2 border border-blue-300 text-left text-blue-900 font-bold break-words">{item.ourItemName || '-'}</td>
-                    <td className="p-2 border border-blue-300 text-center font-extrabold whitespace-nowrap">{item.qty || '-'}</td>
-                    <td className="p-2 border border-blue-300 text-center whitespace-nowrap">{item.uom || '-'}</td>
-                    <td className="p-2 border border-blue-300 text-center font-extrabold whitespace-nowrap">{item.price || '-'}</td>
-                    <td className="p-2 border border-blue-300 text-center font-bold whitespace-nowrap">{item.unitWtOfMemberKg || '-'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Document Footer */}
-        <div className="pt-4 border-t border-slate-300 flex justify-between items-center text-[10px] text-slate-500 font-mono keep-together">
-          <span>Offer Ref: #{docket.docketNoQtnNo || docket.id}</span>
-          <span>CEEBUILD Company (P) Ltd.</span>
-        </div>
+        ))}
       </div>
     </div>
   );
