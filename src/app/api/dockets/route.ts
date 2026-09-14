@@ -231,7 +231,7 @@ export async function POST(req: Request) {
               sectionalWtKgMtr: it.sectionalWtKgMtr ? it.sectionalWtKgMtr.trim() : null,
               lengthInMtr: it.lengthInMtr ? it.lengthInMtr.trim() : null,
               uomOfQtn: it.uomOfQtn || it.unitWtOfMemberKg || it.uom || null,
-              status: it.status || 'Quoted',
+              status: it.status ? it.status.trim() : null,
             };
           })
         );

@@ -138,11 +138,13 @@ const AUTH_USERS: Array<UserRole & { password: string }> = [
 function AutoResizeTextarea({
   defaultValue,
   onSave,
+  onPaste,
   className = '',
   placeholder = '',
 }: {
   defaultValue: string;
   onSave: (val: string) => void;
+  onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   className?: string;
   placeholder?: string;
 }) {
@@ -158,6 +160,7 @@ function AutoResizeTextarea({
       placeholder={placeholder}
       onChange={(e) => setVal(e.target.value)}
       onBlur={() => onSave(val)}
+      onPaste={onPaste}
       rows={val && val.length > 35 ? 2 : 1}
       className={`w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-medium text-slate-900 focus:outline-none resize-y leading-snug transition-all ${className}`}
     />
@@ -332,7 +335,7 @@ export default function Dashboard() {
     weightPerPiece: '',
     price: '',
     uomOfQtn: '',
-    status: 'Quoted',
+    status: '',
   });
 
   // Terms
@@ -1010,6 +1013,200 @@ export default function Dashboard() {
     }
   };
 
+  // Multi-Cell Excel / Sheets Grid Paste for Expanded Docket Sub-Items
+  const handleSubItemGridPaste = async (
+    e: React.ClipboardEvent,
+    docketNo: string,
+    startIdx: number,
+    startField: keyof Item
+  ) => {
+    const pasteText = e.clipboardData.getData('text');
+    if (!pasteText) return;
+    if (!pasteText.includes('\t') && !pasteText.includes('\n')) {
+      return; // Single cell normal paste
+    }
+
+    e.preventDefault();
+    const rawLines = pasteText.split(/\r?\n/).filter((l) => l.trim() !== '');
+    if (rawLines.length === 0) return;
+
+    const matrix = rawLines.map((line) =>
+      line.split('\t').map((c) => c.replace(/^"+|"+$/g, '').trim())
+    );
+
+    const SUB_ITEM_COLUMNS: Array<keyof Item> = [
+      'itemNameParty',
+      'uom',
+      'qty',
+      'ourItemNot',
+      'ourItemName',
+      'size',
+      'weightPerPiece',
+      'unitWtOfMemberKg',
+      'price',
+      'sectionMm',
+      'sectionalWtKgMtr',
+      'lengthInMtr',
+      'status',
+    ];
+
+    const startColIdx = Math.max(0, SUB_ITEM_COLUMNS.indexOf(startField));
+    const docketItems = docketItemsMap[docketNo] || [];
+    if (docketItems.length === 0) return;
+
+    const updates: Array<{ id: number; fields: Partial<Item> }> = [];
+
+    // Optimistically update docketItemsMap
+    const updatedDocketItems = docketItems.map((item, idx) => {
+      if (idx >= startIdx && idx < startIdx + matrix.length) {
+        const rowData = matrix[idx - startIdx];
+        const updatedFields: any = {};
+        rowData.forEach((val, c) => {
+          const colIdx = startColIdx + c;
+          if (colIdx < SUB_ITEM_COLUMNS.length) {
+            const key = SUB_ITEM_COLUMNS[colIdx];
+            updatedFields[key] = val;
+          }
+        });
+        if (Object.keys(updatedFields).length > 0) {
+          updates.push({ id: item.id, fields: updatedFields });
+          return { ...item, ...updatedFields };
+        }
+      }
+      return item;
+    });
+
+    setDocketItemsMap((prev) => ({
+      ...prev,
+      [docketNo]: updatedDocketItems,
+    }));
+
+    // Also update items in main items list if present
+    setItems((prev) =>
+      prev.map((item) => {
+        const matching = updates.find((u) => u.id === item.id);
+        return matching ? { ...item, ...matching.fields } : item;
+      })
+    );
+
+    showToast(`✨ Pasted ${matrix.length} rows across ${matrix[0]?.length || 1} columns into Docket ${docketNo} items!`);
+
+    // Persist all updates to DB via /api/items in parallel
+    try {
+      await Promise.all(
+        updates.map((up) =>
+          fetch('/api/items', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: up.id, ...up.fields }),
+          })
+        )
+      );
+      if (activeTab === 'logs') fetchLogs();
+    } catch (err) {
+      console.error('Error batch updating sub-items:', err);
+      showToast('Error persisting some pasted cells to database.');
+    }
+  };
+
+  // Multi-Cell Excel / Sheets Grid Paste for Main Item Table
+  const handleMainItemGridPaste = async (
+    e: React.ClipboardEvent,
+    startIdx: number,
+    startField: keyof Item
+  ) => {
+    const pasteText = e.clipboardData.getData('text');
+    if (!pasteText) return;
+    if (!pasteText.includes('\t') && !pasteText.includes('\n')) {
+      return; // Single cell normal paste
+    }
+
+    e.preventDefault();
+    const rawLines = pasteText.split(/\r?\n/).filter((l) => l.trim() !== '');
+    if (rawLines.length === 0) return;
+
+    const matrix = rawLines.map((line) =>
+      line.split('\t').map((c) => c.replace(/^"+|"+$/g, '').trim())
+    );
+
+    const MAIN_ITEM_COLUMNS: Array<keyof Item> = [
+      'docketNoQtnNo',
+      'itemNameParty',
+      'uom',
+      'qty',
+      'ourItemNot',
+      'typeOfItem',
+      'ourItemName',
+      'size',
+      'sectionMm',
+      'sectionalWtKgMtr',
+      'lengthInMtr',
+      'weightPerPiece',
+      'unitWtOfMemberKg',
+      'price',
+      'status',
+    ];
+
+    const startColIdx = Math.max(0, MAIN_ITEM_COLUMNS.indexOf(startField));
+    if (items.length === 0) return;
+
+    const updates: Array<{ id: number; fields: Partial<Item>; docketNo?: string | null }> = [];
+
+    // Optimistically update items
+    const updatedItems = items.map((item, idx) => {
+      if (idx >= startIdx && idx < startIdx + matrix.length) {
+        const rowData = matrix[idx - startIdx];
+        const updatedFields: any = {};
+        rowData.forEach((val, c) => {
+          const colIdx = startColIdx + c;
+          if (colIdx < MAIN_ITEM_COLUMNS.length) {
+            const key = MAIN_ITEM_COLUMNS[colIdx];
+            updatedFields[key] = val;
+          }
+        });
+        if (Object.keys(updatedFields).length > 0) {
+          updates.push({ id: item.id, fields: updatedFields, docketNo: item.docketNoQtnNo });
+          return { ...item, ...updatedFields };
+        }
+      }
+      return item;
+    });
+
+    setItems(updatedItems);
+
+    // Also update docketItemsMap if present
+    setDocketItemsMap((prev) => {
+      const copy = { ...prev };
+      updates.forEach((up) => {
+        if (up.docketNo && copy[up.docketNo]) {
+          copy[up.docketNo] = copy[up.docketNo].map((it) =>
+            it.id === up.id ? { ...it, ...up.fields } : it
+          );
+        }
+      });
+      return copy;
+    });
+
+    showToast(`✨ Pasted ${matrix.length} rows across ${matrix[0]?.length || 1} columns into Items Table!`);
+
+    // Persist all updates to DB via /api/items in parallel
+    try {
+      await Promise.all(
+        updates.map((up) =>
+          fetch('/api/items', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: up.id, ...up.fields }),
+          })
+        )
+      );
+      if (activeTab === 'logs') fetchLogs();
+    } catch (err) {
+      console.error('Error batch updating main items:', err);
+      showToast('Error persisting some pasted cells to database.');
+    }
+  };
+
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
 
   const handleUploadDocketAttachment = async (file: File): Promise<string | null> => {
@@ -1299,7 +1496,7 @@ export default function Dashboard() {
           sectionMm: '',
           sectionalWtKgMtr: '',
           lengthInMtr: '',
-          status: 'Quoted',
+          status: '',
         };
 
         row.forEach((cellVal, colIdx) => {
@@ -1339,7 +1536,7 @@ export default function Dashboard() {
             weightPerPiece: weightPerPiece,
             unitWtOfMemberKg: unitWtOfMemberKg,
             price: price,
-            status: 'Quoted',
+            status: '',
           });
         }
       }
@@ -1496,7 +1693,7 @@ export default function Dashboard() {
           weightPerPiece: '',
           price: '',
           uomOfQtn: '',
-          status: 'Quoted',
+          status: '',
         });
         fetchItems();
         if (targetDocketNo) {
@@ -2475,7 +2672,7 @@ export default function Dashboard() {
                       </td>
                     </tr>
                   ) : (
-                    items.map((item) => (
+                    items.map((item, mIdx) => (
                       <tr key={item.id} className="hover:bg-slate-50 transition-colors align-top min-h-[44px] group">
                         {/* Sticky Body Cell 1: ID */}
                         <td className="p-3 text-slate-500 font-mono text-xs font-bold w-[70px] min-w-[70px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
@@ -2488,6 +2685,7 @@ export default function Dashboard() {
                             <AutoResizeTextarea
                               defaultValue={item.docketNoQtnNo || ''}
                               onSave={(val) => handleItemFieldUpdate(item.id, 'docketNoQtnNo', val)}
+                              onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'docketNoQtnNo')}
                               className="font-bold text-blue-600"
                             />
                           ) : (
@@ -2502,6 +2700,7 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.itemNameParty || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'itemNameParty', val)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'itemNameParty')}
                             placeholder="Enter item name..."
                           />
                         </td>
@@ -2512,6 +2711,7 @@ export default function Dashboard() {
                             type="text"
                             defaultValue={item.uom || ''}
                             onBlur={(e) => handleItemFieldUpdate(item.id, 'uom', e.target.value)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'uom')}
                             className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 focus:outline-none"
                           />
                         </td>
@@ -2522,6 +2722,7 @@ export default function Dashboard() {
                             type="text"
                             defaultValue={item.qty || ''}
                             onBlur={(e) => handleItemFieldUpdate(item.id, 'qty', e.target.value)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'qty')}
                             className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 font-extrabold focus:outline-none"
                           />
                         </td>
@@ -2543,6 +2744,7 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.typeOfItem || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'typeOfItem', val)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'typeOfItem')}
                           />
                         </td>
 
@@ -2582,6 +2784,7 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.size || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'size', val)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'size')}
                           />
                         </td>
 
@@ -2589,6 +2792,7 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.sectionMm || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'sectionMm', val)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'sectionMm')}
                             placeholder="e.g. 125x65x6mm"
                           />
                         </td>
@@ -2597,6 +2801,7 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.sectionalWtKgMtr || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'sectionalWtKgMtr', val)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'sectionalWtKgMtr')}
                             placeholder="Kg/Mtr."
                           />
                         </td>
@@ -2605,6 +2810,7 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.lengthInMtr || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'lengthInMtr', val)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'lengthInMtr')}
                             placeholder="Mtr."
                           />
                         </td>
@@ -2613,6 +2819,7 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.weightPerPiece || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'weightPerPiece', val)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'weightPerPiece')}
                             placeholder="Unit Wt."
                           />
                         </td>
@@ -2621,6 +2828,7 @@ export default function Dashboard() {
                           <AutoResizeTextarea
                             defaultValue={item.unitWtOfMemberKg || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'unitWtOfMemberKg', val)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'unitWtOfMemberKg')}
                             placeholder="Kg"
                           />
                         </td>
@@ -2630,6 +2838,7 @@ export default function Dashboard() {
                             type="text"
                             defaultValue={item.price || ''}
                             onBlur={(e) => handleItemFieldUpdate(item.id, 'price', e.target.value)}
+                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'price')}
                             className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none"
                           />
                         </td>
@@ -3300,38 +3509,47 @@ export default function Dashboard() {
                                             <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">STATUS</th>
                                           </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-slate-100 font-medium">
-                                          {docketItems.map((subItem) => (
-                                            <tr key={subItem.id} className="hover:bg-slate-50 group">
-                                              <td className="p-2.5 font-mono text-slate-500 font-bold w-[75px] min-w-[75px] max-w-[75px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">#{subItem.id}</td>
-                                              <td className="p-2.5 w-[240px] min-w-[240px] max-w-[240px] sticky left-[75px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.itemNameParty || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'itemNameParty', val, doc.docketNoQtnNo)
-                                                  }
-                                                />
-                                              </td>
-                                              <td className="p-2.5 w-[80px] min-w-[80px] max-w-[80px] sticky left-[315px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
-                                                <input
-                                                  type="text"
-                                                  defaultValue={subItem.uom || ''}
-                                                  onBlur={(e) =>
-                                                    handleItemFieldUpdate(subItem.id, 'uom', e.target.value, doc.docketNoQtnNo)
-                                                  }
-                                                  className="w-16 p-1 border border-slate-200 rounded text-xs"
-                                                />
-                                              </td>
-                                              <td className="p-2.5 font-bold w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-b border-slate-400 shadow-md">
-                                                <input
-                                                  type="text"
-                                                  defaultValue={subItem.qty || ''}
-                                                  onBlur={(e) =>
-                                                    handleItemFieldUpdate(subItem.id, 'qty', e.target.value, doc.docketNoQtnNo)
-                                                  }
-                                                  className="w-16 p-1 border border-slate-200 rounded text-xs font-extrabold"
-                                                />
-                                              </td>
+                                         <tbody className="divide-y divide-slate-100 font-medium">
+                                           {docketItems.map((subItem, sIdx) => (
+                                             <tr key={subItem.id} className="hover:bg-slate-50 group">
+                                               <td className="p-2.5 font-mono text-slate-500 font-bold w-[75px] min-w-[75px] max-w-[75px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">#{subItem.id}</td>
+                                               <td className="p-2.5 w-[240px] min-w-[240px] max-w-[240px] sticky left-[75px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
+                                                 <AutoResizeTextarea
+                                                   defaultValue={subItem.itemNameParty || ''}
+                                                   onSave={(val) =>
+                                                     handleItemFieldUpdate(subItem.id, 'itemNameParty', val, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'itemNameParty')
+                                                   }
+                                                 />
+                                               </td>
+                                               <td className="p-2.5 w-[80px] min-w-[80px] max-w-[80px] sticky left-[315px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
+                                                 <input
+                                                   type="text"
+                                                   defaultValue={subItem.uom || ''}
+                                                   onBlur={(e) =>
+                                                     handleItemFieldUpdate(subItem.id, 'uom', e.target.value, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'uom')
+                                                   }
+                                                   className="w-16 p-1 border border-slate-200 rounded text-xs"
+                                                 />
+                                               </td>
+                                               <td className="p-2.5 font-bold w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-b border-slate-400 shadow-md">
+                                                 <input
+                                                   type="text"
+                                                   defaultValue={subItem.qty || ''}
+                                                   onBlur={(e) =>
+                                                     handleItemFieldUpdate(subItem.id, 'qty', e.target.value, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'qty')
+                                                   }
+                                                   className="w-16 p-1 border border-slate-200 rounded text-xs font-extrabold"
+                                                 />
+                                               </td>
                                               <td className="p-2.5 border-b border-slate-200">
                                                 <select
                                                   value={subItem.ourItemNot || ''}
@@ -3378,69 +3596,90 @@ export default function Dashboard() {
                                                    )}
                                                  </div>
                                               </td>
-                                              <td className="p-2.5 border-b border-slate-200">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.size || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'size', val, doc.docketNoQtnNo)
-                                                  }
-                                                />
-                                              </td>
-                                              <td className="p-2.5 border-b border-slate-200 bg-blue-50/20">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.weightPerPiece || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'weightPerPiece', val, doc.docketNoQtnNo)
-                                                  }
-                                                  placeholder="Unit Wt."
-                                                />
-                                              </td>
-                                              <td className="p-2.5 border-b border-slate-200">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.unitWtOfMemberKg || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'unitWtOfMemberKg', val, doc.docketNoQtnNo)
-                                                  }
-                                                  placeholder="Kg"
-                                                />
-                                              </td>
-                                              <td className="p-2.5 font-extrabold border-b border-slate-200 bg-blue-50/30">
-                                                <input
-                                                  type="text"
-                                                  defaultValue={subItem.price || ''}
-                                                  onBlur={(e) =>
-                                                    handleItemFieldUpdate(subItem.id, 'price', e.target.value, doc.docketNoQtnNo)
-                                                  }
-                                                  className="w-20 p-1 border border-slate-200 rounded text-xs font-extrabold"
-                                                />
-                                              </td>
-                                              <td className="p-2.5 border-b border-slate-200">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.sectionMm || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'sectionMm', val, doc.docketNoQtnNo)
-                                                  }
-                                                  placeholder="e.g. 125x65x6mm"
-                                                />
-                                              </td>
-                                              <td className="p-2.5 border-b border-slate-200">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.sectionalWtKgMtr || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'sectionalWtKgMtr', val, doc.docketNoQtnNo)
-                                                  }
-                                                  placeholder="Kg/Mtr."
-                                                />
-                                              </td>
-                                              <td className="p-2.5 border-b border-slate-200">
-                                                <AutoResizeTextarea
-                                                  defaultValue={subItem.lengthInMtr || ''}
-                                                  onSave={(val) =>
-                                                    handleItemFieldUpdate(subItem.id, 'lengthInMtr', val, doc.docketNoQtnNo)
-                                                  }
-                                                  placeholder="Mtr."
-                                                />
-                                              </td>
+                                               <td className="p-2.5 border-b border-slate-200">
+                                                 <AutoResizeTextarea
+                                                   defaultValue={subItem.size || ''}
+                                                   onSave={(val) =>
+                                                     handleItemFieldUpdate(subItem.id, 'size', val, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'size')
+                                                   }
+                                                 />
+                                               </td>
+                                               <td className="p-2.5 border-b border-slate-200 bg-blue-50/20">
+                                                 <AutoResizeTextarea
+                                                   defaultValue={subItem.weightPerPiece || ''}
+                                                   onSave={(val) =>
+                                                     handleItemFieldUpdate(subItem.id, 'weightPerPiece', val, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'weightPerPiece')
+                                                   }
+                                                   placeholder="Unit Wt."
+                                                 />
+                                               </td>
+                                               <td className="p-2.5 border-b border-slate-200">
+                                                 <AutoResizeTextarea
+                                                   defaultValue={subItem.unitWtOfMemberKg || ''}
+                                                   onSave={(val) =>
+                                                     handleItemFieldUpdate(subItem.id, 'unitWtOfMemberKg', val, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'unitWtOfMemberKg')
+                                                   }
+                                                   placeholder="Kg"
+                                                 />
+                                               </td>
+                                               <td className="p-2.5 font-extrabold border-b border-slate-200 bg-blue-50/30">
+                                                 <input
+                                                   type="text"
+                                                   defaultValue={subItem.price || ''}
+                                                   onBlur={(e) =>
+                                                     handleItemFieldUpdate(subItem.id, 'price', e.target.value, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'price')
+                                                   }
+                                                   className="w-20 p-1 border border-slate-200 rounded text-xs font-extrabold"
+                                                 />
+                                               </td>
+                                               <td className="p-2.5 border-b border-slate-200">
+                                                 <AutoResizeTextarea
+                                                   defaultValue={subItem.sectionMm || ''}
+                                                   onSave={(val) =>
+                                                     handleItemFieldUpdate(subItem.id, 'sectionMm', val, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'sectionMm')
+                                                   }
+                                                   placeholder="e.g. 125x65x6mm"
+                                                 />
+                                               </td>
+                                               <td className="p-2.5 border-b border-slate-200">
+                                                 <AutoResizeTextarea
+                                                   defaultValue={subItem.sectionalWtKgMtr || ''}
+                                                   onSave={(val) =>
+                                                     handleItemFieldUpdate(subItem.id, 'sectionalWtKgMtr', val, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'sectionalWtKgMtr')
+                                                   }
+                                                   placeholder="Kg/Mtr."
+                                                 />
+                                               </td>
+                                               <td className="p-2.5 border-b border-slate-200">
+                                                 <AutoResizeTextarea
+                                                   defaultValue={subItem.lengthInMtr || ''}
+                                                   onSave={(val) =>
+                                                     handleItemFieldUpdate(subItem.id, 'lengthInMtr', val, doc.docketNoQtnNo)
+                                                   }
+                                                   onPaste={(e) =>
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'lengthInMtr')
+                                                   }
+                                                   placeholder="Mtr."
+                                                 />
+                                               </td>
                                               <td className="p-2.5 border-b border-slate-200">
                                                 <select
                                                   value={subItem.status || ''}
