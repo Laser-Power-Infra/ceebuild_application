@@ -112,9 +112,13 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
       }
 
       const element = quotationRef.current;
+      const docketNoStr = (docket.docketNoQtnNo || `CEE-${docket.id}`).replace(/[/\\?%*:|"<>]/g, '_').trim();
+      const partyNameStr = (docket.partyName || 'PARTY').replace(/[/\\?%*:|"<>]/g, '_').trim();
+      const fileName = `${docketNoStr}_${partyNameStr}.pdf`;
+
       const opt = {
         margin: [6, 6, 6, 6],
-        filename: `CEEBUILD_Quotation_${docket.docketNoQtnNo || docket.id}.pdf`,
+        filename: fileName,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: {
           scale: 2,
