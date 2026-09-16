@@ -3096,7 +3096,7 @@ export default function Dashboard() {
                         className="w-full px-1 py-0.5 text-[11px] border border-amber-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
                       >
                         <option value="">All Types</option>
-                        <option value="Trading">Trading</option>
+                        <option value="Tender">Tender</option>
                         <option value="Purchase">Purchase</option>
                       </select>
                     </td>
@@ -3269,7 +3269,7 @@ export default function Dashboard() {
                                 value={doc.type || ''}
                                 onChange={(e) => handleDocketFieldUpdate(doc.id, 'type', e.target.value)}
                                 className={`w-full px-2 py-1 text-xs border rounded-md font-bold transition-all shadow-2xs focus:outline-none focus:ring-1 ${
-                                  doc.type === 'Trading'
+                                  doc.type === 'Tender'
                                     ? 'bg-blue-50 border-blue-300 text-blue-800'
                                     : doc.type === 'Purchase'
                                     ? 'bg-purple-50 border-purple-300 text-purple-800'
@@ -3277,7 +3277,7 @@ export default function Dashboard() {
                                 }`}
                               >
                                 <option value="">- Select Type -</option>
-                                <option value="Trading">Trading</option>
+                                <option value="Tender">Tender</option>
                                 <option value="Purchase">Purchase</option>
                               </select>
                             </td>
@@ -4336,8 +4336,8 @@ export default function Dashboard() {
                     onChange={(e) => setNewDocketForm((prev) => ({ ...prev, type: e.target.value }))}
                     className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-bold text-slate-800"
                   >
-                    <option value="">Select Type (Trading / Purchase)</option>
-                    <option value="Trading">Trading</option>
+                    <option value="">Select Type (Tender / Purchase)</option>
+                    <option value="Tender">Tender</option>
                     <option value="Purchase">Purchase</option>
                   </select>
                 </div>
