@@ -2,14 +2,46 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { autoDetectOurItemNotAsync } from '@/lib/classifier';
 
+function getFilterList(searchParams: URLSearchParams, key: string): string[] {
+  const all = searchParams.getAll(key);
+  if (all.length === 0) return [];
+  const results: string[] = [];
+  for (const item of all) {
+    if (!item) continue;
+    if (item.startsWith('[') && item.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(item);
+        if (Array.isArray(parsed)) {
+          results.push(...parsed.filter(Boolean));
+          continue;
+        }
+      } catch (e) {}
+    }
+    if (item.includes(',')) {
+      results.push(...item.split(',').map((s) => s.trim()).filter(Boolean));
+    } else {
+      results.push(item.trim());
+    }
+  }
+  return Array.from(new Set(results));
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search') || '';
-    const stateFilter = searchParams.get('state') || '';
-    const typeFilter = searchParams.get('type') || '';
-    const docketFilter = searchParams.get('docketNoQtnNo') || '';
-    const partyFilter = searchParams.get('partyName') || '';
+    const stateFilters = getFilterList(searchParams, 'state');
+    const utilityFilters = getFilterList(searchParams, 'utility');
+    const typeFilters = getFilterList(searchParams, 'type');
+    const attachmentsFilter = searchParams.get('attachments') || '';
+    const priceFilters = getFilterList(searchParams, 'price');
+    const paymentFilters = getFilterList(searchParams, 'payment');
+    const deliveryFilters = getFilterList(searchParams, 'delivery');
+    const warrantyFilters = getFilterList(searchParams, 'warranty');
+    const approvalFilters = getFilterList(searchParams, 'approval');
+    const inspectionFilters = getFilterList(searchParams, 'inspection');
+    const docketFilters = getFilterList(searchParams, 'docketNoQtnNo');
+    const partyFilters = getFilterList(searchParams, 'partyName');
     const itemFilter = searchParams.get('itemFilter') || ''; // Filter dockets by item name
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
@@ -54,17 +86,84 @@ export async function GET(req: Request) {
       ];
     }
 
-    if (docketFilter) {
-      where.docketNoQtnNo = { contains: docketFilter, mode: 'insensitive' };
+    if (docketFilters.length === 1) {
+      where.docketNoQtnNo = { contains: docketFilters[0], mode: 'insensitive' };
+    } else if (docketFilters.length > 1) {
+      where.docketNoQtnNo = { in: docketFilters };
     }
-    if (partyFilter) {
-      where.partyName = { contains: partyFilter, mode: 'insensitive' };
+
+    if (partyFilters.length === 1) {
+      where.partyName = { contains: partyFilters[0], mode: 'insensitive' };
+    } else if (partyFilters.length > 1) {
+      where.partyName = { in: partyFilters };
     }
-    if (stateFilter) {
-      where.state = { equals: stateFilter, mode: 'insensitive' };
+
+    if (stateFilters.length === 1) {
+      where.state = { equals: stateFilters[0], mode: 'insensitive' };
+    } else if (stateFilters.length > 1) {
+      where.state = { in: stateFilters };
     }
-    if (typeFilter) {
-      where.type = { equals: typeFilter, mode: 'insensitive' };
+
+    if (utilityFilters.length === 1) {
+      where.utility = { contains: utilityFilters[0], mode: 'insensitive' };
+    } else if (utilityFilters.length > 1) {
+      where.utility = { in: utilityFilters };
+    }
+
+    if (typeFilters.length === 1) {
+      where.type = { equals: typeFilters[0], mode: 'insensitive' };
+    } else if (typeFilters.length > 1) {
+      where.type = { in: typeFilters };
+    }
+
+    if (attachmentsFilter === 'has') {
+      where.AND = where.AND || [];
+      where.AND.push({ attachments: { not: null } });
+      where.AND.push({ NOT: { attachments: '' } });
+    } else if (attachmentsFilter === 'empty') {
+      where.AND = where.AND || [];
+      where.AND.push({
+        OR: [
+          { attachments: null },
+          { attachments: '' },
+        ],
+      });
+    }
+
+    if (priceFilters.length === 1) {
+      where.price = { contains: priceFilters[0].trim(), mode: 'insensitive' };
+    } else if (priceFilters.length > 1) {
+      where.price = { in: priceFilters };
+    }
+
+    if (paymentFilters.length === 1) {
+      where.payment = { contains: paymentFilters[0].trim(), mode: 'insensitive' };
+    } else if (paymentFilters.length > 1) {
+      where.payment = { in: paymentFilters };
+    }
+
+    if (deliveryFilters.length === 1) {
+      where.delivery = { contains: deliveryFilters[0].trim(), mode: 'insensitive' };
+    } else if (deliveryFilters.length > 1) {
+      where.delivery = { in: deliveryFilters };
+    }
+
+    if (warrantyFilters.length === 1) {
+      where.warranty = { contains: warrantyFilters[0].trim(), mode: 'insensitive' };
+    } else if (warrantyFilters.length > 1) {
+      where.warranty = { in: warrantyFilters };
+    }
+
+    if (approvalFilters.length === 1) {
+      where.approval = { contains: approvalFilters[0].trim(), mode: 'insensitive' };
+    } else if (approvalFilters.length > 1) {
+      where.approval = { in: approvalFilters };
+    }
+
+    if (inspectionFilters.length === 1) {
+      where.inspection = { contains: inspectionFilters[0].trim(), mode: 'insensitive' };
+    } else if (inspectionFilters.length > 1) {
+      where.inspection = { in: inspectionFilters };
     }
 
     if (startDate || endDate) {
@@ -116,14 +215,38 @@ export async function GET(req: Request) {
     }));
 
     let stateOptionsList: string[] = [];
+    let docketOptionsList: string[] = [];
+    let partyOptionsList: string[] = [];
+    let utilityOptionsList: string[] = [];
     try {
-      const states = await prisma.dockerPartyName.findMany({
-        select: { state: true },
-        distinct: ['state'],
-      });
+      const [states, docketsList, parties, utilities] = await Promise.all([
+        prisma.dockerPartyName.findMany({
+          select: { state: true },
+          distinct: ['state'],
+          orderBy: { state: 'asc' },
+        }),
+        prisma.dockerPartyName.findMany({
+          select: { docketNoQtnNo: true },
+          distinct: ['docketNoQtnNo'],
+          orderBy: { docketNoQtnNo: 'asc' },
+        }),
+        prisma.dockerPartyName.findMany({
+          select: { partyName: true },
+          distinct: ['partyName'],
+          orderBy: { partyName: 'asc' },
+        }),
+        prisma.dockerPartyName.findMany({
+          select: { utility: true },
+          distinct: ['utility'],
+          orderBy: { utility: 'asc' },
+        }),
+      ]);
       stateOptionsList = states.map((s) => s.state).filter(Boolean) as string[];
+      docketOptionsList = docketsList.map((d) => d.docketNoQtnNo).filter(Boolean) as string[];
+      partyOptionsList = parties.map((p) => p.partyName).filter(Boolean) as string[];
+      utilityOptionsList = utilities.map((u) => u.utility).filter(Boolean) as string[];
     } catch (stateErr) {
-      console.error('Error fetching distinct states:', stateErr);
+      console.error('Error fetching distinct options:', stateErr);
     }
 
     return NextResponse.json({
@@ -132,6 +255,9 @@ export async function GET(req: Request) {
       page,
       totalPages: Math.ceil(totalCount / limit) || 1,
       states: stateOptionsList,
+      docketsList: docketOptionsList,
+      parties: partyOptionsList,
+      utilities: utilityOptionsList,
     });
   } catch (error) {
     console.error('Error fetching dockets:', error);

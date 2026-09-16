@@ -2,15 +2,49 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { autoDetectOurItemNot, autoDetectOurItemNotAsync, extractKeyPhrases } from '@/lib/classifier';
 
+function getFilterList(searchParams: URLSearchParams, key: string): string[] {
+  const all = searchParams.getAll(key);
+  if (all.length === 0) return [];
+  const results: string[] = [];
+  for (const item of all) {
+    if (!item) continue;
+    if (item.startsWith('[') && item.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(item);
+        if (Array.isArray(parsed)) {
+          results.push(...parsed.filter(Boolean));
+          continue;
+        }
+      } catch (e) {}
+    }
+    if (item.includes(',')) {
+      results.push(...item.split(',').map((s) => s.trim()).filter(Boolean));
+    } else {
+      results.push(item.trim());
+    }
+  }
+  return Array.from(new Set(results));
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search') || '';
-    const docketFilter = searchParams.get('docketNoQtnNo') || '';
-    const itemFilter = searchParams.get('itemNameParty') || '';
-    const ourItemNotFilter = searchParams.get('ourItemNot') || '';
-    const ourItemNameFilter = searchParams.get('ourItemName') || '';
-    const statusFilter = searchParams.get('status') || '';
+    const docketFilters = getFilterList(searchParams, 'docketNoQtnNo');
+    const itemFilters = getFilterList(searchParams, 'itemNameParty');
+    const uomFilters = getFilterList(searchParams, 'uom');
+    const qtyFilters = getFilterList(searchParams, 'qty');
+    const ourItemNotFilters = getFilterList(searchParams, 'ourItemNot');
+    const typeOfItemFilters = getFilterList(searchParams, 'typeOfItem');
+    const ourItemNameFilters = getFilterList(searchParams, 'ourItemName');
+    const sizeFilters = getFilterList(searchParams, 'size');
+    const sectionMmFilters = getFilterList(searchParams, 'sectionMm');
+    const sectionalWtKgMtrFilters = getFilterList(searchParams, 'sectionalWtKgMtr');
+    const lengthInMtrFilters = getFilterList(searchParams, 'lengthInMtr');
+    const weightPerPieceFilters = getFilterList(searchParams, 'weightPerPiece');
+    const unitWtOfMemberKgFilters = getFilterList(searchParams, 'unitWtOfMemberKg');
+    const priceFilters = getFilterList(searchParams, 'price');
+    const statusFilters = getFilterList(searchParams, 'status');
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
 
@@ -31,23 +65,94 @@ export async function GET(req: Request) {
       ];
     }
 
-    if (docketFilter) {
-      where.docketNoQtnNo = { contains: docketFilter, mode: 'insensitive' };
+    if (docketFilters.length === 1) {
+      where.docketNoQtnNo = { contains: docketFilters[0], mode: 'insensitive' };
+    } else if (docketFilters.length > 1) {
+      where.docketNoQtnNo = { in: docketFilters };
     }
-    if (itemFilter) {
-      where.itemNameParty = { contains: itemFilter, mode: 'insensitive' };
+
+    if (itemFilters.length === 1) {
+      where.itemNameParty = { contains: itemFilters[0], mode: 'insensitive' };
+    } else if (itemFilters.length > 1) {
+      where.itemNameParty = { in: itemFilters };
     }
-    if (ourItemNotFilter) {
-      where.ourItemNot = { equals: ourItemNotFilter, mode: 'insensitive' };
+
+    if (uomFilters.length === 1) {
+      where.uom = { contains: uomFilters[0], mode: 'insensitive' };
+    } else if (uomFilters.length > 1) {
+      where.uom = { in: uomFilters };
     }
-    if (ourItemNameFilter) {
-      const names = ourItemNameFilter.split(',').map((s) => s.trim()).filter(Boolean);
-      if (names.length > 0) {
-        where.ourItemName = { in: names };
-      }
+
+    if (qtyFilters.length === 1) {
+      where.qty = { contains: qtyFilters[0], mode: 'insensitive' };
+    } else if (qtyFilters.length > 1) {
+      where.qty = { in: qtyFilters };
     }
-    if (statusFilter) {
-      where.status = { equals: statusFilter, mode: 'insensitive' };
+
+    if (ourItemNotFilters.length === 1) {
+      where.ourItemNot = { equals: ourItemNotFilters[0], mode: 'insensitive' };
+    } else if (ourItemNotFilters.length > 1) {
+      where.ourItemNot = { in: ourItemNotFilters };
+    }
+
+    if (typeOfItemFilters.length === 1) {
+      where.typeOfItem = { contains: typeOfItemFilters[0], mode: 'insensitive' };
+    } else if (typeOfItemFilters.length > 1) {
+      where.typeOfItem = { in: typeOfItemFilters };
+    }
+
+    if (ourItemNameFilters.length === 1) {
+      where.ourItemName = { contains: ourItemNameFilters[0], mode: 'insensitive' };
+    } else if (ourItemNameFilters.length > 1) {
+      where.ourItemName = { in: ourItemNameFilters };
+    }
+
+    if (sizeFilters.length === 1) {
+      where.size = { contains: sizeFilters[0], mode: 'insensitive' };
+    } else if (sizeFilters.length > 1) {
+      where.size = { in: sizeFilters };
+    }
+
+    if (sectionMmFilters.length === 1) {
+      where.sectionMm = { contains: sectionMmFilters[0], mode: 'insensitive' };
+    } else if (sectionMmFilters.length > 1) {
+      where.sectionMm = { in: sectionMmFilters };
+    }
+
+    if (sectionalWtKgMtrFilters.length === 1) {
+      where.sectionalWtKgMtr = { contains: sectionalWtKgMtrFilters[0], mode: 'insensitive' };
+    } else if (sectionalWtKgMtrFilters.length > 1) {
+      where.sectionalWtKgMtr = { in: sectionalWtKgMtrFilters };
+    }
+
+    if (lengthInMtrFilters.length === 1) {
+      where.lengthInMtr = { contains: lengthInMtrFilters[0], mode: 'insensitive' };
+    } else if (lengthInMtrFilters.length > 1) {
+      where.lengthInMtr = { in: lengthInMtrFilters };
+    }
+
+    if (weightPerPieceFilters.length === 1) {
+      where.weightPerPiece = { contains: weightPerPieceFilters[0], mode: 'insensitive' };
+    } else if (weightPerPieceFilters.length > 1) {
+      where.weightPerPiece = { in: weightPerPieceFilters };
+    }
+
+    if (unitWtOfMemberKgFilters.length === 1) {
+      where.unitWtOfMemberKg = { contains: unitWtOfMemberKgFilters[0], mode: 'insensitive' };
+    } else if (unitWtOfMemberKgFilters.length > 1) {
+      where.unitWtOfMemberKg = { in: unitWtOfMemberKgFilters };
+    }
+
+    if (priceFilters.length === 1) {
+      where.price = { contains: priceFilters[0], mode: 'insensitive' };
+    } else if (priceFilters.length > 1) {
+      where.price = { in: priceFilters };
+    }
+
+    if (statusFilters.length === 1) {
+      where.status = { equals: statusFilters[0], mode: 'insensitive' };
+    } else if (statusFilters.length > 1) {
+      where.status = { in: statusFilters };
     }
 
     if (startDate || endDate) {
@@ -85,6 +190,16 @@ export async function GET(req: Request) {
       'GI Pipe',
     ];
 
+    let uomOptionsList: string[] = [];
+    try {
+      const uoms = await prisma.itemTable.findMany({
+        select: { uom: true },
+        distinct: ['uom'],
+        orderBy: { uom: 'asc' },
+      });
+      uomOptionsList = uoms.map((u) => u.uom).filter(Boolean) as string[];
+    } catch (e) {}
+
     return NextResponse.json({
       items,
       totalCount,
@@ -94,6 +209,7 @@ export async function GET(req: Request) {
         ourItemNotOptions: ['MANUFACTURING', 'NO', 'TRADING'],
         ourItemNameOptions: uniqueOurItemNames,
         statusOptions: ['Quoted', 'NOT Required'],
+        uomOptions: uomOptionsList,
       },
     });
   } catch (error) {

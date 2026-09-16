@@ -50,6 +50,7 @@ import {
   Download,
 } from 'lucide-react';
 import Link from 'next/link';
+import MultiSelectFilterDropdown from '@/components/MultiSelectFilterDropdown';
 
 interface Item {
   id: number;
@@ -227,12 +228,38 @@ export default function Dashboard() {
   // Items
   const [items, setItems] = useState<Item[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
-  const [itemFilters, setItemFilters] = useState({
-    docketNoQtnNo: '',
-    itemNameParty: '',
-    ourItemNot: '',
-    ourItemName: [] as string[],
-    status: '',
+  const [itemFilters, setItemFilters] = useState<{
+    docketNoQtnNo: string[];
+    itemNameParty: string[];
+    uom: string[];
+    qty: string[];
+    ourItemNot: string[];
+    typeOfItem: string[];
+    ourItemName: string[];
+    size: string[];
+    sectionMm: string[];
+    sectionalWtKgMtr: string[];
+    lengthInMtr: string[];
+    weightPerPiece: string[];
+    unitWtOfMemberKg: string[];
+    price: string[];
+    status: string[];
+  }>({
+    docketNoQtnNo: [],
+    itemNameParty: [],
+    uom: [],
+    qty: [],
+    ourItemNot: [],
+    typeOfItem: [],
+    ourItemName: [],
+    size: [],
+    sectionMm: [],
+    sectionalWtKgMtr: [],
+    lengthInMtr: [],
+    weightPerPiece: [],
+    unitWtOfMemberKg: [],
+    price: [],
+    status: [],
   });
 
   const ourItemNameOptions = [
@@ -254,17 +281,93 @@ export default function Dashboard() {
     'GI Pipe',
   ];
 
+  const [itemOptionLists, setItemOptionLists] = useState<{
+    uom: string[];
+    ourItemNot: string[];
+    ourItemName: string[];
+    size: string[];
+    sectionMm: string[];
+    sectionalWtKgMtr: string[];
+    lengthInMtr: string[];
+    weightPerPiece: string[];
+    unitWtOfMemberKg: string[];
+    price: string[];
+    qty: string[];
+    status: string[];
+    itemNameParty: string[];
+    docketNoQtnNo: string[];
+    typeOfItem: string[];
+  }>({
+    uom: [],
+    ourItemNot: ['MANUFACTURING', 'NO', 'TRADING'],
+    ourItemName: ourItemNameOptions,
+    size: [],
+    sectionMm: [],
+    sectionalWtKgMtr: [],
+    lengthInMtr: [],
+    weightPerPiece: [],
+    unitWtOfMemberKg: [],
+    price: [],
+    qty: [],
+    status: ['Quoted', 'NOT Required'],
+    itemNameParty: [],
+    docketNoQtnNo: [],
+    typeOfItem: [],
+  });
+
   // Dockets
   const [dockets, setDockets] = useState<DockerParty[]>([]);
   const [docketsLoading, setDocketsLoading] = useState(false);
-  const [docketFilters, setDocketFilters] = useState({
-    docketNoQtnNo: '',
-    partyName: '',
+  const [docketFilters, setDocketFilters] = useState<{
+    docketNoQtnNo: string[];
+    partyName: string[];
+    itemFilter: string;
+    state: string[];
+    utility: string[];
+    type: string[];
+    attachments: string;
+    price: string[];
+    payment: string[];
+    delivery: string[];
+    warranty: string[];
+    approval: string[];
+    inspection: string[];
+  }>({
+    docketNoQtnNo: [],
+    partyName: [],
     itemFilter: '',
-    state: '',
-    type: '',
+    state: [],
+    utility: [],
+    type: [],
+    attachments: '',
+    price: [],
+    payment: [],
+    delivery: [],
+    warranty: [],
+    approval: [],
+    inspection: [],
   });
   const [stateOptions, setStateOptions] = useState<string[]>([]);
+  const [docketOptions, setDocketOptions] = useState<string[]>([]);
+  const [partyOptions, setPartyOptions] = useState<string[]>([]);
+  const [utilityOptions, setUtilityOptions] = useState<string[]>([]);
+  const [subTableFilters, setSubTableFilters] = useState<{
+    [docketNo: string]: {
+      itemNameParty?: string[];
+      uom?: string[];
+      qty?: string[];
+      ourItemNot?: string[];
+      ourItemName?: string[];
+      size?: string[];
+      weightPerPiece?: string[];
+      unitWtOfMemberKg?: string[];
+      price?: string[];
+      sectionMm?: string[];
+      sectionalWtKgMtr?: string[];
+      lengthInMtr?: string[];
+      status?: string[];
+    };
+  }>({});
 
   // Expanded Docket IDs state & items cache map
   const [expandedDocketIds, setExpandedDocketIds] = useState<number[]>([]);
@@ -819,6 +922,22 @@ export default function Dashboard() {
     }
   };
 
+  // Fetch Distinct Item Filter Options from Server
+  const fetchItemFilterOptions = async () => {
+    try {
+      const res = await fetch('/api/items/filter-options');
+      const data = await res.json();
+      if (data && !data.error) {
+        setItemOptionLists((prev) => ({
+          ...prev,
+          ...data,
+        }));
+      }
+    } catch (err) {
+      console.error('Error fetching filter options:', err);
+    }
+  };
+
   // Fetch Items
   const fetchItems = async () => {
     setItemsLoading(true);
@@ -827,11 +946,21 @@ export default function Dashboard() {
       params.append('page', String(itemPage));
       params.append('limit', String(itemLimit));
       if (search) params.append('search', search);
-      if (itemFilters.docketNoQtnNo) params.append('docketNoQtnNo', itemFilters.docketNoQtnNo);
-      if (itemFilters.itemNameParty) params.append('itemNameParty', itemFilters.itemNameParty);
-      if (itemFilters.ourItemNot) params.append('ourItemNot', itemFilters.ourItemNot);
-      if (itemFilters.ourItemName.length > 0) params.append('ourItemName', itemFilters.ourItemName.join(','));
-      if (itemFilters.status) params.append('status', itemFilters.status);
+      itemFilters.docketNoQtnNo.forEach((v) => params.append('docketNoQtnNo', v));
+      itemFilters.itemNameParty.forEach((v) => params.append('itemNameParty', v));
+      itemFilters.uom.forEach((v) => params.append('uom', v));
+      itemFilters.qty.forEach((v) => params.append('qty', v));
+      itemFilters.ourItemNot.forEach((v) => params.append('ourItemNot', v));
+      itemFilters.typeOfItem.forEach((v) => params.append('typeOfItem', v));
+      itemFilters.ourItemName.forEach((v) => params.append('ourItemName', v));
+      itemFilters.size.forEach((v) => params.append('size', v));
+      itemFilters.sectionMm.forEach((v) => params.append('sectionMm', v));
+      itemFilters.sectionalWtKgMtr.forEach((v) => params.append('sectionalWtKgMtr', v));
+      itemFilters.lengthInMtr.forEach((v) => params.append('lengthInMtr', v));
+      itemFilters.weightPerPiece.forEach((v) => params.append('weightPerPiece', v));
+      itemFilters.unitWtOfMemberKg.forEach((v) => params.append('unitWtOfMemberKg', v));
+      itemFilters.price.forEach((v) => params.append('price', v));
+      itemFilters.status.forEach((v) => params.append('status', v));
       if (startDate) params.append('startDate', startDate);
       if (endDate) params.append('endDate', endDate);
 
@@ -857,11 +986,19 @@ export default function Dashboard() {
       params.append('page', String(docketPage));
       params.append('limit', String(docketLimit));
       if (search) params.append('search', search);
-      if (docketFilters.docketNoQtnNo) params.append('docketNoQtnNo', docketFilters.docketNoQtnNo);
-      if (docketFilters.partyName) params.append('partyName', docketFilters.partyName);
+      docketFilters.docketNoQtnNo.forEach((v) => params.append('docketNoQtnNo', v));
+      docketFilters.partyName.forEach((v) => params.append('partyName', v));
       if (docketFilters.itemFilter) params.append('itemFilter', docketFilters.itemFilter);
-      if (docketFilters.state) params.append('state', docketFilters.state);
-      if (docketFilters.type) params.append('type', docketFilters.type);
+      docketFilters.state.forEach((v) => params.append('state', v));
+      docketFilters.utility.forEach((v) => params.append('utility', v));
+      docketFilters.type.forEach((v) => params.append('type', v));
+      if (docketFilters.attachments) params.append('attachments', docketFilters.attachments);
+      docketFilters.price.forEach((v) => params.append('price', v));
+      docketFilters.payment.forEach((v) => params.append('payment', v));
+      docketFilters.delivery.forEach((v) => params.append('delivery', v));
+      docketFilters.warranty.forEach((v) => params.append('warranty', v));
+      docketFilters.approval.forEach((v) => params.append('approval', v));
+      docketFilters.inspection.forEach((v) => params.append('inspection', v));
       if (startDate) params.append('startDate', startDate);
       if (endDate) params.append('endDate', endDate);
 
@@ -872,6 +1009,9 @@ export default function Dashboard() {
         setDocketTotalCount(data.totalCount || data.dockets.length);
         setDocketTotalPages(data.totalPages || 1);
         if (data.states) setStateOptions(data.states);
+        if (data.docketsList) setDocketOptions(data.docketsList);
+        if (data.parties) setPartyOptions(data.parties);
+        if (data.utilities) setUtilityOptions(data.utilities);
       }
     } catch (err) {
       console.error(err);
@@ -977,6 +1117,7 @@ export default function Dashboard() {
     fetchMasterValues();
     fetchNextDocketNo();
     fetchItems();
+    fetchItemFilterOptions();
     fetchDockets();
     fetchTerms();
     fetchLogs();
@@ -1735,8 +1876,39 @@ export default function Dashboard() {
     setSearch('');
     setStartDate('');
     setEndDate('');
-    setItemFilters({ docketNoQtnNo: '', itemNameParty: '', ourItemNot: '', ourItemName: [], status: '' });
-    setDocketFilters({ docketNoQtnNo: '', partyName: '', itemFilter: '', state: '', type: '' });
+    setItemFilters({
+      docketNoQtnNo: [],
+      itemNameParty: [],
+      uom: [],
+      qty: [],
+      ourItemNot: [],
+      typeOfItem: [],
+      ourItemName: [],
+      size: [],
+      sectionMm: [],
+      sectionalWtKgMtr: [],
+      lengthInMtr: [],
+      weightPerPiece: [],
+      unitWtOfMemberKg: [],
+      price: [],
+      status: [],
+    });
+    setDocketFilters({
+      docketNoQtnNo: [],
+      partyName: [],
+      itemFilter: '',
+      state: [],
+      utility: [],
+      type: [],
+      attachments: '',
+      price: [],
+      payment: [],
+      delivery: [],
+      warranty: [],
+      approval: [],
+      inspection: [],
+    });
+    setSubTableFilters({});
     setLogTableFilter('');
     setDocketItemsMap({});
     setItemPage(1);
@@ -2505,6 +2677,35 @@ export default function Dashboard() {
                   <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
                   <span>Autofill by AI</span>
                 </button>
+
+                {Object.values(itemFilters).some((arr) => Array.isArray(arr) && arr.length > 0) && (
+                  <button
+                    onClick={() => {
+                      setItemFilters({
+                        docketNoQtnNo: [],
+                        itemNameParty: [],
+                        uom: [],
+                        qty: [],
+                        ourItemNot: [],
+                        typeOfItem: [],
+                        ourItemName: [],
+                        size: [],
+                        sectionMm: [],
+                        sectionalWtKgMtr: [],
+                        lengthInMtr: [],
+                        weightPerPiece: [],
+                        unitWtOfMemberKg: [],
+                        price: [],
+                        status: [],
+                      });
+                      setItemPage(1);
+                    }}
+                    className="flex items-center space-x-1 px-2.5 py-1 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Clear All Filters</span>
+                  </button>
+                )}
               </div>
 
               {/* Pagination Controls */}
@@ -2592,72 +2793,201 @@ export default function Dashboard() {
                     <td className="p-2 w-[70px] min-w-[70px] sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs text-center font-bold text-slate-400 text-[10px]">
                       ID
                     </td>
-                    <td className="p-2 w-[150px] min-w-[150px] sticky left-[70px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      <input
-                        type="text"
-                        placeholder="Filter Docket..."
-                        value={itemFilters.docketNoQtnNo}
-                        onChange={(e) => {
-                          setItemFilters((prev) => ({ ...prev, docketNoQtnNo: e.target.value }));
+                    <td className="p-1.5 w-[150px] min-w-[150px] sticky left-[70px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
+                      <MultiSelectFilterDropdown
+                        title="Docket"
+                        placeholder="Search docket..."
+                        allLabel="All Dockets"
+                        options={itemOptionLists.docketNoQtnNo?.length ? itemOptionLists.docketNoQtnNo : docketOptions}
+                        selected={itemFilters.docketNoQtnNo}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, docketNoQtnNo: vals }));
                           setItemPage(1);
                         }}
-                        className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="p-2 w-[260px] min-w-[260px] sticky left-[220px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      <input
-                        type="text"
-                        placeholder="Filter Item..."
-                        value={itemFilters.itemNameParty}
-                        onChange={(e) => {
-                          setItemFilters((prev) => ({ ...prev, itemNameParty: e.target.value }));
+                    <td className="p-1.5 w-[260px] min-w-[260px] sticky left-[220px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
+                      <MultiSelectFilterDropdown
+                        title="Item Name"
+                        placeholder="Search item..."
+                        allLabel="All Items"
+                        options={itemOptionLists.itemNameParty}
+                        selected={itemFilters.itemNameParty}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, itemNameParty: vals }));
                           setItemPage(1);
                         }}
-                        className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
-                    <td className="p-2 w-[80px] min-w-[80px] sticky left-[480px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs"></td>
-                    <td className="p-2 w-[80px] min-w-[80px] sticky left-[560px] z-30 bg-slate-100 border-r-2 border-slate-400 shadow-xs"></td>
-                    <td className="p-2 min-w-[180px]">
-                      <select
-                        value={itemFilters.ourItemNot}
-                        onChange={(e) => {
-                          setItemFilters((prev) => ({ ...prev, ourItemNot: e.target.value }));
+                    <td className="p-1.5 w-[80px] min-w-[80px] sticky left-[480px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
+                      <MultiSelectFilterDropdown
+                        title="UOM"
+                        placeholder="Search UOM..."
+                        allLabel="All UOMs"
+                        options={itemOptionLists.uom}
+                        selected={itemFilters.uom}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, uom: vals }));
                           setItemPage(1);
                         }}
-                        className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      >
-                        <option value="">All</option>
-                        <option value="MANUFACTURING">MANUFACTURING</option>
-                        <option value="NO">NO</option>
-                        <option value="TRADING">TRADING</option>
-                      </select>
+                      />
                     </td>
-                    <td className="p-2 min-w-[160px]"></td>
-                    <td className="p-2 min-w-[220px]"></td>
-                    <td className="p-2 min-w-[140px]"></td>
-                    <td className="p-2 min-w-[140px]"></td>
-                    <td className="p-2 min-w-[160px]"></td>
-                    <td className="p-2 min-w-[130px]"></td>
-                    <td className="p-2 min-w-[180px]"></td>
-                    <td className="p-2 min-w-[140px]"></td>
-                    <td className="p-2 min-w-[120px]"></td>
-                    <td className="p-2 min-w-[160px]">
-                      <select
-                        value={itemFilters.status}
-                        onChange={(e) => {
-                          setItemFilters((prev) => ({ ...prev, status: e.target.value }));
+                    <td className="p-1.5 w-[80px] min-w-[80px] sticky left-[560px] z-30 bg-slate-100 border-r-2 border-slate-400 shadow-xs">
+                      <MultiSelectFilterDropdown
+                        title="Qty"
+                        placeholder="Search Qty..."
+                        allLabel="All Qtys"
+                        options={itemOptionLists.qty}
+                        selected={itemFilters.qty}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, qty: vals }));
                           setItemPage(1);
                         }}
-                        className="w-full px-2 py-1 text-xs border border-slate-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      >
-                        <option value="">All Statuses</option>
-                        {masterSuggestions.STATUS.map((st) => (
-                          <option key={st} value={st}>
-                            {st}
-                          </option>
-                        ))}
-                      </select>
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[180px]">
+                      <MultiSelectFilterDropdown
+                        title="Our Item/Not"
+                        placeholder="Search status..."
+                        allLabel="All Options"
+                        options={itemOptionLists.ourItemNot}
+                        selected={itemFilters.ourItemNot}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, ourItemNot: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Type of Item"
+                        placeholder="Search type..."
+                        allLabel="All Types"
+                        options={itemOptionLists.typeOfItem}
+                        selected={itemFilters.typeOfItem}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, typeOfItem: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[220px]">
+                      <MultiSelectFilterDropdown
+                        title="Our Item Name"
+                        placeholder="Search item name..."
+                        allLabel="All Item Names"
+                        options={itemOptionLists.ourItemName}
+                        selected={itemFilters.ourItemName}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, ourItemName: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[140px]">
+                      <MultiSelectFilterDropdown
+                        title="Size"
+                        placeholder="Search size..."
+                        allLabel="All Sizes"
+                        options={itemOptionLists.size}
+                        selected={itemFilters.size}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, size: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[140px]">
+                      <MultiSelectFilterDropdown
+                        title="Section"
+                        placeholder="Search section..."
+                        allLabel="All Sections"
+                        options={itemOptionLists.sectionMm}
+                        selected={itemFilters.sectionMm}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, sectionMm: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Sec. Wt"
+                        placeholder="Search wt..."
+                        allLabel="All Sec. Wts"
+                        options={itemOptionLists.sectionalWtKgMtr}
+                        selected={itemFilters.sectionalWtKgMtr}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, sectionalWtKgMtr: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[130px]">
+                      <MultiSelectFilterDropdown
+                        title="Length"
+                        placeholder="Search length..."
+                        allLabel="All Lengths"
+                        options={itemOptionLists.lengthInMtr}
+                        selected={itemFilters.lengthInMtr}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, lengthInMtr: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[130px] bg-blue-50/50">
+                      <MultiSelectFilterDropdown
+                        title="Unit Wt"
+                        placeholder="Search unit wt..."
+                        allLabel="All Unit Wts"
+                        options={itemOptionLists.weightPerPiece}
+                        selected={itemFilters.weightPerPiece}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, weightPerPiece: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[180px]">
+                      <MultiSelectFilterDropdown
+                        title="Member Wt"
+                        placeholder="Search member wt..."
+                        allLabel="All Member Wts"
+                        options={itemOptionLists.unitWtOfMemberKg}
+                        selected={itemFilters.unitWtOfMemberKg}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, unitWtOfMemberKg: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[120px]">
+                      <MultiSelectFilterDropdown
+                        title="Price"
+                        placeholder="Search price..."
+                        allLabel="All Prices"
+                        options={itemOptionLists.price}
+                        selected={itemFilters.price}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, price: vals }));
+                          setItemPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Status"
+                        placeholder="Search status..."
+                        allLabel="All Statuses"
+                        options={itemOptionLists.status}
+                        selected={itemFilters.status}
+                        onChange={(vals) => {
+                          setItemFilters((prev) => ({ ...prev, status: vals }));
+                          setItemPage(1);
+                        }}
+                        align="right"
+                      />
                     </td>
                     <td className="p-2 min-w-[80px]"></td>
                   </tr>
@@ -2908,6 +3238,33 @@ export default function Dashboard() {
                   <span>Add Docket</span>
                 </button>
 
+                {Object.entries(docketFilters).some(([key, val]) => (Array.isArray(val) ? val.length > 0 : Boolean(val))) && (
+                  <button
+                    onClick={() => {
+                      setDocketFilters({
+                        docketNoQtnNo: [],
+                        partyName: [],
+                        itemFilter: '',
+                        state: [],
+                        utility: [],
+                        type: [],
+                        attachments: '',
+                        price: [],
+                        payment: [],
+                        delivery: [],
+                        warranty: [],
+                        approval: [],
+                        inspection: [],
+                      });
+                      setDocketPage(1);
+                    }}
+                    className="flex items-center space-x-1 px-2.5 py-1 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Clear All Filters</span>
+                  </button>
+                )}
+
                 {/* Pagination Controls */}
                 <div className="flex items-center space-x-1.5 text-xs text-slate-600 font-medium border-l border-slate-200 pl-4">
                   <span>Rows:</span>
@@ -3032,15 +3389,16 @@ export default function Dashboard() {
                     </td>
 
                     <td className="p-1.5 w-[130px] min-w-[130px]">
-                      <input
-                        type="text"
-                        placeholder="Filter..."
-                        value={docketFilters.docketNoQtnNo}
-                        onChange={(e) => {
-                          setDocketFilters((prev) => ({ ...prev, docketNoQtnNo: e.target.value }));
+                      <MultiSelectFilterDropdown
+                        title="Docket"
+                        placeholder="Search docket..."
+                        allLabel="All Dockets"
+                        options={docketOptions}
+                        selected={docketFilters.docketNoQtnNo}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, docketNoQtnNo: vals }));
                           setDocketPage(1);
                         }}
-                        className="w-full px-1.5 py-0.5 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
                     <td className="p-1.5 w-[210px] min-w-[210px] bg-blue-50/50">
@@ -3056,57 +3414,151 @@ export default function Dashboard() {
                       />
                     </td>
                     <td className="p-1.5 w-[200px] min-w-[200px]">
-                      <input
-                        type="text"
-                        placeholder="Filter Party..."
-                        value={docketFilters.partyName}
-                        onChange={(e) => {
-                          setDocketFilters((prev) => ({ ...prev, partyName: e.target.value }));
+                      <MultiSelectFilterDropdown
+                        title="Party"
+                        placeholder="Search party..."
+                        allLabel="All Parties"
+                        options={partyOptions}
+                        selected={docketFilters.partyName}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, partyName: vals }));
                           setDocketPage(1);
                         }}
-                        className="w-full px-1.5 py-0.5 text-xs border border-slate-300 rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
                       />
                     </td>
                     <td className="p-1.5 w-[110px] min-w-[110px]">
-                      <select
-                        value={docketFilters.state}
-                        onChange={(e) => {
-                          setDocketFilters((prev) => ({ ...prev, state: e.target.value }));
+                      <MultiSelectFilterDropdown
+                        title="State"
+                        placeholder="Search state..."
+                        allLabel="All States"
+                        options={stateOptions}
+                        selected={docketFilters.state}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, state: vals }));
                           setDocketPage(1);
                         }}
-                        className="w-full px-1 py-0.5 text-[11px] border border-slate-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      >
-                        <option value="">All States</option>
-                        {stateOptions.map((st) => (
-                          <option key={st} value={st}>
-                            {st}
-                          </option>
-                        ))}
-                      </select>
+                      />
                     </td>
-                    <td className="p-1.5 w-[100px] min-w-[100px]"></td>
+                    <td className="p-1.5 w-[100px] min-w-[100px]">
+                      <MultiSelectFilterDropdown
+                        title="Utility"
+                        placeholder="Search utility..."
+                        allLabel="All Utilities"
+                        options={utilityOptions}
+                        selected={docketFilters.utility}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, utility: vals }));
+                          setDocketPage(1);
+                        }}
+                      />
+                    </td>
                     <td className="p-1.5 w-[160px] min-w-[160px]"></td>
                     <td className="p-1.5 w-[130px] min-w-[130px] bg-amber-50/50">
-                      <select
-                        value={docketFilters.type}
-                        onChange={(e) => {
-                          setDocketFilters((prev) => ({ ...prev, type: e.target.value }));
+                      <MultiSelectFilterDropdown
+                        title="Type"
+                        placeholder="Search type..."
+                        allLabel="All Types"
+                        options={['Tender', 'Purchase']}
+                        selected={docketFilters.type}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, type: vals }));
                           setDocketPage(1);
                         }}
-                        className="w-full px-1 py-0.5 text-[11px] border border-amber-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      />
+                    </td>
+                    <td className="p-1.5 w-[180px] min-w-[180px] bg-emerald-50/50">
+                      <select
+                        value={docketFilters.attachments}
+                        onChange={(e) => {
+                          setDocketFilters((prev) => ({ ...prev, attachments: e.target.value }));
+                          setDocketPage(1);
+                        }}
+                        className="w-full px-1 py-0.5 text-[11px] border border-emerald-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500"
                       >
-                        <option value="">All Types</option>
-                        <option value="Tender">Tender</option>
-                        <option value="Purchase">Purchase</option>
+                        <option value="">All Attachments</option>
+                        <option value="has">With Attachments</option>
+                        <option value="empty">Without Attachments</option>
                       </select>
                     </td>
-                    <td className="p-1.5 w-[180px] min-w-[180px] bg-emerald-50/50"></td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Price Condition"
+                        placeholder="Search condition..."
+                        allLabel="All Prices"
+                        options={termsDropdowns.price}
+                        selected={docketFilters.price}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, price: vals }));
+                          setDocketPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Payment Condition"
+                        placeholder="Search condition..."
+                        allLabel="All Payments"
+                        options={termsDropdowns.payment}
+                        selected={docketFilters.payment}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, payment: vals }));
+                          setDocketPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Delivery Condition"
+                        placeholder="Search condition..."
+                        allLabel="All Deliveries"
+                        options={termsDropdowns.delivery}
+                        selected={docketFilters.delivery}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, delivery: vals }));
+                          setDocketPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Warranty Condition"
+                        placeholder="Search condition..."
+                        allLabel="All Warranties"
+                        options={termsDropdowns.warranty}
+                        selected={docketFilters.warranty}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, warranty: vals }));
+                          setDocketPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Approval Condition"
+                        placeholder="Search condition..."
+                        allLabel="All Approvals"
+                        options={termsDropdowns.approval}
+                        selected={docketFilters.approval}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, approval: vals }));
+                          setDocketPage(1);
+                        }}
+                      />
+                    </td>
+                    <td className="p-1.5 w-[160px] min-w-[160px]">
+                      <MultiSelectFilterDropdown
+                        title="Inspection Condition"
+                        placeholder="Search condition..."
+                        allLabel="All Inspections"
+                        options={termsDropdowns.inspection}
+                        selected={docketFilters.inspection}
+                        onChange={(vals) => {
+                          setDocketFilters((prev) => ({ ...prev, inspection: vals }));
+                          setDocketPage(1);
+                        }}
+                        align="right"
+                      />
+                    </td>
                   </tr>
                 </thead>
 
@@ -3130,14 +3582,74 @@ export default function Dashboard() {
                       const isItemLoading = doc.docketNoQtnNo ? loadingDocketItems[doc.docketNoQtnNo] : false;
 
                       const activeFilterQuery = (docketFilters.itemFilter || search || '').trim().toLowerCase();
-                      const docketItems = activeFilterQuery
-                        ? rawDocketItems.filter((item) => {
-                            const name = (item.itemNameParty || '').toLowerCase();
-                            const ourName = (item.ourItemName || '').toLowerCase();
-                            const type = (item.typeOfItem || '').toLowerCase();
-                            return name.includes(activeFilterQuery) || ourName.includes(activeFilterQuery) || type.includes(activeFilterQuery);
-                          })
-                        : rawDocketItems;
+                      const subFilter = doc.docketNoQtnNo ? subTableFilters[doc.docketNoQtnNo] || {} : {};
+                      const hasSubFilters = Object.values(subFilter).some((v) => Boolean(v && Array.isArray(v) && v.length > 0));
+
+                      const docketItems = rawDocketItems.filter((item) => {
+                        if (activeFilterQuery) {
+                          const name = (item.itemNameParty || '').toLowerCase();
+                          const ourName = (item.ourItemName || '').toLowerCase();
+                          const type = (item.typeOfItem || '').toLowerCase();
+                          if (!name.includes(activeFilterQuery) && !ourName.includes(activeFilterQuery) && !type.includes(activeFilterQuery)) {
+                            return false;
+                          }
+                        }
+                        if (subFilter.itemNameParty && subFilter.itemNameParty.length > 0 && !subFilter.itemNameParty.includes(item.itemNameParty || '')) {
+                          return false;
+                        }
+                        if (subFilter.uom && subFilter.uom.length > 0 && !subFilter.uom.includes(item.uom || '')) {
+                          return false;
+                        }
+                        if (subFilter.qty && subFilter.qty.length > 0 && !subFilter.qty.includes(item.qty || '')) {
+                          return false;
+                        }
+                        if (subFilter.ourItemNot && subFilter.ourItemNot.length > 0 && !subFilter.ourItemNot.includes(item.ourItemNot || '')) {
+                          return false;
+                        }
+                        if (subFilter.ourItemName && subFilter.ourItemName.length > 0 && !subFilter.ourItemName.includes(item.ourItemName || '')) {
+                          return false;
+                        }
+                        if (subFilter.size && subFilter.size.length > 0 && !subFilter.size.includes(item.size || '')) {
+                          return false;
+                        }
+                        if (subFilter.weightPerPiece && subFilter.weightPerPiece.length > 0 && !subFilter.weightPerPiece.includes(item.weightPerPiece || '')) {
+                          return false;
+                        }
+                        if (subFilter.unitWtOfMemberKg && subFilter.unitWtOfMemberKg.length > 0 && !subFilter.unitWtOfMemberKg.includes(item.unitWtOfMemberKg || '')) {
+                          return false;
+                        }
+                        if (subFilter.price && subFilter.price.length > 0 && !subFilter.price.includes(item.price || '')) {
+                          return false;
+                        }
+                        if (subFilter.sectionMm && subFilter.sectionMm.length > 0 && !subFilter.sectionMm.includes(item.sectionMm || '')) {
+                          return false;
+                        }
+                        if (subFilter.sectionalWtKgMtr && subFilter.sectionalWtKgMtr.length > 0 && !subFilter.sectionalWtKgMtr.includes(item.sectionalWtKgMtr || '')) {
+                          return false;
+                        }
+                        if (subFilter.lengthInMtr && subFilter.lengthInMtr.length > 0 && !subFilter.lengthInMtr.includes(item.lengthInMtr || '')) {
+                          return false;
+                        }
+                        if (subFilter.status && subFilter.status.length > 0 && !subFilter.status.includes(item.status || '')) {
+                          return false;
+                        }
+                        return true;
+                      });
+
+                      // Unique options extracted directly from docket's items
+                      const subItemNames = Array.from(new Set(rawDocketItems.map((i) => i.itemNameParty).filter(Boolean) as string[]));
+                      const subUoms = Array.from(new Set(rawDocketItems.map((i) => i.uom).filter(Boolean) as string[]));
+                      const subQtys = Array.from(new Set(rawDocketItems.map((i) => i.qty).filter(Boolean) as string[]));
+                      const subOurItemNots = Array.from(new Set([...['MANUFACTURING', 'NO', 'TRADING'], ...rawDocketItems.map((i) => i.ourItemNot).filter(Boolean) as string[]]));
+                      const subOurItemNames = Array.from(new Set([...ourItemNameOptions, ...rawDocketItems.map((i) => i.ourItemName).filter(Boolean) as string[]]));
+                      const subSizes = Array.from(new Set(rawDocketItems.map((i) => i.size).filter(Boolean) as string[]));
+                      const subUnitWts = Array.from(new Set(rawDocketItems.map((i) => i.weightPerPiece).filter(Boolean) as string[]));
+                      const subMemberWts = Array.from(new Set(rawDocketItems.map((i) => i.unitWtOfMemberKg).filter(Boolean) as string[]));
+                      const subPrices = Array.from(new Set(rawDocketItems.map((i) => i.price).filter(Boolean) as string[]));
+                      const subSections = Array.from(new Set(rawDocketItems.map((i) => i.sectionMm).filter(Boolean) as string[]));
+                      const subSecWts = Array.from(new Set(rawDocketItems.map((i) => i.sectionalWtKgMtr).filter(Boolean) as string[]));
+                      const subLengths = Array.from(new Set(rawDocketItems.map((i) => i.lengthInMtr).filter(Boolean) as string[]));
+                      const subStatuses = Array.from(new Set([...['Quoted', 'NOT Required'], ...rawDocketItems.map((i) => i.status).filter(Boolean) as string[]]));
 
                       return (
                         <React.Fragment key={doc.id}>
@@ -3442,7 +3954,7 @@ export default function Dashboard() {
                           {/* EXPANDED ACCORDION SUB-TABLE FOR DOCKET ITEMS */}
                           {isExpanded && (
                             <tr className="bg-blue-50/40 border-b-2 border-blue-200">
-                              <td colSpan={14} className="p-4 sm:p-6">
+                              <td colSpan={16} className="p-4 sm:p-6">
                                 <div className="bg-white rounded-2xl border border-blue-200 shadow-md p-4 space-y-4">
                                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
                                     <div className="flex items-center space-x-2">
@@ -3458,8 +3970,24 @@ export default function Dashboard() {
                                         </p>
                                       </div>
                                       <span className="bg-blue-100 text-blue-800 font-extrabold px-3 py-1 rounded-full text-xs ml-2">
-                                        {docketItems.length} {activeFilterQuery ? `Filtered Items (of ${rawDocketItems.length} Total)` : 'Items Listed'}
+                                        {docketItems.length} {activeFilterQuery || hasSubFilters ? `Filtered Items (of ${rawDocketItems.length} Total)` : 'Items Listed'}
                                       </span>
+                                      {hasSubFilters && (
+                                        <button
+                                          onClick={() => {
+                                            if (doc.docketNoQtnNo) {
+                                              setSubTableFilters((prev) => {
+                                                const updated = { ...prev };
+                                                delete updated[doc.docketNoQtnNo!];
+                                                return updated;
+                                              });
+                                            }
+                                          }}
+                                          className="text-[11px] text-rose-600 font-extrabold bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2 py-1 rounded-lg transition-all"
+                                        >
+                                          Clear Sub-Filters
+                                        </button>
+                                      )}
                                     </div>
 
                                     <div className="flex items-center space-x-2">
@@ -3545,6 +4073,248 @@ export default function Dashboard() {
                                             <th className="p-2.5 border-b border-slate-300 w-[160px] min-w-[160px]">Sectional Wt. (Kg/Mtr.)</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[120px] min-w-[120px]">Length (Mtr.)</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">STATUS</th>
+                                          </tr>
+
+                                          {/* Sub-table column filters */}
+                                          <tr className="bg-slate-50 border-b border-slate-200">
+                                            <td className="p-1 text-center text-[10px] font-bold text-slate-400 sticky left-0 z-30 bg-slate-100 border-r border-slate-300">
+                                              Filter
+                                            </td>
+                                            <td className="p-1 sticky left-[75px] z-30 bg-slate-100 border-r border-slate-300">
+                                              <MultiSelectFilterDropdown
+                                                title="Item"
+                                                placeholder="Search item..."
+                                                allLabel="All Items"
+                                                options={subItemNames}
+                                                selected={subFilter.itemNameParty || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      itemNameParty: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1 sticky left-[315px] z-30 bg-slate-100 border-r border-slate-300">
+                                              <MultiSelectFilterDropdown
+                                                title="UOM"
+                                                placeholder="Search..."
+                                                allLabel="All"
+                                                options={subUoms}
+                                                selected={subFilter.uom || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      uom: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1 sticky left-[395px] z-30 bg-slate-100 border-r-2 border-slate-400">
+                                              <MultiSelectFilterDropdown
+                                                title="Qty"
+                                                placeholder="Search..."
+                                                allLabel="All"
+                                                options={subQtys}
+                                                selected={subFilter.qty || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      qty: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1">
+                                              <MultiSelectFilterDropdown
+                                                title="Our Item/Not"
+                                                placeholder="Search..."
+                                                allLabel="All"
+                                                options={subOurItemNots}
+                                                selected={subFilter.ourItemNot || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      ourItemNot: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1">
+                                              <MultiSelectFilterDropdown
+                                                title="Our Item Name"
+                                                placeholder="Search item name..."
+                                                allLabel="All Names"
+                                                options={subOurItemNames}
+                                                selected={subFilter.ourItemName || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      ourItemName: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1">
+                                              <MultiSelectFilterDropdown
+                                                title="Size"
+                                                placeholder="Search size..."
+                                                allLabel="All Sizes"
+                                                options={subSizes}
+                                                selected={subFilter.size || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      size: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1 bg-blue-50/50">
+                                              <MultiSelectFilterDropdown
+                                                title="Unit Wt"
+                                                placeholder="Search wt..."
+                                                allLabel="All Wts"
+                                                options={subUnitWts}
+                                                selected={subFilter.weightPerPiece || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      weightPerPiece: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1">
+                                              <MultiSelectFilterDropdown
+                                                title="Member Wt"
+                                                placeholder="Search wt..."
+                                                allLabel="All Wts"
+                                                options={subMemberWts}
+                                                selected={subFilter.unitWtOfMemberKg || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      unitWtOfMemberKg: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1 bg-blue-50/50">
+                                              <MultiSelectFilterDropdown
+                                                title="Price"
+                                                placeholder="Search price..."
+                                                allLabel="All Prices"
+                                                options={subPrices}
+                                                selected={subFilter.price || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      price: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1">
+                                              <MultiSelectFilterDropdown
+                                                title="Section"
+                                                placeholder="Search section..."
+                                                allLabel="All Sections"
+                                                options={subSections}
+                                                selected={subFilter.sectionMm || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      sectionMm: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1">
+                                              <MultiSelectFilterDropdown
+                                                title="Sec. Wt"
+                                                placeholder="Search sec wt..."
+                                                allLabel="All Sec Wts"
+                                                options={subSecWts}
+                                                selected={subFilter.sectionalWtKgMtr || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      sectionalWtKgMtr: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1">
+                                              <MultiSelectFilterDropdown
+                                                title="Length"
+                                                placeholder="Search length..."
+                                                allLabel="All Lengths"
+                                                options={subLengths}
+                                                selected={subFilter.lengthInMtr || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      lengthInMtr: vals,
+                                                    },
+                                                  }))
+                                                }
+                                              />
+                                            </td>
+                                            <td className="p-1">
+                                              <MultiSelectFilterDropdown
+                                                title="Status"
+                                                placeholder="Search status..."
+                                                allLabel="All Statuses"
+                                                options={subStatuses}
+                                                selected={subFilter.status || []}
+                                                onChange={(vals) =>
+                                                  setSubTableFilters((prev) => ({
+                                                    ...prev,
+                                                    [doc.docketNoQtnNo!]: {
+                                                      ...prev[doc.docketNoQtnNo!],
+                                                      status: vals,
+                                                    },
+                                                  }))
+                                                }
+                                                align="right"
+                                              />
+                                            </td>
                                           </tr>
                                         </thead>
                                          <tbody className="divide-y divide-slate-100 font-medium">
