@@ -42,6 +42,7 @@ model DockerPartyName {
   state            String?
   utility          String?
   deliveryLocation String?  @map("delivery_location")
+  type             String?
   price            String?
   payment          String?
   delivery         String?

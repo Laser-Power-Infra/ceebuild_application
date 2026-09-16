@@ -7,6 +7,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const search = searchParams.get('search') || '';
     const stateFilter = searchParams.get('state') || '';
+    const typeFilter = searchParams.get('type') || '';
     const docketFilter = searchParams.get('docketNoQtnNo') || '';
     const partyFilter = searchParams.get('partyName') || '';
     const itemFilter = searchParams.get('itemFilter') || ''; // Filter dockets by item name
@@ -47,6 +48,7 @@ export async function GET(req: Request) {
             { state: { contains: search, mode: 'insensitive' } },
             { utility: { contains: search, mode: 'insensitive' } },
             { deliveryLocation: { contains: search, mode: 'insensitive' } },
+            { type: { contains: search, mode: 'insensitive' } },
           ],
         },
       ];
@@ -60,6 +62,9 @@ export async function GET(req: Request) {
     }
     if (stateFilter) {
       where.state = { equals: stateFilter, mode: 'insensitive' };
+    }
+    if (typeFilter) {
+      where.type = { equals: typeFilter, mode: 'insensitive' };
     }
 
     if (startDate || endDate) {
@@ -144,6 +149,7 @@ export async function POST(req: Request) {
       state,
       utility,
       deliveryLocation,
+      type,
       price,
       payment,
       delivery,
@@ -192,6 +198,7 @@ export async function POST(req: Request) {
         state: state ? state.trim() : null,
         utility: utility ? utility.trim() : null,
         deliveryLocation: deliveryLocation ? deliveryLocation.trim() : null,
+        type: type ? type.trim() : null,
         price: price || null,
         payment: payment || null,
         delivery: delivery || null,

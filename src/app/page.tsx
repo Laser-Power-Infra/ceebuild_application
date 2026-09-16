@@ -83,6 +83,7 @@ interface DockerParty {
   state: string | null;
   utility: string | null;
   deliveryLocation: string | null;
+  type?: string | null;
   price: string | null;
   payment: string | null;
   delivery: string | null;
@@ -261,6 +262,7 @@ export default function Dashboard() {
     partyName: '',
     itemFilter: '',
     state: '',
+    type: '',
   });
   const [stateOptions, setStateOptions] = useState<string[]>([]);
 
@@ -279,6 +281,7 @@ export default function Dashboard() {
     state: '',
     utility: '',
     deliveryLocation: '',
+    type: '',
     price: '',
     payment: '',
     delivery: '',
@@ -858,6 +861,7 @@ export default function Dashboard() {
       if (docketFilters.partyName) params.append('partyName', docketFilters.partyName);
       if (docketFilters.itemFilter) params.append('itemFilter', docketFilters.itemFilter);
       if (docketFilters.state) params.append('state', docketFilters.state);
+      if (docketFilters.type) params.append('type', docketFilters.type);
       if (startDate) params.append('startDate', startDate);
       if (endDate) params.append('endDate', endDate);
 
@@ -1648,6 +1652,7 @@ export default function Dashboard() {
           state: '',
           utility: '',
           deliveryLocation: '',
+          type: '',
           price: '',
           payment: '',
           delivery: '',
@@ -1731,7 +1736,7 @@ export default function Dashboard() {
     setStartDate('');
     setEndDate('');
     setItemFilters({ docketNoQtnNo: '', itemNameParty: '', ourItemNot: '', ourItemName: [], status: '' });
-    setDocketFilters({ docketNoQtnNo: '', partyName: '', itemFilter: '', state: '' });
+    setDocketFilters({ docketNoQtnNo: '', partyName: '', itemFilter: '', state: '', type: '' });
     setLogTableFilter('');
     setDocketItemsMap({});
     setItemPage(1);
@@ -3007,6 +3012,7 @@ export default function Dashboard() {
                     <th className="py-2 px-2.5 whitespace-nowrap w-[110px] min-w-[110px]">STATE</th>
                     <th className="py-2 px-2.5 whitespace-nowrap w-[100px] min-w-[100px]">UTILITY</th>
                     <th className="py-2 px-2.5 whitespace-nowrap w-[160px] min-w-[160px]">DELIVERY LOCATION</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-amber-50 text-amber-900 font-extrabold w-[130px] min-w-[130px]">TYPE</th>
                     <th className="py-2 px-2.5 whitespace-nowrap bg-emerald-50 text-emerald-900 font-extrabold w-[180px] min-w-[180px]">ATTACHMENTS</th>
                     <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Price Condition</th>
                     <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Payment Condition</th>
@@ -3080,6 +3086,20 @@ export default function Dashboard() {
                     </td>
                     <td className="p-1.5 w-[100px] min-w-[100px]"></td>
                     <td className="p-1.5 w-[160px] min-w-[160px]"></td>
+                    <td className="p-1.5 w-[130px] min-w-[130px] bg-amber-50/50">
+                      <select
+                        value={docketFilters.type}
+                        onChange={(e) => {
+                          setDocketFilters((prev) => ({ ...prev, type: e.target.value }));
+                          setDocketPage(1);
+                        }}
+                        className="w-full px-1 py-0.5 text-[11px] border border-amber-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
+                      >
+                        <option value="">All Types</option>
+                        <option value="Trading">Trading</option>
+                        <option value="Purchase">Purchase</option>
+                      </select>
+                    </td>
                     <td className="p-1.5 w-[180px] min-w-[180px] bg-emerald-50/50"></td>
                     <td className="p-1.5 w-[160px] min-w-[160px]"></td>
                     <td className="p-1.5 w-[160px] min-w-[160px]"></td>
@@ -3093,13 +3113,13 @@ export default function Dashboard() {
                 <tbody className="divide-y divide-slate-100 font-medium">
                   {docketsLoading ? (
                     <tr>
-                      <td colSpan={15} className="p-8 text-center text-slate-400 font-semibold">
+                      <td colSpan={16} className="p-8 text-center text-slate-400 font-semibold">
                         Loading docket party records...
                       </td>
                     </tr>
                   ) : dockets.length === 0 ? (
                     <tr>
-                      <td colSpan={15} className="p-8 text-center text-slate-400 font-semibold">
+                      <td colSpan={16} className="p-8 text-center text-slate-400 font-semibold">
                         No docket party records found matching filters.
                       </td>
                     </tr>
@@ -3242,6 +3262,24 @@ export default function Dashboard() {
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'deliveryLocation', val)}
                                 className="text-xs"
                               />
+                            </td>
+
+                            <td className="p-1.5 w-[130px] min-w-[130px] bg-amber-50/20">
+                              <select
+                                value={doc.type || ''}
+                                onChange={(e) => handleDocketFieldUpdate(doc.id, 'type', e.target.value)}
+                                className={`w-full px-2 py-1 text-xs border rounded-md font-bold transition-all shadow-2xs focus:outline-none focus:ring-1 ${
+                                  doc.type === 'Trading'
+                                    ? 'bg-blue-50 border-blue-300 text-blue-800'
+                                    : doc.type === 'Purchase'
+                                    ? 'bg-purple-50 border-purple-300 text-purple-800'
+                                    : 'bg-white border-slate-300 text-slate-500'
+                                }`}
+                              >
+                                <option value="">- Select Type -</option>
+                                <option value="Trading">Trading</option>
+                                <option value="Purchase">Purchase</option>
+                              </select>
                             </td>
 
                             {/* COMPACT ATTACHMENTS CELL */}
@@ -4280,7 +4318,7 @@ export default function Dashboard() {
                   />
                 </div>
 
-                <div className="sm:col-span-2">
+                <div>
                   <label className="font-extrabold text-slate-700">Delivery Location:</label>
                   <input
                     type="text"
@@ -4289,6 +4327,19 @@ export default function Dashboard() {
                     onChange={(e) => setNewDocketForm((prev) => ({ ...prev, deliveryLocation: e.target.value }))}
                     className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500/20"
                   />
+                </div>
+
+                <div>
+                  <label className="font-extrabold text-slate-700">Type:</label>
+                  <select
+                    value={newDocketForm.type}
+                    onChange={(e) => setNewDocketForm((prev) => ({ ...prev, type: e.target.value }))}
+                    className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-bold text-slate-800"
+                  >
+                    <option value="">Select Type (Trading / Purchase)</option>
+                    <option value="Trading">Trading</option>
+                    <option value="Purchase">Purchase</option>
+                  </select>
                 </div>
 
                 {/* Terms Conditions selections */}
