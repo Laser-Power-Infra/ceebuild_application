@@ -1,0 +1,5 @@
+[
+  { "username": "admin.one", "name": "Replace With Admin Name", "role": "Admin" },
+  { "username": "staff.one", "name": "Replace With Staff Name", "role": "User" },
+  { "username": "viewer.one", "name": "Replace With Read-only Name", "role": "Viewer" }
+]

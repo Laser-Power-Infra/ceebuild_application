@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { autoDetectOurItemNot } from '@/lib/classifier';
+import { requireUser, auditUser, EDITOR_ROLES } from '@/lib/auth/server';
 
 const ALLOWED_OUR_ITEM_NAMES = [
   'Stay Set - 33KV',
@@ -26,6 +27,10 @@ const ALLOWED_TYPES_OF_ITEM = ['CHANNEL', 'ROD', 'PIPE', 'NONE'];
 import { getGroqApiKey, saveGroqApiKeyToDb } from '@/lib/groqHelper';
 
 export async function POST(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const body = await req.json();
     const { docketNoQtnNo, itemIds, forceAll, apiKey: customApiKey } = body;
@@ -389,6 +394,7 @@ ITEM_ID: [id] | TYPE OF ITEM: [Value] | Our item Name: [Value]`;
                 fieldName: 'AI_AUTOFILL',
                 oldValue: 'Blank / Unclassified',
                 newValue: `Set Our item Name: "${finalOurItemName}", Type: "${finalTypeOfItem || 'N/A'}" (by Groq AI)`,
+                ...auditUser(user),
               },
             });
 

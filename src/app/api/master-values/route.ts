@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireUser, auditUser, ADMIN_ROLES } from '@/lib/auth/server';
 
 export async function GET(req: Request) {
   try {
@@ -44,6 +45,9 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireUser(ADMIN_ROLES);
+  if (auth.error) return auth.error;
+
   try {
     const body = await req.json();
     const { type, value, isActive = true } = body;
@@ -68,6 +72,9 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const auth = await requireUser(ADMIN_ROLES);
+  if (auth.error) return auth.error;
+
   try {
     const body = await req.json();
     const { id, type, value, isActive } = body;
@@ -93,14 +100,31 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const auth = await requireUser(ADMIN_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = Number(searchParams.get('id'));
     if (!id) return NextResponse.json({ error: 'Missing ID' }, { status: 400 });
 
-    await prisma.masterValue.delete({
-      where: { id },
-    });
+    const existing = await prisma.masterValue.findUnique({ where: { id } });
+    if (!existing) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
+
+    await prisma.$transaction([
+      prisma.masterValue.delete({ where: { id } }),
+      prisma.editLog.create({
+        data: {
+          tableName: 'master-values',
+          recordId: id,
+          fieldName: 'DELETE_MASTER_VALUE',
+          oldValue: JSON.stringify(existing),
+          newValue: `Deleted ${existing.type} option "${existing.value}" by ${user.name} (${user.username})`,
+          ...auditUser(user),
+        },
+      }),
+    ]);
 
     return NextResponse.json({ success: true });
   } catch (error) {

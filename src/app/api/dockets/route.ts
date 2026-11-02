@@ -1,6 +1,25 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { autoDetectOurItemNotAsync } from '@/lib/classifier';
+import { requireUser, auditUser, pickFields, EDITOR_ROLES, ADMIN_ROLES } from '@/lib/auth/server';
+import { DOCKET_TYPES, isDocketType, normalizeDocketNo } from '@/lib/dockets';
+
+// Fields a client may change through PUT /api/dockets (id, timestamps etc. are never writable).
+const EDITABLE_DOCKET_FIELDS = [
+  'docketNoQtnNo',
+  'partyName',
+  'address',
+  'state',
+  'utility',
+  'deliveryLocation',
+  'type',
+  'price',
+  'payment',
+  'delivery',
+  'warranty',
+  'approval',
+  'inspection',
+  'attachments',
+] as const;
 
 function getFilterList(searchParams: URLSearchParams, key: string): string[] {
   const all = searchParams.getAll(key);
@@ -182,14 +201,19 @@ export async function GET(req: Request) {
       prisma.dockerPartyName.count({ where }),
     ]);
 
-    // Fetch first item name for each docket in the current page
+    // Fetch first item name for each docket in the current page.
+    // Match on the normalised docket number (trimmed, case-insensitive) so the preview agrees with the
+    // expanded sub-table (which uses a case-insensitive "contains" lookup). Previously this used an exact
+    // `in` match, so items saved as e.g. "cee-000500" or "CEE-000500 " showed "No items listed".
     const firstItemMap: { [key: string]: string } = {};
     try {
-      const docketNos = dockets.map((d) => d.docketNoQtnNo).filter(Boolean) as string[];
+      const docketNos = Array.from(
+        new Set(dockets.map((d) => (d.docketNoQtnNo || '').trim()).filter(Boolean))
+      );
       if (docketNos.length > 0) {
         const firstItems = await prisma.itemTable.findMany({
           where: {
-            docketNoQtnNo: { in: docketNos },
+            OR: docketNos.map((dn) => ({ docketNoQtnNo: { contains: dn, mode: 'insensitive' as const } })),
           },
           select: {
             docketNoQtnNo: true,
@@ -200,8 +224,9 @@ export async function GET(req: Request) {
         });
 
         for (const item of firstItems) {
-          if (item.docketNoQtnNo && !firstItemMap[item.docketNoQtnNo]) {
-            firstItemMap[item.docketNoQtnNo] = item.itemNameParty || item.ourItemName || '';
+          const key = normalizeDocketNo(item.docketNoQtnNo);
+          if (key && !firstItemMap[key]) {
+            firstItemMap[key] = item.itemNameParty || item.ourItemName || '';
           }
         }
       }
@@ -211,7 +236,7 @@ export async function GET(req: Request) {
 
     const docketsWithFirstItem = dockets.map((d) => ({
       ...d,
-      firstItemName: d.docketNoQtnNo ? firstItemMap[d.docketNoQtnNo] || '' : '',
+      firstItemName: d.docketNoQtnNo ? firstItemMap[normalizeDocketNo(d.docketNoQtnNo)] || '' : '',
     }));
 
     let stateOptionsList: string[] = [];
@@ -266,6 +291,10 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const body = await req.json();
     const {
@@ -284,12 +313,18 @@ export async function POST(req: Request) {
       inspection,
       attachments,
       items = [],
-      userName = 'Admin',
-      userId = 'USR-ADMIN-01',
     } = body;
 
     if (!partyName || !partyName.trim()) {
       return NextResponse.json({ error: 'Party Name is required' }, { status: 400 });
+    }
+
+    const trimmedType = typeof type === 'string' ? type.trim() : '';
+    if (!isDocketType(trimmedType)) {
+      return NextResponse.json(
+        { error: `Type is required and must be one of: ${DOCKET_TYPES.join(', ')}` },
+        { status: 400 }
+      );
     }
 
     // Auto-generate docket number if not provided
@@ -324,7 +359,7 @@ export async function POST(req: Request) {
         state: state ? state.trim() : null,
         utility: utility ? utility.trim() : null,
         deliveryLocation: deliveryLocation ? deliveryLocation.trim() : null,
-        type: type ? type.trim() : null,
+        type: trimmedType,
         price: price || null,
         payment: payment || null,
         delivery: delivery || null,
@@ -375,14 +410,15 @@ export async function POST(req: Request) {
       }
     }
 
-    // Record Audit Log with static User Info
+    // Record Audit Log with the server-verified user
     await prisma.editLog.create({
       data: {
         tableName: 'docket-party-name',
         recordId: createdDocket.id,
         fieldName: 'CREATE_DOCKET',
         oldValue: null,
-        newValue: `Created Docket ${finalDocketNo} for "${createdDocket.partyName}" with ${createdItemsCount} items by ${userName} (${userId})`,
+        newValue: `Created Docket ${finalDocketNo} for "${createdDocket.partyName}" with ${createdItemsCount} items by ${user.name} (${user.username})`,
+        ...auditUser(user),
       },
     });
 
@@ -397,34 +433,87 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const body = await req.json();
-    const { id, userName, userId, ...data } = body;
+    const id = Number(body?.id);
     if (!id) return NextResponse.json({ error: 'Missing ID' }, { status: 400 });
 
-    const existing = await prisma.dockerPartyName.findUnique({ where: { id: Number(id) } });
+    const data = pickFields(body, EDITABLE_DOCKET_FIELDS) as Record<string, string | null>;
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: 'No editable fields supplied' }, { status: 400 });
+    }
+
+    // Type is mandatory: it can be changed, but never cleared or set to an unknown value.
+    if ('type' in data) {
+      const t = typeof data.type === 'string' ? data.type.trim() : '';
+      if (!isDocketType(t)) {
+        return NextResponse.json(
+          { error: `Type is required and must be one of: ${DOCKET_TYPES.join(', ')}` },
+          { status: 400 }
+        );
+      }
+      data.type = t;
+    }
+
+    if ('docketNoQtnNo' in data) {
+      if (user.role !== 'Admin') {
+        return NextResponse.json({ error: 'Forbidden: only Admin can change a docket number' }, { status: 403 });
+      }
+      const dn = typeof data.docketNoQtnNo === 'string' ? data.docketNoQtnNo.trim() : '';
+      if (!dn) return NextResponse.json({ error: 'Docket No cannot be empty' }, { status: 400 });
+      data.docketNoQtnNo = dn;
+    }
+
+    const existing = await prisma.dockerPartyName.findUnique({ where: { id } });
     if (!existing) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
 
-    const updated = await prisma.dockerPartyName.update({
-      where: { id: Number(id) },
-      data,
-    });
+    // Items are linked to dockets by docket number (no FK), so a rename must move the items too,
+    // otherwise they are orphaned and the docket shows "No items listed".
+    const oldDocketNo = existing.docketNoQtnNo;
+    const newDocketNo = 'docketNoQtnNo' in data ? (data.docketNoQtnNo as string) : oldDocketNo;
+    const renamed = Boolean(oldDocketNo && newDocketNo && oldDocketNo !== newDocketNo);
 
-    for (const key of Object.keys(data)) {
-      const oldVal = (existing as any)[key] != null ? String((existing as any)[key]) : '';
-      const newVal = data[key] != null ? String(data[key]) : '';
-      if (oldVal !== newVal) {
-        await prisma.editLog.create({
+    const updated = await prisma.$transaction(async (tx) => {
+      const row = await tx.dockerPartyName.update({ where: { id }, data });
+      if (renamed) {
+        const moved = await tx.itemTable.updateMany({
+          where: { docketNoQtnNo: oldDocketNo },
+          data: { docketNoQtnNo: newDocketNo },
+        });
+        await tx.editLog.create({
           data: {
-            tableName: 'docket-party-name',
-            recordId: Number(id),
-            fieldName: key,
-            oldValue: oldVal,
-            newValue: `${newVal} (by ${userName || 'User'} ${userId || ''})`.trim(),
+            tableName: 'iteam-table',
+            recordId: id,
+            fieldName: 'RENAME_DOCKET_ITEMS',
+            oldValue: oldDocketNo,
+            newValue: `${newDocketNo} (${moved.count} items moved with docket #${id})`,
+            ...auditUser(user),
           },
         });
       }
-    }
+
+      for (const key of Object.keys(data)) {
+        const oldVal = (existing as any)[key] != null ? String((existing as any)[key]) : '';
+        const newVal = data[key] != null ? String(data[key]) : '';
+        if (oldVal !== newVal) {
+          await tx.editLog.create({
+            data: {
+              tableName: 'docket-party-name',
+              recordId: id,
+              fieldName: key,
+              oldValue: oldVal,
+              newValue: newVal,
+              ...auditUser(user),
+            },
+          });
+        }
+      }
+      return row;
+    });
 
     return NextResponse.json(updated);
   } catch (error) {
@@ -434,6 +523,10 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const auth = await requireUser(ADMIN_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = Number(searchParams.get('id'));
@@ -442,25 +535,30 @@ export async function DELETE(req: Request) {
     const docket = await prisma.dockerPartyName.findUnique({ where: { id } });
     if (!docket) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
 
-    if (docket.docketNoQtnNo) {
-      await prisma.itemTable.deleteMany({
-        where: { docketNoQtnNo: docket.docketNoQtnNo },
+    // Delete + audit in one transaction: if the audit entry cannot be written, nothing is deleted.
+    // The audit row keeps a JSON snapshot of the docket and its items so it can be restored by hand.
+    const deletedItemCount = await prisma.$transaction(async (tx) => {
+      const items = docket.docketNoQtnNo
+        ? await tx.itemTable.findMany({ where: { docketNoQtnNo: docket.docketNoQtnNo } })
+        : [];
+      if (docket.docketNoQtnNo) {
+        await tx.itemTable.deleteMany({ where: { docketNoQtnNo: docket.docketNoQtnNo } });
+      }
+      await tx.dockerPartyName.delete({ where: { id } });
+      await tx.editLog.create({
+        data: {
+          tableName: 'docket-party-name',
+          recordId: id,
+          fieldName: 'DELETE_DOCKET',
+          oldValue: JSON.stringify({ docket, items }),
+          newValue: `Deleted Docket #${id} (${docket.docketNoQtnNo || 'N/A'}, "${docket.partyName || ''}") and ${items.length} items by ${user.name} (${user.username})`,
+          ...auditUser(user),
+        },
       });
-    }
-
-    await prisma.dockerPartyName.delete({ where: { id } });
-
-    await prisma.editLog.create({
-      data: {
-        tableName: 'docket-party-name',
-        recordId: id,
-        fieldName: 'DELETE_DOCKET',
-        oldValue: `Deleted Docket #${id} (${docket.docketNoQtnNo || 'N/A'})`,
-        newValue: null,
-      },
+      return items.length;
     });
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, deletedItemCount });
   } catch (error) {
     console.error('Error deleting docket:', error);
     return NextResponse.json({ error: 'Failed to delete docket' }, { status: 500 });

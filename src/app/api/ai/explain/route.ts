@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { getGroqApiKey, saveGroqApiKeyToDb } from '@/lib/groqHelper';
-
-const prisma = new PrismaClient();
+import { requireUser, auditUser, EDITOR_ROLES } from '@/lib/auth/server';
 
 export async function POST(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const body = await req.json();
     const { itemNameParty, typeOfItem, selectedCategory, saveToKnowledge, userReason, apiKey: customApiKey } = body;
@@ -37,6 +40,7 @@ export async function POST(req: Request) {
           fieldName: 'TEACH_AI_RULE',
           oldValue: null,
           newValue: `Taught AI Rule for "${itemNameParty}": ${selectedCategory} (Reason: ${userReason || 'N/A'})`,
+          ...auditUser(user),
         },
       });
 
