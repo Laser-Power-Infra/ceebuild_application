@@ -130,10 +130,9 @@ export async function POST(req: Request) {
     }
 
     rawDescription = itemNameParty.trim();
-    const apiKey = await getGroqApiKey(customApiKey);
-    if (customApiKey && customApiKey.startsWith('gsk_')) {
-      await saveGroqApiKeyToDb(customApiKey);
-    }
+    const apiKey = (customApiKey || process.env.GROQ_API_KEY || '')
+      .replace(/^["']|["']$/g, '')
+      .trim();
 
     if (!apiKey) {
       return NextResponse.json(

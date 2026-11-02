@@ -1,0 +1,39 @@
+# Git / version control
+.git/
+
+# Node dependencies (installed inside container)
+node_modules/
+
+# Next.js build cache (rebuilt inside container)
+.next/
+out/
+
+# Local env secrets
+.env
+.env.local
+.env.*.local
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Scratch / temp files
+scratch/
+scratch_*.json
+scratch_*.csv
+token.json
+credentials.json
+docket_party.csv
+main_sheet.csv
+terms_conditions.csv
+
+# Logs
+*.log
+logs/
+
+# Test coverage
+coverage/

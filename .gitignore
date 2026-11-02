@@ -62,10 +62,8 @@ docket_party.csv
 main_sheet.csv
 terms_conditions.csv
 
-# Docker
-Dockerfile
+# Docker (docker-compose.yml holds credentials; Dockerfile and .dockerignore are tracked)
 docker-compose.yml
-.dockerignore
 
 # Real CEEBUILD user list (usernames/roles) - keep local; see config/users.example.json
 config/users.json
