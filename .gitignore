@@ -66,3 +66,6 @@ terms_conditions.csv
 Dockerfile
 docker-compose.yml
 .dockerignore
+
+# Real CEEBUILD user list (usernames/roles) - keep local; see config/users.example.json
+config/users.json

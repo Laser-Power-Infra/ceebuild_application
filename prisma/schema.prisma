@@ -77,8 +77,12 @@ model EditLog {
   fieldName String   @map("field_name")
   oldValue  String?  @map("old_value")
   newValue  String?  @map("new_value")
+  // Server-verified identity of the user who made the change (null for legacy rows)
+  userId    Int?     @map("user_id")
+  userName  String?  @map("user_name")
   createdAt DateTime @default(now()) @map("created_at")
 
+  @@index([tableName, recordId])
   @@map("edit-logs")
 }
 
@@ -91,4 +95,22 @@ model MasterValue {
   updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("master-values")
+}
+
+// Dashboard login accounts. Manage with `npm run users -- <command>` (see scripts/users.ts).
+model User {
+  id             Int       @id @default(autoincrement())
+  username       String    @unique
+  name           String
+  // 'Admin' | 'User' | 'Viewer'
+  role           String    @default("User")
+  passwordHash   String    @map("password_hash")
+  isActive       Boolean   @default(true) @map("is_active")
+  // Bumped on password/role change or disable to invalidate existing sessions
+  sessionVersion Int       @default(1) @map("session_version")
+  lastLoginAt    DateTime? @map("last_login_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@map("users")
 }

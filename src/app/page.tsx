@@ -51,6 +51,9 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import MultiSelectFilterDropdown from '@/components/MultiSelectFilterDropdown';
+import ConfirmDialog, { type ConfirmDialogOptions } from '@/components/ConfirmDialog';
+import ConditionSelect from '@/components/ConditionSelect';
+import { DOCKET_TYPES, isDocketType } from '@/lib/dockets';
 
 interface Item {
   id: number;
@@ -113,6 +116,8 @@ interface EditLog {
   fieldName: string;
   oldValue: string | null;
   newValue: string | null;
+  userId?: number | null;
+  userName?: string | null;
   createdAt: string;
 }
 
@@ -124,17 +129,21 @@ interface MasterValueItem {
   createdAt: string;
 }
 
+// Logged-in user as returned by GET /api/auth/me (server-verified session; see src/middleware.ts).
 interface UserRole {
   username: string;
   name: string;
-  id: string;
-  role: 'Admin' | 'Tanmoy';
+  id: string; // display id, e.g. "USR-3"
+  role: 'Admin' | 'User' | 'Viewer';
 }
 
-const AUTH_USERS: Array<UserRole & { password: string }> = [
-  { username: 'admin', password: 'admin', name: 'Admin', id: 'USR-ADMIN-01', role: 'Admin' },
-  { username: 'tanmoy', password: 'tanmoy', name: 'Tanmoy', id: 'USR-TANMOY-02', role: 'Tanmoy' },
-];
+// Friendly labels for the audit log's internal table names.
+const TABLE_LABELS: Record<string, string> = {
+  'iteam-table': 'Items',
+  'docket-party-name': 'Dockets',
+  'tream-and-conditions': 'Terms & Conditions',
+  'master-values': 'Master Dropdowns',
+};
 
 // Lightweight auto-resizing text component that avoids browser thread locking
 function AutoResizeTextarea({
@@ -173,17 +182,19 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'items' | 'dockets' | 'terms' | 'logs' | 'master'>('dockets');
 
   // Authentication & User State
+  // No default user: the page waits for /api/auth/me. Unauthenticated visitors never get here
+  // because middleware redirects them to /login.
   const [authLoading, setAuthLoading] = useState<boolean>(true);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [currentUser, setCurrentUser] = useState<UserRole>({
-    username: 'admin',
-    name: 'Admin',
-    id: 'USR-ADMIN-01',
-    role: 'Admin',
+    username: '',
+    name: '',
+    id: '',
+    role: 'Viewer',
   });
-  const [loginUsername, setLoginUsername] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
+  const canEdit = currentUser.role === 'Admin' || currentUser.role === 'User';
+
+  // Confirmation dialog for destructive actions
+  const [confirmState, setConfirmState] = useState<ConfirmDialogOptions | null>(null);
 
   // Master Values state for Admin Management
   const [masterList, setMasterList] = useState<MasterValueItem[]>([]);
@@ -764,44 +775,14 @@ export default function Dashboard() {
     }
   };
 
-  // Login authentication handler
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError('');
-
-    const matchedUser = AUTH_USERS.find(
-      (u) =>
-        u.username.toLowerCase() === loginUsername.trim().toLowerCase() &&
-        u.password === loginPassword
-    );
-
-    if (matchedUser) {
-      const userSession: UserRole = {
-        username: matchedUser.username,
-        name: matchedUser.name,
-        id: matchedUser.id,
-        role: matchedUser.role,
-      };
-      setCurrentUser(userSession);
-      setIsAuthenticated(true);
-      if (typeof window !== 'undefined') {
-        localStorage.setItem('ceebuild_user', JSON.stringify(userSession));
-      }
-      showToast(`Welcome, ${matchedUser.name}! Logged in as ${matchedUser.role}.`);
-      setLoginUsername('');
-      setLoginPassword('');
-    } else {
-      setLoginError('Invalid Username or Password. Please try again.');
+  // Logout handler: clears the httpOnly session cookie on the server, then goes to /login
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.error(err);
     }
-  };
-
-  // Logout handler
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('ceebuild_user');
-    }
-    showToast('Logged out successfully.');
+    window.location.href = '/login';
   };
 
   // Fetch Master Values for auto-complete dropdowns
@@ -892,20 +873,35 @@ export default function Dashboard() {
     }
   };
 
-  // Delete Master Value (Admin)
-  const handleDeleteMasterValue = async (id: number) => {
-    try {
-      const res = await fetch(`/api/master-values?id=${id}`, {
-        method: 'DELETE',
-      });
-      if (res.ok) {
-        setMasterList((prev) => prev.filter((m) => m.id !== id));
-        fetchMasterValues();
-        showToast(`Deleted master option #${id}`);
-      }
-    } catch (err) {
-      console.error(err);
-    }
+  // Delete Master Value (Admin) - confirmed and written to the audit log server-side
+  const handleDeleteMasterValue = (id: number) => {
+    const target = masterList.find((m) => m.id === id);
+    setConfirmState({
+      title: 'Delete dropdown option?',
+      message: (
+        <>
+          Delete {target?.type || 'master'} option <strong>&quot;{target?.value || '#' + id}&quot;</strong>?
+        </>
+      ),
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/master-values?id=${id}`, {
+            method: 'DELETE',
+          });
+          if (res.ok) {
+            setMasterList((prev) => prev.filter((m) => m.id !== id));
+            fetchMasterValues();
+            showToast(`Deleted master option #${id}`);
+            if (activeTab === 'logs') fetchLogs();
+          } else {
+            const data = await res.json().catch(() => ({}));
+            showToast(`Error: ${data.error || 'Failed to delete option'}`);
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      },
+    });
   };
 
   // Fetch Next Auto-Incremental Docket Number
@@ -1090,20 +1086,28 @@ export default function Dashboard() {
     }
   };
 
+  // Any API call that comes back 401 (session expired / user disabled) sends the user to /login.
+  useEffect(() => {
+    const originalFetch = window.fetch;
+    window.fetch = async (...args: Parameters<typeof fetch>) => {
+      const res = await originalFetch(...args);
+      if (res.status === 401) {
+        const next = window.location.pathname + window.location.search;
+        window.location.href = `/login?next=${encodeURIComponent(next)}`;
+      }
+      return res;
+    };
+    return () => {
+      window.fetch = originalFetch;
+    };
+  }, []);
+
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('ceebuild_user');
-      if (saved) {
-        try {
-          const userObj = JSON.parse(saved);
-          if (userObj && userObj.username) {
-            setCurrentUser(userObj);
-            setIsAuthenticated(true);
-          }
-        } catch (err) {
-          console.error(err);
-        }
-      }
+      // Legacy client-side "session" from the old hardcoded login; no longer trusted.
+      try {
+        localStorage.removeItem('ceebuild_user');
+      } catch {}
 
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab') as any;
@@ -1111,7 +1115,23 @@ export default function Dashboard() {
         setActiveTab(tabParam);
       }
     }
-    setAuthLoading(false);
+
+    fetch('/api/auth/me')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.user) {
+          setCurrentUser({
+            username: data.user.username,
+            name: data.user.name,
+            id: `USR-${data.user.id}`,
+            role: data.user.role,
+          });
+          setAuthLoading(false);
+        } else {
+          window.location.href = '/login';
+        }
+      })
+      .catch((err) => console.error('Failed to load session:', err));
 
     // Fetch counts and master values for all tabs on mount
     fetchMasterValues();
@@ -1402,17 +1422,34 @@ export default function Dashboard() {
   const handleDocketFieldUpdate = async (id: number, field: keyof DockerParty, value: string) => {
     const currentDoc = dockets.find((d) => d.id === id);
     if (currentDoc && currentDoc[field] === value) return;
+    if (field === 'type' && !isDocketType(value)) {
+      showToast('Error: Type is required (Tender or Purchase).');
+      return;
+    }
 
     try {
       const res = await fetch('/api/dockets', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, [field]: value, userName: currentUser.name, userId: currentUser.id }),
+        body: JSON.stringify({ id, [field]: value }),
       });
       if (res.ok) {
         setDockets((prev) => prev.map((doc) => (doc.id === id ? { ...doc, [field]: value } : doc)));
+        // Renaming a docket moves its items too; refresh the cached sub-table.
+        if (field === 'docketNoQtnNo' && currentDoc?.docketNoQtnNo) {
+          const oldNo = currentDoc.docketNoQtnNo;
+          setDocketItemsMap((prev) => {
+            const copy = { ...prev };
+            delete copy[oldNo];
+            return copy;
+          });
+          fetchItems();
+        }
         showToast(`Docket Party #${id} updated in DB by ${currentUser.name}`);
         if (activeTab === 'logs') fetchLogs();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(`Error: ${data.error || 'Failed to update docket'}`);
       }
     } catch (err) {
       console.error(err);
@@ -1426,9 +1463,23 @@ export default function Dashboard() {
       return;
     }
 
-    const confirmMsg = `Are you sure you want to permanently delete Docket ${docketNo || '#' + id} and ALL of its associated items? This action cannot be undone.`;
-    if (!window.confirm(confirmMsg)) return;
+    const docLabel = docketNo || '#' + id;
+    const partyName = dockets.find((d) => d.id === id)?.partyName;
+    setConfirmState({
+      title: `Delete docket ${docLabel}?`,
+      message: (
+        <>
+          This permanently deletes docket <strong>{docLabel}</strong>
+          {partyName ? <> ({partyName})</> : null} and <strong>all of its items</strong>.
+        </>
+      ),
+      confirmLabel: 'Delete docket',
+      requireText: docketNo || String(id),
+      onConfirm: () => performDeleteDocket(id, docketNo),
+    });
+  };
 
+  const performDeleteDocket = async (id: number, docketNo: string | null) => {
     try {
       const res = await fetch(`/api/dockets?id=${id}`, {
         method: 'DELETE',
@@ -1444,7 +1495,10 @@ export default function Dashboard() {
             return copy;
           });
         }
-        showToast(`Docket ${docketNo || '#' + id} and all associated items permanently deleted.`);
+        const data = await res.json().catch(() => ({}));
+        showToast(
+          `Docket ${docketNo || '#' + id} and ${data.deletedItemCount ?? 'all'} associated items deleted (logged in Audit Log).`
+        );
         fetchItems(); // Refresh items table
         if (activeTab === 'logs') fetchLogs();
       } else {
@@ -1458,9 +1512,29 @@ export default function Dashboard() {
   };
 
   // Delete single Item from DB
-  const handleDeleteItem = async (id: number, docketNo?: string | null) => {
-    if (!window.confirm(`Are you sure you want to delete Item #${id}? This action cannot be undone.`)) return;
+  const handleDeleteItem = (id: number, docketNo?: string | null) => {
+    if (currentUser.role !== 'Admin') {
+      showToast('Error: Only Admin users can delete items.');
+      return;
+    }
+    const itemName =
+      items.find((it) => it.id === id)?.itemNameParty ||
+      (docketNo ? (docketItemsMap[docketNo] || []).find((it) => it.id === id)?.itemNameParty : null);
+    setConfirmState({
+      title: `Delete item #${id}?`,
+      message: (
+        <>
+          Delete item <strong>#{id}</strong>
+          {itemName ? <> &quot;{itemName}&quot;</> : null}
+          {docketNo ? <> from docket {docketNo}</> : null}?
+        </>
+      ),
+      confirmLabel: 'Delete item',
+      onConfirm: () => performDeleteItem(id, docketNo),
+    });
+  };
 
+  const performDeleteItem = async (id: number, docketNo?: string | null) => {
     try {
       const res = await fetch(`/api/items?id=${id}`, {
         method: 'DELETE',
@@ -1764,6 +1838,10 @@ export default function Dashboard() {
   // Create new Docket Party handler (Supports bulk items creation & user logging)
   const handleCreateDocket = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isDocketType(newDocketForm.type)) {
+      showToast('Error: Please select a Type (Tender or Purchase) for the docket.');
+      return;
+    }
     try {
       const validItems = docketItemsForm.filter(
         (it) => it.itemNameParty && it.itemNameParty.trim() !== ''
@@ -1772,8 +1850,6 @@ export default function Dashboard() {
       const payload = {
         ...newDocketForm,
         items: validItems,
-        userName: currentUser.name,
-        userId: currentUser.id,
       };
 
       const res = await fetch('/api/dockets', {
@@ -1808,6 +1884,9 @@ export default function Dashboard() {
         showToast(
           `Created Docket #${created.id} (${created.docketNoQtnNo}) with ${data.createdItemsCount || 0} items by ${currentUser.name}!`
         );
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(`Error: ${data.error || 'Failed to create docket'}`);
       }
     } catch (err) {
       console.error(err);
@@ -1926,82 +2005,6 @@ export default function Dashboard() {
         <div className="flex flex-col items-center space-y-3">
           <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
           <span className="text-xs font-bold text-slate-300">Loading Dashboard...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // IF NOT AUTHENTICATED -> SHOW Sleek Professional Login Screen
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 font-sans p-4 relative overflow-hidden">
-        {/* Background Decorative Blur Orbs */}
-        <div className="absolute -top-32 -left-32 w-96 h-96 bg-blue-600/30 rounded-full blur-3xl" />
-        <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-indigo-600/30 rounded-full blur-3xl" />
-
-        <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 p-8 space-y-6 relative z-10 animate-in fade-in zoom-in duration-200">
-          <div className="text-center space-y-3">
-            <div className="inline-flex p-3 bg-blue-50 rounded-2xl border border-blue-100 shadow-sm">
-              <img src="/ceebuild-logo.png" alt="CEEBUILD Logo" className="h-12 w-auto object-contain" />
-            </div>
-            <div>
-              <h2 className="text-xl font-extrabold text-slate-900">CEEBUILD Dashboard Login</h2>
-              <p className="text-xs text-slate-500 font-medium mt-1">
-                Enter your User ID and Password to access the dashboard
-              </p>
-            </div>
-          </div>
-
-          {loginError && (
-            <div className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-2xl text-xs font-bold text-center">
-              {loginError}
-            </div>
-          )}
-
-          <form onSubmit={handleLogin} className="space-y-4 text-xs font-medium">
-            <div>
-              <label className="font-extrabold text-slate-700 block mb-1.5">User ID / Username:</label>
-              <div className="relative">
-                <UserCheck className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  required
-                  placeholder="admin or tanmoy"
-                  value={loginUsername}
-                  onChange={(e) => setLoginUsername(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-slate-900 font-bold transition-all"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="font-extrabold text-slate-700 block mb-1.5">Password:</label>
-              <div className="relative">
-                <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="password"
-                  required
-                  placeholder="••••••••"
-                  value={loginPassword}
-                  onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-slate-900 font-bold transition-all"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-extrabold py-3.5 rounded-xl transition-all shadow-md shadow-blue-500/20 text-xs flex items-center justify-center space-x-2"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span>Login to Dashboard</span>
-            </button>
-          </form>
-
-          {/* <div className="pt-4 border-t border-slate-100 text-center text-[11px] text-slate-400">
-            Authorized Users: <strong className="text-slate-600">admin / admin</strong> or{' '}
-            <strong className="text-slate-600">tanmoy / tanmoy</strong>
-          </div> */}
         </div>
       </div>
     );
@@ -2451,6 +2454,7 @@ export default function Dashboard() {
                 </span>
                 <span className="ml-1 text-[10px] bg-blue-100 text-blue-800 font-extrabold px-2 py-0.5 rounded-full">
                   {currentUser.role}
+                  {currentUser.role === 'Viewer' ? ' (read-only)' : ''}
                 </span>
               </div>
 
@@ -2475,7 +2479,7 @@ export default function Dashboard() {
                 }`}
               >
                 <FileSpreadsheet className="w-4 h-4" />
-                <span>iteam-table</span>
+                <span>Items</span>
                 <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full text-xs font-extrabold">
                   {itemTotalCount}
                 </span>
@@ -2490,7 +2494,7 @@ export default function Dashboard() {
                 }`}
               >
                 <Building className="w-4 h-4" />
-                <span>Docket</span>
+                <span>Dockets</span>
                 <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full text-xs font-extrabold">
                   {docketTotalCount}
                 </span>
@@ -2505,7 +2509,7 @@ export default function Dashboard() {
                 }`}
               >
                 <FileText className="w-4 h-4" />
-                <span>tream-and-conditions</span>
+                <span>Terms &amp; Conditions</span>
                 <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-extrabold">
                   {terms.length}
                 </span>
@@ -2520,7 +2524,7 @@ export default function Dashboard() {
                 }`}
               >
                 <History className="w-4 h-4 text-rose-500" />
-                <span>edit-logs (Audit)</span>
+                <span>Audit Log</span>
                 <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded-full text-xs font-extrabold">
                   {logs.length}
                 </span>
@@ -2537,7 +2541,7 @@ export default function Dashboard() {
                   }`}
                 >
                   <Sliders className="w-4 h-4" />
-                  <span>master-dropdowns (Admin)</span>
+                  <span>Master Dropdowns (Admin)</span>
                   <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full text-xs font-extrabold">
                     {masterList.length}
                   </span>
@@ -2667,7 +2671,7 @@ export default function Dashboard() {
           <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
               <div className="flex items-center space-x-3">
-                <h2 className="text-sm font-bold text-slate-900">iteam-table Records</h2>
+                <h2 className="text-sm font-bold text-slate-900">Items</h2>
                 <button
                   onClick={() => handleAiAutofill()}
                   disabled={aiProcessing}
@@ -3200,13 +3204,18 @@ export default function Dashboard() {
                         </td>
 
                         <td className="p-3 text-center min-w-[80px]">
-                          <button
-                            onClick={() => handleDeleteItem(item.id, item.docketNoQtnNo)}
-                            className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white rounded-lg border border-rose-200 hover:border-rose-600 transition-all shadow-xs"
-                            title="Delete this Item"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {currentUser.role === 'Admin' ? (
+                            <button
+                              onClick={() => handleDeleteItem(item.id, item.docketNoQtnNo)}
+                              className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white rounded-lg border border-rose-200 hover:border-rose-600 transition-all shadow-xs"
+                              title="Delete this Item (Admin only)"
+                              aria-label={`Delete item #${item.id}`}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <span className="text-slate-300 text-[10px]">-</span>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -3222,7 +3231,7 @@ export default function Dashboard() {
           <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col space-y-3">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
               <div>
-                <h2 className="text-sm font-bold text-slate-900">docket-party-name Records</h2>
+                <h2 className="text-sm font-bold text-slate-900">Dockets</h2>
                 <p className="text-[11px] text-slate-500 font-medium">
                   Click the arrow on any docket row to expand & view/manage all belonging items.
                 </p>
@@ -3371,12 +3380,12 @@ export default function Dashboard() {
                     <th className="py-2 px-2.5 whitespace-nowrap w-[160px] min-w-[160px]">DELIVERY LOCATION</th>
                     <th className="py-2 px-2.5 whitespace-nowrap bg-amber-50 text-amber-900 font-extrabold w-[130px] min-w-[130px]">TYPE</th>
                     <th className="py-2 px-2.5 whitespace-nowrap bg-emerald-50 text-emerald-900 font-extrabold w-[180px] min-w-[180px]">ATTACHMENTS</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Price Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Payment Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Delivery Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Warranty Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Approval Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[160px] min-w-[160px]">Inspection Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Price Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Payment Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Delivery Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Warranty Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Approval Condition</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Inspection Condition</th>
                   </tr>
 
                   {/* Filter Header Row */}
@@ -3779,18 +3788,29 @@ export default function Dashboard() {
                             <td className="p-1.5 w-[130px] min-w-[130px] bg-amber-50/20">
                               <select
                                 value={doc.type || ''}
+                                required
+                                disabled={!canEdit}
+                                aria-invalid={!isDocketType(doc.type)}
+                                title={isDocketType(doc.type) ? doc.type : 'Type is required - choose Tender or Purchase'}
                                 onChange={(e) => handleDocketFieldUpdate(doc.id, 'type', e.target.value)}
                                 className={`w-full px-2 py-1 text-xs border rounded-md font-bold transition-all shadow-2xs focus:outline-none focus:ring-1 ${
                                   doc.type === 'Tender'
                                     ? 'bg-blue-50 border-blue-300 text-blue-800'
                                     : doc.type === 'Purchase'
                                     ? 'bg-purple-50 border-purple-300 text-purple-800'
-                                    : 'bg-white border-slate-300 text-slate-500'
+                                    : 'bg-rose-50 border-rose-400 text-rose-700'
                                 }`}
                               >
-                                <option value="">- Select Type -</option>
-                                <option value="Tender">Tender</option>
-                                <option value="Purchase">Purchase</option>
+                                {!isDocketType(doc.type) && (
+                                  <option value="" disabled>
+                                    Type required
+                                  </option>
+                                )}
+                                {DOCKET_TYPES.map((t) => (
+                                  <option key={t} value={t}>
+                                    {t}
+                                  </option>
+                                ))}
                               </select>
                             </td>
 
@@ -3841,11 +3861,21 @@ export default function Dashboard() {
                                         <button
                                           type="button"
                                           onClick={() => {
-                                            if (window.confirm(`Delete attachment "${displayName}"?`)) {
-                                              const currentAtts = parseAttachments(doc.attachments);
-                                              const updatedAtts = currentAtts.filter((_, i) => i !== attIdx);
-                                              handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
-                                            }
+                                            setConfirmState({
+                                              title: 'Remove attachment?',
+                                              message: (
+                                                <>
+                                                  Remove <strong>&quot;{displayName}&quot;</strong> from docket{' '}
+                                                  {doc.docketNoQtnNo || '#' + doc.id}?
+                                                </>
+                                              ),
+                                              confirmLabel: 'Remove',
+                                              onConfirm: () => {
+                                                const currentAtts = parseAttachments(doc.attachments);
+                                                const updatedAtts = currentAtts.filter((_, i) => i !== attIdx);
+                                                return handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
+                                              },
+                                            });
                                           }}
                                           className="text-rose-500 hover:text-rose-700 font-bold ml-1 p-0.5"
                                           title="Remove Attachment"
@@ -3860,94 +3890,64 @@ export default function Dashboard() {
                             </td>
 
                             {/* Terms Condition Dropdowns */}
-                            <td className="p-1.5 bg-purple-50/30 w-[160px] min-w-[160px]">
-                              <select
-                                value={doc.price || ''}
-                                onChange={(e) => handleDocketFieldUpdate(doc.id, 'price', e.target.value)}
-                                className="w-full bg-white border border-purple-200 rounded-md px-1.5 py-0.5 text-[11px] font-semibold text-purple-900 focus:outline-none"
-                              >
-                                <option value="">Select Price</option>
-                                {termsDropdowns.price.map((opt, i) => (
-                                  <option key={i} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
+                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
+                              <ConditionSelect
+                                value={doc.price}
+                                options={termsDropdowns.price}
+                                placeholder="Select Price Condition"
+                                disabled={!canEdit}
+                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'price', v)}
+                              />
                             </td>
 
-                            <td className="p-3 bg-purple-50/30 min-w-[220px]">
-                              <select
-                                value={doc.payment || ''}
-                                onChange={(e) => handleDocketFieldUpdate(doc.id, 'payment', e.target.value)}
-                                className="w-full bg-white border border-purple-200 rounded-md px-2 py-1.5 text-xs font-semibold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-                              >
-                                <option value="">Select Payment Condition</option>
-                                {termsDropdowns.payment.map((opt, i) => (
-                                  <option key={i} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
+                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
+                              <ConditionSelect
+                                value={doc.payment}
+                                options={termsDropdowns.payment}
+                                placeholder="Select Payment Condition"
+                                disabled={!canEdit}
+                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'payment', v)}
+                              />
                             </td>
 
-                            <td className="p-3 bg-purple-50/30 min-w-[220px]">
-                              <select
-                                value={doc.delivery || ''}
-                                onChange={(e) => handleDocketFieldUpdate(doc.id, 'delivery', e.target.value)}
-                                className="w-full bg-white border border-purple-200 rounded-md px-2 py-1.5 text-xs font-semibold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-                              >
-                                <option value="">Select Delivery Condition</option>
-                                {termsDropdowns.delivery.map((opt, i) => (
-                                  <option key={i} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
+                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
+                              <ConditionSelect
+                                value={doc.delivery}
+                                options={termsDropdowns.delivery}
+                                placeholder="Select Delivery Condition"
+                                disabled={!canEdit}
+                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'delivery', v)}
+                              />
                             </td>
 
-                            <td className="p-3 bg-purple-50/30 min-w-[220px]">
-                              <select
-                                value={doc.warranty || ''}
-                                onChange={(e) => handleDocketFieldUpdate(doc.id, 'warranty', e.target.value)}
-                                className="w-full bg-white border border-purple-200 rounded-md px-2 py-1.5 text-xs font-semibold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-                              >
-                                <option value="">Select Warranty Condition</option>
-                                {termsDropdowns.warranty.map((opt, i) => (
-                                  <option key={i} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
+                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
+                              <ConditionSelect
+                                value={doc.warranty}
+                                options={termsDropdowns.warranty}
+                                placeholder="Select Warranty Condition"
+                                disabled={!canEdit}
+                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'warranty', v)}
+                              />
                             </td>
 
-                            <td className="p-3 bg-purple-50/30 min-w-[220px]">
-                              <select
-                                value={doc.approval || ''}
-                                onChange={(e) => handleDocketFieldUpdate(doc.id, 'approval', e.target.value)}
-                                className="w-full bg-white border border-purple-200 rounded-md px-2 py-1.5 text-xs font-semibold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-                              >
-                                <option value="">Select Approval Condition</option>
-                                {termsDropdowns.approval.map((opt, i) => (
-                                  <option key={i} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
+                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
+                              <ConditionSelect
+                                value={doc.approval}
+                                options={termsDropdowns.approval}
+                                placeholder="Select Approval Condition"
+                                disabled={!canEdit}
+                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'approval', v)}
+                              />
                             </td>
 
-                            <td className="p-3 bg-purple-50/30 min-w-[220px]">
-                              <select
-                                value={doc.inspection || ''}
-                                onChange={(e) => handleDocketFieldUpdate(doc.id, 'inspection', e.target.value)}
-                                className="w-full bg-white border border-purple-200 rounded-md px-2 py-1.5 text-xs font-semibold text-purple-900 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-                              >
-                                <option value="">Select Inspection Condition</option>
-                                {termsDropdowns.inspection.map((opt, i) => (
-                                  <option key={i} value={opt}>
-                                    {opt}
-                                  </option>
-                                ))}
-                              </select>
+                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
+                              <ConditionSelect
+                                value={doc.inspection}
+                                options={termsDropdowns.inspection}
+                                placeholder="Select Inspection Condition"
+                                disabled={!canEdit}
+                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'inspection', v)}
+                              />
                             </td>
                           </tr>
 
@@ -4535,7 +4535,7 @@ export default function Dashboard() {
           <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col space-y-4 p-5">
             <div className="flex justify-between items-center">
               <div>
-                <h2 className="text-base font-bold text-slate-900">tream-and-conditions Presets</h2>
+                <h2 className="text-base font-bold text-slate-900">Terms &amp; Conditions Presets</h2>
                 <p className="text-xs text-slate-500 font-medium">
                   Every field is editable. Editing options automatically updates available dropdown choices.
                 </p>
@@ -4727,10 +4727,10 @@ export default function Dashboard() {
               <div>
                 <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <History className="w-5 h-5 text-rose-600" />
-                  edit-logs (Audit Change History)
+                  Audit Log (Change History)
                 </h2>
                 <p className="text-xs text-slate-500 font-medium">
-                  Appends a log entry with user static ID every time a record in `iteam-table`, `docket-party-name`, or `tream-and-conditions` is created/modified.
+                  Every create, edit and delete on Items, Dockets, Terms &amp; Conditions and Master Dropdowns is recorded here with the logged-in user.
                 </p>
               </div>
 
@@ -4742,9 +4742,10 @@ export default function Dashboard() {
                   className="bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-rose-500/20"
                 >
                   <option value="">All Tables</option>
-                  <option value="iteam-table">iteam-table</option>
-                  <option value="docket-party-name">docket-party-name</option>
-                  <option value="tream-and-conditions">tream-and-conditions</option>
+                  <option value="iteam-table">Items</option>
+                  <option value="docket-party-name">Dockets</option>
+                  <option value="tream-and-conditions">Terms &amp; Conditions</option>
+                  <option value="master-values">Master Dropdowns</option>
                 </select>
               </div>
             </div>
@@ -4759,6 +4760,7 @@ export default function Dashboard() {
                     <th className="p-3.5">Field Changed</th>
                     <th className="p-3.5">Old Value</th>
                     <th className="p-3.5">New Value</th>
+                    <th className="p-3.5">User</th>
                     <th className="p-3.5">Timestamp</th>
                   </tr>
                 </thead>
@@ -4766,13 +4768,13 @@ export default function Dashboard() {
                 <tbody className="divide-y divide-slate-100 font-medium">
                   {logsLoading ? (
                     <tr>
-                      <td colSpan={7} className="p-10 text-center text-slate-400 font-semibold">
+                      <td colSpan={8} className="p-10 text-center text-slate-400 font-semibold">
                         Loading edit logs history...
                       </td>
                     </tr>
                   ) : logs.length === 0 ? (
                     <tr>
-                      <td colSpan={7} className="p-10 text-center text-slate-400 font-semibold">
+                      <td colSpan={8} className="p-10 text-center text-slate-400 font-semibold">
                         No edit log entries found yet. Edit any table cell to test logging!
                       </td>
                     </tr>
@@ -4790,7 +4792,7 @@ export default function Dashboard() {
                                 : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                             }`}
                           >
-                            {log.tableName}
+                            {TABLE_LABELS[log.tableName] || log.tableName}
                           </span>
                         </td>
                         <td className="p-3.5 font-mono font-bold text-slate-700">#{log.recordId}</td>
@@ -4798,11 +4800,20 @@ export default function Dashboard() {
                           <Tag className="w-3.5 h-3.5 text-slate-400" />
                           {log.fieldName}
                         </td>
-                        <td className="p-3.5 text-rose-700 max-w-[240px] truncate bg-rose-50/40 rounded px-2 py-1">
+                        <td
+                          className="p-3.5 text-rose-700 max-w-[240px] truncate bg-rose-50/40 rounded px-2 py-1"
+                          title={log.oldValue || ''}
+                        >
                           {log.oldValue || '<EMPTY>'}
                         </td>
-                        <td className="p-3.5 text-emerald-700 max-w-[240px] truncate bg-emerald-50/40 rounded px-2 py-1 font-bold">
+                        <td
+                          className="p-3.5 text-emerald-700 max-w-[240px] truncate bg-emerald-50/40 rounded px-2 py-1 font-bold"
+                          title={log.newValue || ''}
+                        >
                           {log.newValue || '<EMPTY>'}
+                        </td>
+                        <td className="p-3.5 text-xs font-bold text-slate-700 whitespace-nowrap">
+                          {log.userName || <span className="text-slate-400 font-medium">legacy / unknown</span>}
                         </td>
                         <td className="p-3.5 text-slate-500 text-xs font-mono whitespace-nowrap">
                           <Clock className="w-3.5 h-3.5 inline mr-1 text-slate-400" />
@@ -4995,7 +5006,7 @@ export default function Dashboard() {
                 <div>
                   <h3 className="text-base font-extrabold text-slate-900">Add New Docket Record</h3>
                   <p className="text-xs text-slate-500">
-                    Logged in user: <strong className="text-blue-700">{currentUser.name} ({currentUser.id})</strong>
+                    Logged in user: <strong className="text-blue-700">{currentUser.name} ({currentUser.username})</strong>
                   </p>
                 </div>
               </div>
@@ -5100,15 +5111,24 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Type:</label>
+                  <label htmlFor="new-docket-type" className="font-extrabold text-slate-700">
+                    Type: <span className="text-rose-600">*</span>
+                  </label>
                   <select
+                    id="new-docket-type"
+                    required
                     value={newDocketForm.type}
                     onChange={(e) => setNewDocketForm((prev) => ({ ...prev, type: e.target.value }))}
-                    className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-bold text-slate-800"
+                    className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-bold text-slate-800 invalid:border-rose-400"
                   >
-                    <option value="">Select Type (Tender / Purchase)</option>
-                    <option value="Tender">Tender</option>
-                    <option value="Purchase">Purchase</option>
+                    <option value="" disabled>
+                      Select Type (Tender / Purchase) - required
+                    </option>
+                    {DOCKET_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -5117,6 +5137,7 @@ export default function Dashboard() {
                   <label className="font-extrabold text-slate-700">Price Condition:</label>
                   <select
                     value={newDocketForm.price}
+                    title={newDocketForm.price || 'Select Option'}
                     onChange={(e) => setNewDocketForm((prev) => ({ ...prev, price: e.target.value }))}
                     className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white text-xs font-semibold"
                   >
@@ -5133,6 +5154,7 @@ export default function Dashboard() {
                   <label className="font-extrabold text-slate-700">Payment Condition:</label>
                   <select
                     value={newDocketForm.payment}
+                    title={newDocketForm.payment || 'Select Option'}
                     onChange={(e) => setNewDocketForm((prev) => ({ ...prev, payment: e.target.value }))}
                     className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white text-xs font-semibold"
                   >
@@ -5809,6 +5831,16 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmState !== null}
+        title={confirmState?.title || ''}
+        message={confirmState?.message || null}
+        confirmLabel={confirmState?.confirmLabel}
+        requireText={confirmState?.requireText}
+        onConfirm={confirmState?.onConfirm || (() => {})}
+        onClose={() => setConfirmState(null)}
+      />
     </div>
   );
 }

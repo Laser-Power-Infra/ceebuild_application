@@ -1,6 +1,30 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { autoDetectOurItemNot, autoDetectOurItemNotAsync, extractKeyPhrases } from '@/lib/classifier';
+import { requireUser, auditUser, pickFields, EDITOR_ROLES, ADMIN_ROLES } from '@/lib/auth/server';
+
+// Fields a client may change through PUT /api/items.
+const EDITABLE_ITEM_FIELDS = [
+  'uniqueNo',
+  'docketNoQtnNo',
+  'itemNameParty',
+  'uom',
+  'qty',
+  'ourItemNot',
+  'typeOfItem',
+  'ourItemName',
+  'size',
+  'sectionMm',
+  'sectionalWtKgMtr',
+  'lengthInMtr',
+  'unitWtOfMemberKg',
+  'weightPerPiece',
+  'price',
+  'uomOfQtn',
+  'a',
+  'freightPerKg',
+  'status',
+] as const;
 
 function getFilterList(searchParams: URLSearchParams, key: string): string[] {
   const all = searchParams.getAll(key);
@@ -219,6 +243,10 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const body = await req.json();
     const {
@@ -275,6 +303,7 @@ export async function POST(req: Request) {
         fieldName: 'CREATE_ITEM',
         oldValue: null,
         newValue: `Created Item: "${created.itemNameParty}" under Docket: ${created.docketNoQtnNo || 'N/A'}`,
+        ...auditUser(user),
       },
     });
 
@@ -286,10 +315,18 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const body = await req.json();
-    const { id, ...data } = body;
+    const id = body?.id;
     if (!id) return NextResponse.json({ error: 'Missing ID' }, { status: 400 });
+    const data = pickFields(body, EDITABLE_ITEM_FIELDS) as Record<string, any>;
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: 'No editable fields supplied' }, { status: 400 });
+    }
 
     const existing = await prisma.itemTable.findUnique({ where: { id: Number(id) } });
     if (!existing) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
@@ -310,6 +347,7 @@ export async function PUT(req: Request) {
             fieldName: key,
             oldValue: oldVal,
             newValue: newVal,
+            ...auditUser(user),
           },
         });
 
@@ -358,6 +396,10 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const auth = await requireUser(ADMIN_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const { searchParams } = new URL(req.url);
     const id = Number(searchParams.get('id'));
@@ -366,17 +408,20 @@ export async function DELETE(req: Request) {
     const item = await prisma.itemTable.findUnique({ where: { id } });
     if (!item) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
 
-    await prisma.itemTable.delete({ where: { id } });
-
-    await prisma.editLog.create({
-      data: {
-        tableName: 'iteam-table',
-        recordId: id,
-        fieldName: 'DELETE_ITEM',
-        oldValue: `Deleted Item #${id} ("${item.itemNameParty}")`,
-        newValue: null,
-      },
-    });
+    // Delete + audit atomically; the audit row keeps a JSON snapshot of the deleted item.
+    await prisma.$transaction([
+      prisma.itemTable.delete({ where: { id } }),
+      prisma.editLog.create({
+        data: {
+          tableName: 'iteam-table',
+          recordId: id,
+          fieldName: 'DELETE_ITEM',
+          oldValue: JSON.stringify(item),
+          newValue: `Deleted Item #${id} ("${item.itemNameParty || ''}") from Docket ${item.docketNoQtnNo || 'N/A'} by ${user.name} (${user.username})`,
+          ...auditUser(user),
+        },
+      }),
+    ]);
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireUser, auditUser, pickFields, EDITOR_ROLES } from '@/lib/auth/server';
+
+const EDITABLE_TERM_FIELDS = ['price', 'payment', 'delivery', 'warranty', 'approval', 'inspection'] as const;
 
 export async function GET() {
   try {
@@ -32,6 +35,10 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const body = await req.json();
     const newTerm = await prisma.treamAndConditions.create({
@@ -51,7 +58,8 @@ export async function POST(req: Request) {
         recordId: newTerm.id,
         fieldName: 'ALL_FIELDS',
         oldValue: 'NONE (New Record)',
-        newValue: JSON.stringify(body),
+        newValue: JSON.stringify(pickFields(body, EDITABLE_TERM_FIELDS)),
+        ...auditUser(user),
       },
     });
 
@@ -63,10 +71,18 @@ export async function POST(req: Request) {
 }
 
 export async function PUT(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+  const user = auth.user;
+
   try {
     const body = await req.json();
-    const { id, ...data } = body;
+    const id = body?.id;
     if (!id) return NextResponse.json({ error: 'Missing ID' }, { status: 400 });
+    const data = pickFields(body, EDITABLE_TERM_FIELDS) as Record<string, any>;
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: 'No editable fields supplied' }, { status: 400 });
+    }
 
     const existing = await prisma.treamAndConditions.findUnique({ where: { id: Number(id) } });
     if (!existing) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
@@ -87,6 +103,7 @@ export async function PUT(req: Request) {
             fieldName: key,
             oldValue: oldVal,
             newValue: newVal,
+            ...auditUser(user),
           },
         });
       }
