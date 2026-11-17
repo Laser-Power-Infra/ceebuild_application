@@ -1,4 +1,4 @@
-const { PrismaClient } = require('@prisma/client');
+import { PrismaClient } from './db';
 const prisma = new PrismaClient();
 
 async function main() {
@@ -36,10 +36,10 @@ async function main() {
   const statuses = ['Quoted', 'NOT Required'];
 
   const seedItems = [
-    ...partyNames.map((p) => ({ type: 'PARTY_NAME', value: p.partyName.trim() })),
-    ...states.map((s) => ({ type: 'STATE', value: s.state.trim() })),
-    ...utilities.map((u) => ({ type: 'UTILITY', value: u.utility.trim() })),
-    ...addresses.map((a) => ({ type: 'ADDRESS', value: a.address.trim() })),
+    ...partyNames.map((p) => ({ type: 'PARTY_NAME', value: (p.partyName ?? '').trim() })),
+    ...states.map((s) => ({ type: 'STATE', value: (s.state ?? '').trim() })),
+    ...utilities.map((u) => ({ type: 'UTILITY', value: (u.utility ?? '').trim() })),
+    ...addresses.map((a) => ({ type: 'ADDRESS', value: (a.address ?? '').trim() })),
     ...statuses.map((st) => ({ type: 'STATUS', value: st })),
   ].filter((item) => item.value && item.value !== '');
 

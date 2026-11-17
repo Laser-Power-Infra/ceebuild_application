@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1130.0",
-    "@prisma/client": "^6.4.1",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
     "clsx": "^2.1.1",
     "googleapis": "^144.0.0",
     "lucide-react": "^0.475.0",
@@ -29,7 +30,7 @@
     "@types/react-dom": "^19.0.4",
     "autoprefixer": "^10.5.4",
     "postcss": "^8.5.2",
-    "prisma": "^6.4.1",
+    "prisma": "^7.10.1",
     "tailwindcss": "^3.4.17",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.3"

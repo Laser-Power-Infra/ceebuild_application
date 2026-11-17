@@ -1,7 +1,7 @@
 /**
  * READ-ONLY diagnostic: why does a docket show "No items listed"?
  *
- *   node scripts/diagnose_docket_items.js CEE-000500
+ *   npx ts-node scripts/diagnose_docket_items.ts CEE-000500
  *
  * Items are linked to dockets only by the docket number text (iteam-table.docket_no_qtn_no
  * = docket-party-name.docket_no_qtn_no), there is no foreign key. This script lists:
@@ -11,12 +11,12 @@
  *   4. audit-log entries mentioning the number (renames, deletes, creates).
  * It never writes to the database.
  */
-const { PrismaClient } = require('@prisma/client');
+import { PrismaClient } from './db';
 
 async function main() {
   const docketNo = (process.argv[2] || '').trim();
   if (!docketNo) {
-    console.error('Usage: node scripts/diagnose_docket_items.js <docket no, e.g. CEE-000500>');
+    console.error('Usage: npx ts-node scripts/diagnose_docket_items.ts <docket no, e.g. CEE-000500>');
     process.exit(1);
   }
   const digits = (docketNo.match(/\d+/) || [''])[0].replace(/^0+/, '');

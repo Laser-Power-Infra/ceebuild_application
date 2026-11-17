@@ -41,7 +41,7 @@ desktop.ini
 next-env.d.ts
 
 # Logs
-logs/
+/logs/
 *.log
 pids/
 *.pid

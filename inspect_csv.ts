@@ -1,7 +1,7 @@
-const fs = require('fs');
-const path = require('path');
+import * as fs from 'fs';
+import * as path from 'path';
 
-function inspectCsv(filename) {
+function inspectCsv(filename: string) {
   const filepath = path.join('c:', 'Users', 'Niloy Paul', 'Desktop', 'CEEBUILD DASHBOARD', filename);
   if (!fs.existsSync(filepath)) {
     console.log(`File not found: ${filename}`);

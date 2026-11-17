@@ -1,4 +1,6 @@
-import { prisma } from '../src/lib/prisma';
+import { PrismaClient } from './db';
+
+const prisma = new PrismaClient();
 
 async function main() {
   console.log('Deleting dummy record #216 and empty docket party records...');
