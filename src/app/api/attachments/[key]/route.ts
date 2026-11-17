@@ -39,13 +39,21 @@ export async function GET(req: Request, { params }: { params: Promise<{ key: str
 
     const byteArray = await s3Response.Body.transformToByteArray();
     const buffer = Buffer.from(byteArray);
-    const contentType = s3Response.ContentType || 'application/octet-stream';
+    let contentType = s3Response.ContentType || 'application/octet-stream';
+    // Older uploads may lack a proper type; browsers only preview PDFs inline when typed correctly.
+    if (/\.pdf$/i.test(decodedKey) && !/pdf/i.test(contentType)) contentType = 'application/pdf';
+
+    // ?download=1 forces a save dialog; otherwise the file is shown inline (in-app preview).
+    const wantsDownload = new URL(req.url).searchParams.get('download') === '1';
+    const parts = decodedKey.split('_');
+    const originalName = parts.length > 2 ? parts.slice(2).join('_') : decodedKey;
+    const safeName = originalName.replace(/["\\\r\n]/g, '_');
 
     return new Response(buffer, {
       status: 200,
       headers: {
         'Content-Type': contentType,
-        'Content-Disposition': `inline; filename="${decodedKey}"`,
+        'Content-Disposition': `${wantsDownload ? 'attachment' : 'inline'}; filename="${safeName}"`,
         'Cache-Control': 'public, max-age=31536000, immutable',
       },
     });

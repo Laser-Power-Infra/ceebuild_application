@@ -48,6 +48,7 @@ import {
   Paperclip,
   File,
   Download,
+  Eye,
 } from 'lucide-react';
 import Link from 'next/link';
 import { signOut } from 'next-auth/react';
@@ -205,6 +206,8 @@ export default function Dashboard() {
 
   // Confirmation dialog for destructive actions
   const [confirmState, setConfirmState] = useState<ConfirmDialogOptions | null>(null);
+  // In-app attachment preview (eye icon) — keeps the file inside the dashboard instead of a new tab
+  const [previewAttachment, setPreviewAttachment] = useState<{ key: string; name: string } | null>(null);
 
   // Master Values state for Admin Management
   const [masterList, setMasterList] = useState<MasterValueItem[]>([]);
@@ -1388,30 +1391,41 @@ export default function Dashboard() {
 
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
 
-  const handleUploadDocketAttachment = async (file: File): Promise<string | null> => {
-    setUploadingAttachment(true);
+  const uploadOneAttachment = async (file: File): Promise<string | null> => {
     try {
-      showToast(`Uploading attachment "${file.name}" to S3 server...`);
       const formData = new FormData();
       formData.append('file', file);
-
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
+      const res = await fetch('/api/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to upload attachment');
-
-      showToast(`✨ Uploaded attachment to S3: "${data.originalName}"`);
       return data.filename;
     } catch (err: any) {
       console.error('Attachment upload error:', err);
-      showToast(`Error uploading attachment: ${err.message || 'Upload failed'}`);
+      showToast(`Error uploading "${file.name}": ${err.message || 'Upload failed'}`);
       return null;
+    }
+  };
+
+  // Uploads several files in parallel; returns the stored keys of the ones that succeeded.
+  const handleUploadDocketAttachments = async (files: File[]): Promise<string[]> => {
+    if (files.length === 0) return [];
+    setUploadingAttachment(true);
+    try {
+      showToast(`Uploading ${files.length} attachment${files.length > 1 ? 's' : ''} to S3 server...`);
+      const results = await Promise.all(files.map(uploadOneAttachment));
+      const uploaded = results.filter((k): k is string => !!k);
+      if (uploaded.length > 0) {
+        showToast(`✨ Uploaded ${uploaded.length} of ${files.length} attachment${files.length > 1 ? 's' : ''}`);
+      }
+      return uploaded;
     } finally {
       setUploadingAttachment(false);
     }
+  };
+
+  const attachmentDisplayName = (key: string) => {
+    const parts = key.split('_');
+    return parts.length > 2 ? parts.slice(2).join('_') : key;
   };
 
   const parseAttachments = (attachmentsStr?: string | null): string[] => {
@@ -1426,10 +1440,11 @@ export default function Dashboard() {
     }
   };
 
-  const getAttachmentUrl = (filename: string) => {
+  // Served through our own /api/attachments proxy so the file opens inside the app (same origin).
+  const getAttachmentUrl = (filename: string, download = false) => {
     if (!filename) return '#';
     if (filename.startsWith('http://') || filename.startsWith('https://')) return filename;
-    return `http://192.168.1.190:8500/ceebuild-docket/${encodeURIComponent(filename)}`;
+    return `/api/attachments/${encodeURIComponent(filename)}${download ? '?download=1' : ''}`;
   };
 
   // General field updater for DockerPartyName
@@ -3854,19 +3869,22 @@ export default function Dashboard() {
                                 <div className="flex items-center justify-between">
                                   <label className="cursor-pointer inline-flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-1.5 py-0.5 rounded-md transition-all shadow-2xs">
                                     <Paperclip className="w-2.5 h-2.5" />
-                                    <span>+ Attach File</span>
+                                    <span>{uploadingAttachment ? 'Uploading…' : '+ Attach Files'}</span>
                                     <input
                                       type="file"
+                                      multiple
                                       className="hidden"
+                                      disabled={uploadingAttachment}
                                       onChange={async (e) => {
-                                        if (e.target.files && e.target.files[0]) {
-                                          const file = e.target.files[0];
-                                          const uploadedName = await handleUploadDocketAttachment(file);
-                                          if (uploadedName) {
-                                            const currentAtts = parseAttachments(doc.attachments);
-                                            const updatedAtts = [...currentAtts, uploadedName];
-                                            handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
-                                          }
+                                        const input = e.target;
+                                        const files = input.files ? Array.from(input.files) : [];
+                                        input.value = ''; // allow re-selecting the same file(s) later
+                                        if (files.length === 0) return;
+                                        const uploadedNames = await handleUploadDocketAttachments(files);
+                                        if (uploadedNames.length > 0) {
+                                          const currentAtts = parseAttachments(doc.attachments);
+                                          const updatedAtts = [...currentAtts, ...uploadedNames];
+                                          handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
                                         }
                                       }}
                                     />
@@ -3875,22 +3893,34 @@ export default function Dashboard() {
 
                                 <div className="flex flex-col gap-1 max-h-[85px] overflow-y-auto">
                                   {parseAttachments(doc.attachments).map((att, attIdx) => {
-                                    const attUrl = getAttachmentUrl(att);
-                                    const parts = att.split('_');
-                                    const displayName = parts.length > 2 ? parts.slice(2).join('_') : att;
+                                    const displayName = attachmentDisplayName(att);
 
                                     return (
                                       <div key={attIdx} className="flex items-center justify-between bg-white border border-emerald-200 rounded px-1.5 py-0.5 text-[11px] shadow-2xs">
-                                        <a
-                                          href={attUrl}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="flex items-center space-x-1 text-emerald-800 hover:text-emerald-950 font-bold truncate max-w-[130px]"
-                                          title={`View Document: ${att}`}
+                                        <span
+                                          className="flex items-center space-x-1 text-emerald-800 font-bold truncate max-w-[95px]"
+                                          title={displayName}
                                         >
                                           <File className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
                                           <span className="truncate">{displayName}</span>
-                                          <ExternalLink className="w-2 h-2 text-emerald-400 shrink-0" />
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setPreviewAttachment({ key: att, name: displayName })}
+                                          className="text-emerald-600 hover:text-emerald-800 ml-auto p-0.5"
+                                          title="View"
+                                          aria-label={`View ${displayName}`}
+                                        >
+                                          <Eye className="w-3 h-3" />
+                                        </button>
+                                        <a
+                                          href={getAttachmentUrl(att, true)}
+                                          download={displayName}
+                                          className="text-sky-600 hover:text-sky-800 p-0.5"
+                                          title="Download"
+                                          aria-label={`Download ${displayName}`}
+                                        >
+                                          <Download className="w-3 h-3" />
                                         </a>
                                         <button
                                           type="button"
@@ -5875,6 +5905,69 @@ export default function Dashboard() {
         onConfirm={confirmState?.onConfirm || (() => {})}
         onClose={() => setConfirmState(null)}
       />
+
+      {previewAttachment && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 p-4"
+          onClick={() => setPreviewAttachment(null)}
+          onKeyDown={(e) => e.key === 'Escape' && setPreviewAttachment(null)}
+          role="presentation"
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Preview ${previewAttachment.name}`}
+            className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <File className="h-4 w-4 shrink-0 text-emerald-600" />
+                <h2 className="truncate text-sm font-extrabold text-slate-900" title={previewAttachment.name}>
+                  {previewAttachment.name}
+                </h2>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <a
+                  href={getAttachmentUrl(previewAttachment.key, true)}
+                  download={previewAttachment.name}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-extrabold text-white hover:bg-emerald-700"
+                >
+                  <Download className="h-3.5 w-3.5" />
+                  Download
+                </a>
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={() => setPreviewAttachment(null)}
+                  aria-label="Close preview"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-slate-100">
+              {/\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(previewAttachment.key) ? (
+                <div className="flex h-full items-center justify-center overflow-auto p-4">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={getAttachmentUrl(previewAttachment.key)}
+                    alt={previewAttachment.name}
+                    className="max-h-full max-w-full object-contain"
+                  />
+                </div>
+              ) : (
+                <iframe
+                  src={getAttachmentUrl(previewAttachment.key)}
+                  title={previewAttachment.name}
+                  className="h-full w-full border-0"
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
