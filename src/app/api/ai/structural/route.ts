@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireUser, EDITOR_ROLES } from '@/lib/auth/server';
 import { getGroqApiKey, saveGroqApiKeyToDb } from '@/lib/groqHelper';
 
 const GROQ_MODELS = [
@@ -117,6 +118,9 @@ function extractStructuralOptionsFromAiText(text: string) {
 }
 
 export async function POST(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+
   let rawDescription = '';
   try {
     const body = await req.json();

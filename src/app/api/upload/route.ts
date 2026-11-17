@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { requireUser, EDITOR_ROLES } from '@/lib/auth/server';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
 const S3_ENDPOINT_URL = process.env.S3_ENDPOINT_URL || 'http://192.168.1.190:8500';
@@ -19,6 +20,9 @@ const s3Client = new S3Client({
 });
 
 export async function POST(req: Request) {
+  const auth = await requireUser(EDITOR_ROLES);
+  if (auth.error) return auth.error;
+
   try {
     const formData = await req.formData();
     const file = formData.get('file') as File | null;

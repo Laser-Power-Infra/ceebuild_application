@@ -50,6 +50,7 @@ import {
   Download,
 } from 'lucide-react';
 import Link from 'next/link';
+import { signOut } from 'next-auth/react';
 import MultiSelectFilterDropdown from '@/components/MultiSelectFilterDropdown';
 import ConfirmDialog, { type ConfirmDialogOptions } from '@/components/ConfirmDialog';
 import ConditionSelect from '@/components/ConditionSelect';
@@ -129,7 +130,7 @@ interface MasterValueItem {
   createdAt: string;
 }
 
-// Logged-in user as returned by GET /api/auth/me (server-verified session; see src/middleware.ts).
+// Signed-in user as returned by NextAuth's GET /api/auth/session (guests get a read-only default).
 interface UserRole {
   username: string;
   name: string;
@@ -182,15 +183,15 @@ export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'items' | 'dockets' | 'terms' | 'logs' | 'master'>('dockets');
 
   // Authentication & User State
-  // No default user: the page waits for /api/auth/me. Unauthenticated visitors never get here
-  // because middleware redirects them to /login.
+  // Viewing is public: visitors without a NextAuth session browse as a read-only Guest.
   const [authLoading, setAuthLoading] = useState<boolean>(true);
   const [currentUser, setCurrentUser] = useState<UserRole>({
     username: '',
-    name: '',
+    name: 'Guest',
     id: '',
     role: 'Viewer',
   });
+  const isLoggedIn = currentUser.username !== '';
   const canEdit = currentUser.role === 'Admin' || currentUser.role === 'User';
 
   // Confirmation dialog for destructive actions
@@ -775,14 +776,17 @@ export default function Dashboard() {
     }
   };
 
-  // Logout handler: clears the httpOnly session cookie on the server, then goes to /login
+  // Logout handler: ends the NextAuth session, then reloads the dashboard as a read-only Guest
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      // LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17):
+      // await fetch('/api/auth/logout', { method: 'POST' });
+      await signOut({ redirect: false });
     } catch (err) {
       console.error(err);
     }
-    window.location.href = '/login';
+    // LEGACY: window.location.href = '/login';
+    window.location.reload();
   };
 
   // Fetch Master Values for auto-complete dropdowns
@@ -1116,7 +1120,10 @@ export default function Dashboard() {
       }
     }
 
-    fetch('/api/auth/me')
+    // LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17):
+    // fetch('/api/auth/me') ... and, with no user, window.location.href = '/login';
+    // NextAuth's session endpoint returns {} for visitors who are not signed in.
+    fetch('/api/auth/session')
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.user) {
@@ -1126,12 +1133,10 @@ export default function Dashboard() {
             id: `USR-${data.user.id}`,
             role: data.user.role,
           });
-          setAuthLoading(false);
-        } else {
-          window.location.href = '/login';
         }
       })
-      .catch((err) => console.error('Failed to load session:', err));
+      .catch((err) => console.error('Failed to load session:', err))
+      .finally(() => setAuthLoading(false));
 
     // Fetch counts and master values for all tabs on mount
     fetchMasterValues();
@@ -2450,7 +2455,8 @@ export default function Dashboard() {
               <div className="flex items-center space-x-1.5 pl-2 text-xs font-bold text-slate-700">
                 <UserCheck className="w-4 h-4 text-blue-600" />
                 <span>
-                  User: <strong className="text-slate-900">{currentUser.name}</strong> ({currentUser.id})
+                  User: <strong className="text-slate-900">{currentUser.name}</strong>
+                  {isLoggedIn ? ` (${currentUser.id})` : ''}
                 </span>
                 <span className="ml-1 text-[10px] bg-blue-100 text-blue-800 font-extrabold px-2 py-0.5 rounded-full">
                   {currentUser.role}
@@ -2458,14 +2464,25 @@ export default function Dashboard() {
                 </span>
               </div>
 
-              <button
-                onClick={handleLogout}
-                className="flex items-center space-x-1 bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 font-bold text-xs px-2.5 py-1 rounded-xl transition-all shadow-xs"
-                title="Logout / Switch Account"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                <span>Logout</span>
-              </button>
+              {isLoggedIn ? (
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center space-x-1 bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 font-bold text-xs px-2.5 py-1 rounded-xl transition-all shadow-xs"
+                  title="Logout / Switch Account"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Logout</span>
+                </button>
+              ) : (
+                <Link
+                  href="/login"
+                  className="flex items-center space-x-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-2.5 py-1 rounded-xl transition-all shadow-xs"
+                  title="Sign in to add or edit data"
+                >
+                  <UserCheck className="w-3.5 h-3.5" />
+                  <span>Sign in</span>
+                </Link>
+              )}
             </div>
 
             {/* Navigation Tabs */}

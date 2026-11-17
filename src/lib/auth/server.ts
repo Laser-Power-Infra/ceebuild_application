@@ -1,14 +1,18 @@
 /**
  * Server-side auth helpers for route handlers (Node runtime).
  *
- * middleware.ts already rejects requests without a valid signed cookie, but the
+ * proxy.ts already rejects writes without a NextAuth session, but the
  * handlers re-check the user in the database so that disabling a user, changing
  * their role or resetting their password takes effect immediately.
  */
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { getServerSession } from 'next-auth';
 import { prisma } from '@/lib/prisma';
-import { SESSION_COOKIE, verifySessionToken, isRole, type Role } from './session';
+import { authOptions } from './options';
+import { isRole, type Role } from './session';
+// LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17):
+// import { cookies } from 'next/headers';
+// import { SESSION_COOKIE, verifySessionToken, isRole, type Role } from './session';
 
 export interface AuthUser {
   id: number;
@@ -18,12 +22,18 @@ export interface AuthUser {
 }
 
 export async function getSessionUser(): Promise<AuthUser | null> {
-  const cookieStore = await cookies();
-  const payload = await verifySessionToken(cookieStore.get(SESSION_COOKIE)?.value);
-  if (!payload) return null;
+  // LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17):
+  // const cookieStore = await cookies();
+  // const payload = await verifySessionToken(cookieStore.get(SESSION_COOKIE)?.value);
+  // if (!payload) return null;
+  //
+  // const user = await prisma.user.findUnique({ where: { id: payload.uid } });
+  // if (!user || !user.isActive || user.sessionVersion !== payload.sv || !isRole(user.role)) return null;
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return null;
 
-  const user = await prisma.user.findUnique({ where: { id: payload.uid } });
-  if (!user || !user.isActive || user.sessionVersion !== payload.sv || !isRole(user.role)) return null;
+  const user = await prisma.user.findUnique({ where: { id: session.user.id } });
+  if (!user || !user.isActive || user.sessionVersion !== session.user.sv || !isRole(user.role)) return null;
 
   return { id: user.id, username: user.username, name: user.name, role: user.role };
 }
