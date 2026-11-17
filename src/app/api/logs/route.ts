@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 
-// Audit trail for the dashboard's Logs tab. Auth is enforced by middleware.ts.
+// Audit trail for the dashboard's Logs tab. Auth is enforced by proxy.ts.
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);

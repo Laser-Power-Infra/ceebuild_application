@@ -2,6 +2,7 @@
 
 import React, { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { signIn } from 'next-auth/react';
 import { UserCheck, KeyRound, ShieldCheck } from 'lucide-react';
 
 function safeNext(next: string | null): string {
@@ -22,18 +23,23 @@ function LoginForm() {
     setError('');
     setSubmitting(true);
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
-      });
-      if (res.ok) {
-        // Full navigation so middleware sees the new cookie.
+      // LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17):
+      // const res = await fetch('/api/auth/login', {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify({ username, password }),
+      // });
+      // if (res.ok) { window.location.href = safeNext(searchParams.get('next')); return; }
+      // const data = await res.json().catch(() => ({}));
+      // setError(data.error || 'Login failed. Please try again.');
+      const res = await signIn('credentials', { username, password, redirect: false });
+      if (res?.ok && !res.error) {
+        // Full navigation so the dashboard reloads with the new session.
         window.location.href = safeNext(searchParams.get('next'));
         return;
       }
-      const data = await res.json().catch(() => ({}));
-      setError(data.error || 'Login failed. Please try again.');
+      // "CredentialsSignin" is NextAuth's generic code; our own messages come through as-is.
+      setError(res?.error && res.error !== 'CredentialsSignin' ? res.error : 'Login failed. Please try again.');
     } catch {
       setError('Could not reach the server. Please try again.');
     } finally {

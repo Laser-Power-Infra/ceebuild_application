@@ -1,8 +1,13 @@
 # Login, roles and user management
 
-The dashboard requires a login for every page and API route (`src/middleware.ts`).
-Sessions are an httpOnly, HMAC-signed cookie (`ceebuild_session`, 12 h). Passwords are
-hashed with scrypt. Users live in the `users` table.
+Viewing is public: every page and every read (GET) works without signing in. Creating,
+editing, deleting, uploading and the AI actions require a login (`src/proxy.ts` plus
+`requireUser` in each write handler).
+
+Login is handled by NextAuth (`src/lib/auth/options.ts`, Credentials provider) with a signed
+JWT session cookie (12 h). Passwords are hashed with scrypt. Users live in the `users` table.
+The previous hand-rolled cookie auth is kept, commented out, as `LEGACY` blocks and
+`route.legacy.ts` files.
 
 ## Roles
 
@@ -11,6 +16,7 @@ hashed with scrypt. Users live in the `users` table.
 | Admin  | Everything: create/edit, **delete** dockets/items, change docket numbers, manage Master Dropdowns |
 | User   | View, create and edit dockets, items and terms. Cannot delete, change docket numbers or master dropdowns |
 | Viewer | Read-only (all writes return 403) |
+| (not signed in) | Same read-only view as Viewer (writes return 401) |
 
 Give Admin only to the named people who should have it.
 
@@ -18,8 +24,9 @@ Give Admin only to the named people who should have it.
 
 1. Set `AUTH_SECRET` (32+ chars) in `.env` / the container environment, for example
    `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`.
-   Without it the app refuses every request.
-   Docker: add `AUTH_SECRET` to the `environment:` block of `docker-compose.yml`.
+   Without it nobody can sign in.
+   Also set `NEXTAUTH_URL` to the address users open (e.g. `http://192.168.1.190:6011`).
+   Docker: add both to the `environment:` block of `docker-compose.yml`.
 2. Apply the migration `prisma/migrations/20261102090000_add_users_and_audit_user`
    (`npx prisma migrate deploy`). It only adds the `users` table and two nullable
    columns + an index on `edit-logs`. Take a DB backup first.
