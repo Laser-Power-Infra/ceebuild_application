@@ -2,6 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens for the shared table kit (see tailwind.config.ts). Slate + blue to match the app.
+   *-rgb triplets feed Tailwind classes; plain vars feed the kit's color-mix() arbitrary values. */
+:root {
+  --background-rgb: 255 255 255;   --background: rgb(var(--background-rgb));
+  --foreground-rgb: 15 23 42;      --foreground: rgb(var(--foreground-rgb));
+  --card-rgb: 255 255 255;         --card: rgb(var(--card-rgb));
+  --popover-rgb: 255 255 255;      --popover: rgb(var(--popover-rgb));
+  --primary-rgb: 37 99 235;        --primary: rgb(var(--primary-rgb));
+  --primary-foreground-rgb: 255 255 255;
+  --secondary-rgb: 241 245 249;    --secondary: rgb(var(--secondary-rgb));
+  --muted-rgb: 241 245 249;        --muted: rgb(var(--muted-rgb));
+  --muted-foreground-rgb: 100 116 139;
+  --accent-rgb: 241 245 249;       --accent: rgb(var(--accent-rgb));
+  --destructive-rgb: 225 29 72;    --destructive: rgb(var(--destructive-rgb));
+  --border-rgb: 226 232 240;       --border: rgb(var(--border-rgb));  --color-border: var(--border);
+  --input-rgb: 226 232 240;
+  --ring-rgb: 59 130 246;
+  --radius: 0.625rem;
+  --radius-md: 0.5rem;
+}
+
 @layer base {
   body {
     @apply bg-slate-50 text-slate-900 antialiased;

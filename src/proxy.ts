@@ -27,7 +27,7 @@ export async function proxy(req: NextRequest) {
 
   const session = await getToken({ req, secret: process.env.AUTH_SECRET });
 
-  if (pathname === '/login' && session) return NextResponse.redirect(new URL('/', req.url));
+  if ((pathname === '/login' || pathname === '/signup') && session) return NextResponse.redirect(new URL('/', req.url));
 
   // Public read access: pages and safe methods need no login.
   if (!pathname.startsWith('/api/') || SAFE_METHODS.has(method)) return NextResponse.next();

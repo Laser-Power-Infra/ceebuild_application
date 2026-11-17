@@ -535,6 +535,15 @@ export async function DELETE(req: Request) {
     const docket = await prisma.dockerPartyName.findUnique({ where: { id } });
     if (!docket) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
 
+    // An order (PO) is linked to this docket; the foreign key would block the delete anyway.
+    const orders = await prisma.order.count({ where: { docketId: id } });
+    if (orders > 0) {
+      return NextResponse.json(
+        { error: `This docket has ${orders} order(s) (PO). Delete the order(s) on the Orders page first.` },
+        { status: 409 },
+      );
+    }
+
     // Delete + audit in one transaction: if the audit entry cannot be written, nothing is deleted.
     // The audit row keeps a JSON snapshot of the docket and its items so it can be restored by hand.
     const deletedItemCount = await prisma.$transaction(async (tx) => {

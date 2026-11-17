@@ -144,6 +144,15 @@ const TABLE_LABELS: Record<string, string> = {
   'docket-party-name': 'Dockets',
   'tream-and-conditions': 'Terms & Conditions',
   'master-values': 'Master Dropdowns',
+  orders: 'Orders',
+  bom_uploads: 'BOM uploads',
+  bom_pieces: 'BOM rows',
+  section_master: 'GTP sections',
+  galv_challans: 'Galvanising challans',
+  inspections: 'Inspections / MC',
+  dispatch_instructions: 'Dispatch instructions',
+  dispatches: 'Dispatches',
+  users: 'User Accounts',
 };
 
 // Lightweight auto-resizing text component that avoids browser thread locking
@@ -2484,6 +2493,14 @@ export default function Dashboard() {
                 </Link>
               )}
             </div>
+
+            {/* Order-to-execution module (A15): orders from POs, BOM check, galvanising → dispatch */}
+            <Link
+              href="/orders"
+              className="flex items-center bg-white hover:bg-blue-50 text-blue-700 border border-slate-200 hover:border-blue-300 font-bold text-xs px-3 py-2 rounded-xl transition-all"
+            >
+              Orders &amp; execution
+            </Link>
 
             {/* Navigation Tabs */}
             <div className="flex flex-wrap items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200">

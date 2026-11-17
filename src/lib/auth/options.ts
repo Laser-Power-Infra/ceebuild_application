@@ -61,27 +61,29 @@ export const authOptions: NextAuthOptions = {
     CredentialsProvider({
       name: 'Username and password',
       credentials: {
-        username: { label: 'Username', type: 'text' },
+        email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
       },
       // Thrown messages are shown on the login page (signIn() returns them as `error`).
       async authorize(credentials, req) {
-        const username = (credentials?.username || '').trim().toLowerCase();
+        const email = (credentials?.email || '').trim().toLowerCase();
         const password = credentials?.password || '';
-        if (!username || !password) throw new Error('Username and password are required.');
+        if (!email || !password) throw new Error('Email and password are required.');
 
         const headers = (req?.headers || {}) as Record<string, string | undefined>;
         const ip = (headers['x-forwarded-for'] || '').split(',')[0].trim() || headers['x-real-ip'] || 'local';
-        const key = `${ip}|${username}`;
+        const key = `${ip}|${email}`;
         if (isThrottled(key)) throw new Error('Too many failed attempts. Try again in 15 minutes.');
 
-        const user = await prisma.user.findUnique({ where: { username } });
+        // shortcut: accounts created before email login have no email yet, so a value without "@"
+        // is looked up as the old username. Drop this once every user has an email (users -- list).
+        const user = await prisma.user.findUnique({ where: email.includes('@') ? { email } : { username: email } });
         // Always run a hash comparison so response time does not reveal whether the user exists.
         const valid = await verifyPassword(password, user?.passwordHash || (await getDummyHash()));
 
         if (!user || !valid || !user.isActive || !isRole(user.role)) {
           recordFailure(key);
-          throw new Error('Invalid username or password.');
+          throw new Error('Invalid email or password.');
         }
 
         failures.delete(key);

@@ -5,7 +5,8 @@
  *
  * Commands
  *   list
- *   add <username> --name "Full Name" [--role Admin|User|Viewer] [--password <pw>]
+ *   add <username> --name "Full Name" [--email <email>] [--role Admin|User|Viewer] [--password <pw>]
+ *   set-email <username> <email>      (users sign in with their email)
  *   set-password <username> [--password <pw>]
  *   set-role <username> <Admin|User|Viewer>
  *   disable <username>
@@ -44,7 +45,8 @@ function usage(msg?: string): never {
     [
       'Usage: npm run users -- <command> [args]',
       '  list',
-      '  add <username> --name "Full Name" [--role Admin|User|Viewer] [--password <pw>]',
+      '  add <username> --name "Full Name" [--email <email>] [--role Admin|User|Viewer] [--password <pw>]',
+      '  set-email <username> <email>',
       '  set-password <username> [--password <pw>]',
       '  set-role <username> <Admin|User|Viewer>',
       '  disable <username>',
@@ -82,6 +84,12 @@ function normUsername(u: string | undefined): string {
   return v;
 }
 
+function normEmail(e: string | true | undefined): string {
+  const v = typeof e === 'string' ? e.trim().toLowerCase() : '';
+  if (v.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) usage(`invalid email "${typeof e === 'string' ? e : ''}"`);
+  return v;
+}
+
 function parseRole(r: string | true | undefined, fallback?: Role): Role {
   if (r === undefined && fallback) return fallback;
   const match = ROLES.find((x) => typeof r === 'string' && x.toLowerCase() === r.toLowerCase());
@@ -114,7 +122,7 @@ async function main() {
       if (users.length === 0) console.log('No users yet. Create the first admin with: npm run users -- add <username> --name "Name" --role Admin');
       for (const u of users) {
         console.log(
-          `${String(u.id).padStart(4)}  ${u.username.padEnd(20)} ${u.role.padEnd(7)} ${u.isActive ? 'active  ' : 'DISABLED'}  ${u.name}` +
+          `${String(u.id).padStart(4)}  ${u.username.padEnd(20)} ${(u.email || '(no email)').padEnd(30)} ${u.role.padEnd(7)} ${u.isActive ? 'active  ' : 'DISABLED'}  ${u.name}` +
             (u.lastLoginAt ? `  (last login ${u.lastLoginAt.toISOString()})` : '')
         );
       }
@@ -126,10 +134,12 @@ async function main() {
       const name = typeof flags.name === 'string' ? flags.name.trim() : '';
       if (!name) usage('--name "Full Name" is required');
       const role = parseRole(flags.role, 'User');
+      const email = flags.email === undefined ? null : normEmail(flags.email);
       if (await prisma.user.findUnique({ where: { username } })) usage(`user "${username}" already exists`);
+      if (email && (await prisma.user.findUnique({ where: { email } }))) usage(`email "${email}" is already used`);
       const { password, generated } = resolvePassword(flags.password);
       const created = await prisma.user.create({
-        data: { username, name, role, passwordHash: await hashPassword(password) },
+        data: { username, email, name, role, passwordHash: await hashPassword(password) },
       });
       console.log(`Created user #${created.id} "${username}" (${name}) with role ${role}.`);
       printPassword(username, password, generated);
@@ -147,6 +157,18 @@ async function main() {
       });
       console.log(`Password updated for "${username}" (existing sessions signed out).`);
       printPassword(username, password, generated);
+      break;
+    }
+
+    case 'set-email': {
+      const username = normUsername(positional[0]);
+      const email = normEmail(positional[1]);
+      const user = await prisma.user.findUnique({ where: { username } });
+      if (!user) usage(`user "${username}" not found`);
+      const taken = await prisma.user.findUnique({ where: { email } });
+      if (taken && taken.id !== user.id) usage(`email "${email}" is already used by "${taken.username}"`);
+      await prisma.user.update({ where: { id: user.id }, data: { email } });
+      console.log(`Email of "${username}" set to ${email}. They now sign in with it.`);
       break;
     }
 

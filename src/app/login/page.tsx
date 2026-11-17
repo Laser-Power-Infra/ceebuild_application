@@ -2,8 +2,9 @@
 
 import React, { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { signIn } from 'next-auth/react';
-import { UserCheck, KeyRound, ShieldCheck } from 'lucide-react';
+import { Mail, KeyRound, ShieldCheck } from 'lucide-react';
 
 function safeNext(next: string | null): string {
   // Only allow same-site relative paths (no protocol-relative or absolute URLs).
@@ -13,7 +14,7 @@ function safeNext(next: string | null): string {
 
 function LoginForm() {
   const searchParams = useSearchParams();
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -32,7 +33,7 @@ function LoginForm() {
       // if (res.ok) { window.location.href = safeNext(searchParams.get('next')); return; }
       // const data = await res.json().catch(() => ({}));
       // setError(data.error || 'Login failed. Please try again.');
-      const res = await signIn('credentials', { username, password, redirect: false });
+      const res = await signIn('credentials', { email, password, redirect: false });
       if (res?.ok && !res.error) {
         // Full navigation so the dashboard reloads with the new session.
         window.location.href = safeNext(searchParams.get('next'));
@@ -55,7 +56,7 @@ function LoginForm() {
         </div>
         <div>
           <h1 className="text-xl font-extrabold text-slate-900">CEEBUILD Dashboard Login</h1>
-          <p className="text-xs text-slate-500 font-medium mt-1">Sign in with the username and password issued to you</p>
+          <p className="text-xs text-slate-500 font-medium mt-1">Sign in with your email and password</p>
         </div>
       </div>
 
@@ -70,19 +71,21 @@ function LoginForm() {
 
       <form onSubmit={handleSubmit} className="space-y-4 text-xs font-medium">
         <div>
-          <label htmlFor="username" className="font-extrabold text-slate-700 block mb-1.5">
-            Username
+          <label htmlFor="email" className="font-extrabold text-slate-700 block mb-1.5">
+            Email
           </label>
           <div className="relative">
-            <UserCheck className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
-              id="username"
+              id="email"
+              // text, not email: accounts made before email login still sign in with their old username
               type="text"
+              inputMode="email"
               required
-              autoComplete="username"
+              autoComplete="email"
               autoFocus
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
               className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-slate-900 font-bold"
             />
           </div>
@@ -116,7 +119,16 @@ function LoginForm() {
         </button>
       </form>
 
-      <p className="text-center text-[11px] text-slate-400">No account? Ask a CEEBUILD dashboard administrator.</p>
+      <p className="text-center text-[11px] text-slate-500">
+        No account?{' '}
+        <Link href="/signup" className="font-bold text-blue-600 hover:underline">
+          Sign up
+        </Link>
+        {' · '}
+        <Link href="/" className="font-bold text-blue-600 hover:underline">
+          Back to dashboard
+        </Link>
+      </p>
     </div>
   );
 }

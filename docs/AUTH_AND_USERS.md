@@ -9,6 +9,25 @@ JWT session cookie (12 h). Passwords are hashed with scrypt. Users live in the `
 The previous hand-rolled cookie auth is kept, commented out, as `LEGACY` blocks and
 `route.legacy.ts` files.
 
+## Sign up
+
+Anyone can create an account at `/signup` (link on the login page) with full name, email
+and password. Everyone signs in with **email + password**. New accounts get the
+**User** role and are active immediately, so they can create and edit data straight away.
+Each sign-up is recorded in the audit log (table `users`). Limit: 5 sign-ups per IP per hour.
+To remove access: `npm run users -- disable <username>` or `set-role <username> Viewer`.
+
+## Existing accounts and email
+
+Accounts created before email login have no email. Until one is set they can still sign in
+by typing their old username in the Email box. Give each of them an email (needs the
+`20261117120000_add_user_email` migration):
+
+```
+npm run users -- list                       # shows "(no email)" for the ones to fix
+npm run users -- set-email <username> <email>
+```
+
 ## Roles
 
 | Role   | Can do |

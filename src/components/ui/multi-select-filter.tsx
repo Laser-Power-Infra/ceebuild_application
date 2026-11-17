@@ -1,0 +1,275 @@
+"use client";
+
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronDown, Loader2, Search } from "lucide-react";
+import { cn } from "@/lib/utils";
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+} from "./popover";
+import { squish } from "@/lib/squish";
+
+export const BLANK = "__blank__";
+export const AVAILABLE = "__available__";
+
+interface MultiSelectFilterProps {
+  label: string;
+  allLabel: string;
+  options: string[];
+  cascadedOptions: string[];
+  selected: string[];
+  onChange: (values: string[]) => void;
+  counts?: Record<string, number>;
+  /** Optional display label per option value (the value is still what is stored). */
+  optionLabels?: Record<string, string>;
+  includeBlank?: boolean;
+  includeAvailable?: boolean;
+  searchPlaceholder?: string;
+  className?: string;
+  panelClassName?: string;
+  align?: "start" | "center" | "end";
+  renderButtonLabel?: (selected: string[], allLabel: string) => string;
+  /** Fired when the panel opens, so the caller can fetch that column's options. */
+  onOpen?: () => void;
+  /** Small muted second line under an option's label. */
+  optionHints?: Record<string, string>;
+  /** Enter in the search box (or the "Rows containing" button) submits the typed text and closes the panel. */
+  onSearchSubmit?: (text: string) => void;
+  /** Replaces the label + chevron inside the trigger (e.g. an icon); style the trigger through `className`. */
+  trigger?: ReactNode;
+  /** Accessible name and tooltip for an icon-only trigger. */
+  ariaLabel?: string;
+  /** Options are still being fetched: show a loading line instead of "No options found". */
+  loading?: boolean;
+}
+
+export default function MultiSelectFilter({
+  label,
+  allLabel,
+  options,
+  cascadedOptions,
+  selected,
+  onChange,
+  counts,
+  optionLabels,
+  includeBlank = false,
+  includeAvailable = false,
+  searchPlaceholder,
+  className,
+  panelClassName,
+  align = "start",
+  renderButtonLabel,
+  onOpen,
+  optionHints,
+  onSearchSubmit,
+  trigger,
+  ariaLabel,
+  loading = false,
+}: MultiSelectFilterProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+
+  // The panel is portaled and follows its button, so scrolling the table would drag it across
+  // the page (and over the sidebar once the button is clipped). Close it instead. Scroll events
+  // do not bubble, hence capture; scrolling the option list inside the panel is left alone.
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: Event) => {
+      if (e.target instanceof Element && e.target.closest('[data-slot="popover-content"]')) return;
+      setOpen(false);
+      setSearch("");
+    };
+    window.addEventListener("scroll", close, true);
+    return () => window.removeEventListener("scroll", close, true);
+  }, [open]);
+
+  const visibleOptions = useMemo(() => {
+    // Cascaded values are the source of truth once loaded: they include live
+    // data values that the static lookup list does not. Selected values stay
+    // visible so they can still be unchecked.
+    const source =
+      cascadedOptions.length > 0
+        ? Array.from(new Set([...cascadedOptions, ...selected]))
+        : options;
+    const q = squish(search);
+    return source.filter((opt) => {
+      if (!q) return true;
+      return (
+        squish(opt).includes(q) ||
+        squish(optionLabels?.[opt]).includes(q)
+      );
+    });
+  }, [options, cascadedOptions, selected, search, optionLabels]);
+
+  const toggle = (opt: string) => {
+    onChange(
+      selected.includes(opt)
+        ? selected.filter((v) => v !== opt)
+        : [...selected, opt]
+    );
+  };
+
+  const submitSearch = () => {
+    onSearchSubmit?.(search.trim());
+    setOpen(false);
+    setSearch("");
+  };
+
+  const buttonLabel = renderButtonLabel
+    ? renderButtonLabel(selected, allLabel)
+    : selected.length === 0
+    ? allLabel
+    : `${selected.length} Selected`;
+
+  const blankChecked = selected.includes(BLANK);
+  const availableChecked = selected.includes(AVAILABLE);
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setSearch("");
+        else onOpen?.();
+      }}
+    >
+      <PopoverTrigger
+        type="button"
+        aria-label={ariaLabel}
+        title={ariaLabel}
+        className={cn(
+          "w-full h-7 rounded border border-border bg-background px-2 py-0.5 text-[10px] text-left cursor-pointer flex items-center justify-between hover:bg-accent outline-none normal-case",
+          className
+        )}
+      >
+        {trigger ?? (
+          <>
+            <span className="truncate">{buttonLabel}</span>
+            <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0 ml-1" />
+          </>
+        )}
+      </PopoverTrigger>
+
+      <PopoverContent
+        align={align}
+        side="bottom"
+        sideOffset={4}
+        className={cn(
+          "w-64 rounded border border-border bg-popover text-popover-foreground shadow-lg p-2 flex flex-col gap-2 max-h-72",
+          panelClassName
+        )}
+      >
+        <div className="flex items-center gap-1.5 border border-border rounded px-2 py-1 bg-muted">
+          <Search className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <input
+            type="text"
+            placeholder={searchPlaceholder || `Search ${label.toLowerCase()}...`}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && onSearchSubmit && search.trim()) {
+                e.preventDefault();
+                submitSearch();
+              }
+            }}
+            className="w-full text-[10px] bg-transparent outline-none border-none placeholder:text-muted-foreground p-0 h-4 normal-case"
+          />
+        </div>
+
+        {onSearchSubmit && search.trim() && (
+          <button
+            type="button"
+            onClick={submitSearch}
+            className="text-left text-[10px] text-blue-600 font-semibold hover:underline cursor-pointer truncate px-1"
+          >
+            Rows containing “{search.trim()}”
+          </button>
+        )}
+
+        <div className="flex justify-between items-center px-1 text-[9px]">
+          <button
+            type="button"
+            onClick={() => onChange(visibleOptions)}
+            className="text-blue-600 font-bold hover:underline cursor-pointer"
+          >
+            Select All
+          </button>
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="text-muted-foreground font-bold hover:underline cursor-pointer"
+          >
+            Clear
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto divide-y divide-border max-h-48 pr-0.5">
+          {includeBlank && (
+            <label className="flex items-center gap-2 py-1 px-1 hover:bg-accent cursor-pointer select-none text-[10px] text-foreground font-medium truncate">
+              <input
+                type="checkbox"
+                checked={blankChecked}
+                onChange={() => toggle(BLANK)}
+                className="h-3 w-3 rounded text-blue-600 focus:ring-blue-500 border-border cursor-pointer"
+              />
+              <span className="truncate flex-1">(Blank)</span>
+            </label>
+          )}
+          {includeAvailable && (
+            <label className="flex items-center gap-2 py-1 px-1 hover:bg-accent cursor-pointer select-none text-[10px] text-foreground font-medium truncate">
+              <input
+                type="checkbox"
+                checked={availableChecked}
+                onChange={() => toggle(AVAILABLE)}
+                className="h-3 w-3 rounded text-blue-600 focus:ring-blue-500 border-border cursor-pointer"
+              />
+              <span className="truncate flex-1">(Available)</span>
+            </label>
+          )}
+          {visibleOptions.map((opt) => {
+            const isChecked = selected.includes(opt);
+            const count = counts?.[opt];
+            return (
+              <label
+                key={opt}
+                className="flex items-center gap-2 py-1 px-1 hover:bg-accent cursor-pointer select-none text-[10px] text-foreground font-medium truncate"
+              >
+                <input
+                  type="checkbox"
+                  checked={isChecked}
+                  onChange={() => toggle(opt)}
+                  className="h-3 w-3 rounded text-blue-600 focus:ring-blue-500 border-border cursor-pointer"
+                />
+                <span className="truncate flex-1" title={optionLabels?.[opt] ?? opt}>
+                  {optionLabels?.[opt] ?? opt}
+                  {optionHints?.[opt] && (
+                    <span className="block text-[9px] font-normal text-muted-foreground truncate">
+                      {optionHints[opt]}
+                    </span>
+                  )}
+                </span>
+                {count !== undefined && (
+                  <span className="text-[9px] text-muted-foreground font-semibold shrink-0 ml-1">
+                    ({count})
+                  </span>
+                )}
+              </label>
+            );
+          })}
+          {loading && (
+            <div role="status" className="flex items-center gap-2 py-2 px-1 text-[10px] text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+              Loading values…
+            </div>
+          )}
+          {!loading && visibleOptions.length === 0 && !includeBlank && !includeAvailable && (
+            <div className="py-2 px-3 text-xs text-muted-foreground italic">
+              No options found
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}

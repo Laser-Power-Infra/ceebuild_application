@@ -52,6 +52,9 @@ model DockerPartyName {
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
+  // Orders raised when this offer became a PO (A15). Linked by id; ON DELETE RESTRICT.
+  orders           Order[]
+
   @@map("docket-party-name")
 }
 
@@ -100,6 +103,8 @@ model MasterValue {
 model User {
   id             Int       @id @default(autoincrement())
   username       String    @unique
+  // Sign-in email. Self sign-ups always have one; older accounts get it via `npm run users -- set-email`.
+  email          String?   @unique
   name           String
   // 'Admin' | 'User' | 'Viewer'
   role           String    @default("User")
@@ -112,4 +117,230 @@ model User {
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
   @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// A15: order-to-execution module. An order starts when an offer (docket) becomes a PO.
+// New tables use real types and foreign keys among themselves.
+// ---------------------------------------------------------------------------
+
+model Order {
+  id            Int             @id @default(autoincrement())
+  docketId      Int             @map("docket_id")
+  docket        DockerPartyName @relation(fields: [docketId], references: [id], onDelete: Restrict)
+  // Docket number when the order was created (the docket can be renumbered later).
+  docketNo      String?         @map("docket_no")
+  poNumber      String          @unique @map("po_number")
+  poDate        DateTime        @map("po_date") @db.Date
+  client        String?
+  remarks       String?
+  createdById   Int?            @map("created_by_id")
+  createdByName String?         @map("created_by_name")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+
+  lines                OrderLine[]
+  bomUploads           BomUpload[]
+  bomPieces            BomPiece[]
+  galvChallans         GalvChallan[]
+  inspections          Inspection[]
+  dispatchInstructions DispatchInstruction[]
+  dispatches           Dispatch[]
+
+  @@index([docketId])
+  @@map("orders")
+}
+
+// Snapshot of the quotation lines at PO time, so later quotation edits do not change the order.
+// Text fields copy iteam-table as-is.
+model OrderLine {
+  id             Int     @id @default(autoincrement())
+  orderId        Int     @map("order_id")
+  order          Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sourceItemId   Int?    @map("source_item_id")
+  itemName       String? @map("item_name")
+  ourItemName    String? @map("our_item_name")
+  uom            String?
+  qty            String?
+  price          String?
+  weightPerPiece String? @map("weight_per_piece")
+
+  @@index([orderId])
+  @@map("order_lines")
+}
+
+// One uploaded client BOM file. The order's current BOM is its latest upload.
+model BomUpload {
+  id              Int       @id @default(autoincrement())
+  orderId         Int       @map("order_id")
+  order           Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fileName        String    @map("file_name")
+  s3Key           String?   @map("s3_key")
+  sheetName       String?   @map("sheet_name")
+  // Which spreadsheet column fed each piece field, e.g. {"markNo":"MARK NO","lengthMm":"LENGTH"}.
+  columnMap       Json      @map("column_map")
+  rowCount        Int       @default(0) @map("row_count")
+  // DRAFT or CORRECT
+  status          String    @default("DRAFT")
+  uploadedById    Int?      @map("uploaded_by_id")
+  uploadedByName  String?   @map("uploaded_by_name")
+  confirmedById   Int?      @map("confirmed_by_id")
+  confirmedByName String?   @map("confirmed_by_name")
+  confirmedAt     DateTime? @map("confirmed_at")
+  // Set when an Admin confirms a BOM that still has flags.
+  overrideNote    String?   @map("override_note")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  pieces BomPiece[]
+
+  @@index([orderId])
+  @@map("bom_uploads")
+}
+
+// One BOM row: a mark (piece) with section, length and quantity, plus check flags.
+model BomPiece {
+  id                 Int       @id @default(autoincrement())
+  uploadId           Int       @map("upload_id")
+  upload             BomUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  orderId            Int       @map("order_id")
+  order              Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  rowNo              Int       @map("row_no")
+  markNo             String?   @map("mark_no")
+  description        String?
+  section            String?
+  // Normalised section used to look up section_master, e.g. "ISMC100X50".
+  sectionKey         String?   @map("section_key")
+  lengthMm           Int?      @map("length_mm")
+  qtyPerSet          Decimal?  @map("qty_per_set") @db.Decimal(14, 3)
+  sets               Decimal?  @db.Decimal(14, 3)
+  totalQty           Decimal?  @map("total_qty") @db.Decimal(14, 3)
+  kgPerM             Decimal?  @map("kg_per_m") @db.Decimal(10, 3)
+  unitWtKg           Decimal?  @map("unit_wt_kg") @db.Decimal(14, 3)
+  totalWtKg          Decimal?  @map("total_wt_kg") @db.Decimal(16, 3)
+  // The spreadsheet row as read, for columns not mapped to a field.
+  raw                Json?
+  flagMarkLength     Boolean   @default(false) @map("flag_mark_length")
+  flagBlankQty       Boolean   @default(false) @map("flag_blank_qty")
+  flagKgm            Boolean   @default(false) @map("flag_kgm")
+  flagFractionalSets Boolean   @default(false) @map("flag_fractional_sets")
+  flagSection        Boolean   @default(false) @map("flag_section")
+  issues             String?
+
+  @@index([uploadId])
+  @@index([orderId, markNo])
+  @@map("bom_pieces")
+}
+
+// Approved sections from the GTP (e.g. SBPDCL letter 2333 dt 28-07-2025), with standard kg/m.
+model SectionMaster {
+  id         Int      @id @default(autoincrement())
+  sectionKey String   @unique @map("section_key")
+  label      String
+  kgPerM     Decimal  @map("kg_per_m") @db.Decimal(10, 3)
+  grade      String?
+  approved   Boolean  @default(true)
+  source     String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("section_master")
+}
+
+// Galvanising job-work challan, out to the galvaniser or back in.
+model GalvChallan {
+  id            Int      @id @default(autoincrement())
+  orderId       Int      @map("order_id")
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  challanNo     String   @map("challan_no")
+  // OUT or IN
+  direction     String
+  challanDate   DateTime @map("challan_date") @db.Date
+  jobWorker     String?  @map("job_worker")
+  blackWtKg     Decimal? @map("black_wt_kg") @db.Decimal(14, 3)
+  galvWtKg      Decimal? @map("galv_wt_kg") @db.Decimal(14, 3)
+  remarks       String?
+  createdById   Int?     @map("created_by_id")
+  createdByName String?  @map("created_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  lines GalvChallanLine[]
+
+  @@unique([orderId, challanNo, direction])
+  @@map("galv_challans")
+}
+
+model GalvChallanLine {
+  id        Int         @id @default(autoincrement())
+  challanId Int         @map("challan_id")
+  challan   GalvChallan @relation(fields: [challanId], references: [id], onDelete: Cascade)
+  markNo    String      @map("mark_no")
+  pieces    Int
+
+  @@index([challanId])
+  @@map("galv_challan_lines")
+}
+
+// Inspection call / material clearance (MC).
+model Inspection {
+  id             Int      @id @default(autoincrement())
+  orderId        Int      @map("order_id")
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  inspectionNo   String   @map("inspection_no")
+  mcNo           String?  @map("mc_no")
+  inspectionDate DateTime @map("inspection_date") @db.Date
+  piecesCleared  Int?     @map("pieces_cleared")
+  wtClearedKg    Decimal? @map("wt_cleared_kg") @db.Decimal(14, 3)
+  remarks        String?
+  createdById    Int?     @map("created_by_id")
+  createdByName  String?  @map("created_by_name")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([orderId])
+  @@map("inspections")
+}
+
+// Dispatch instruction (DI) from the client.
+model DispatchInstruction {
+  id            Int      @id @default(autoincrement())
+  orderId       Int      @map("order_id")
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  diNo          String   @map("di_no")
+  diDate        DateTime @map("di_date") @db.Date
+  pieces        Int?
+  wtKg          Decimal? @map("wt_kg") @db.Decimal(14, 3)
+  remarks       String?
+  createdById   Int?     @map("created_by_id")
+  createdByName String?  @map("created_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  dispatches Dispatch[]
+
+  @@unique([orderId, diNo])
+  @@map("dispatch_instructions")
+}
+
+model Dispatch {
+  id            Int                  @id @default(autoincrement())
+  orderId       Int                  @map("order_id")
+  order         Order                @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  diId          Int?                 @map("di_id")
+  di            DispatchInstruction? @relation(fields: [diId], references: [id], onDelete: SetNull)
+  invoiceNo     String?              @map("invoice_no")
+  lrNo          String?              @map("lr_no")
+  vehicleNo     String?              @map("vehicle_no")
+  dispatchDate  DateTime             @map("dispatch_date") @db.Date
+  pieces        Int?
+  wtKg          Decimal?             @map("wt_kg") @db.Decimal(14, 3)
+  remarks       String?
+  createdById   Int?                 @map("created_by_id")
+  createdByName String?              @map("created_by_name")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  @@index([orderId])
+  @@index([diId])
+  @@map("dispatches")
 }
