@@ -29,7 +29,7 @@
  *
  * Uses DATABASE_URL from .env. Requires the 20261102090000_add_users_and_audit_user migration.
  */
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from './db';
 import * as fs from 'fs';
 import { hashPassword, generatePassword, MIN_PASSWORD_LENGTH } from '../src/lib/auth/password';
 

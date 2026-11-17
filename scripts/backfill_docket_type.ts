@@ -4,25 +4,25 @@
  * NOT run automatically. Review the dry run first, then apply deliberately.
  *
  *   Dry run (default, read-only):
- *     node scripts/backfill_docket_type.js
+ *     npx ts-node scripts/backfill_docket_type.ts
  *
  *   Apply one type to ALL blank dockets (only if that is really correct):
- *     node scripts/backfill_docket_type.js --apply --default Tender
+ *     npx ts-node scripts/backfill_docket_type.ts --apply --default Tender
  *
  *   Apply per-docket values from a CSV with header "docketNoQtnNo,type"
  *   (export the dry-run list, have sales fill in the type, then apply):
- *     node scripts/backfill_docket_type.js --csv-out blank_types.csv      # write the list to fill in
- *     node scripts/backfill_docket_type.js --apply --csv blank_types.csv  # apply the filled-in file
+ *     npx ts-node scripts/backfill_docket_type.ts --csv-out blank_types.csv      # write the list to fill in
+ *     npx ts-node scripts/backfill_docket_type.ts --apply --csv blank_types.csv  # apply the filled-in file
  *
  * Every change is written to the edit-logs audit table (field "type", user "backfill script").
  * Valid types: Tender, Purchase.
  */
-const fs = require('fs');
-const { PrismaClient } = require('@prisma/client');
+import * as fs from 'fs';
+import { PrismaClient } from './db';
 
 const VALID = ['Tender', 'Purchase'];
 const args = process.argv.slice(2);
-const flag = (name) => {
+const flag = (name: string) => {
   const i = args.indexOf(`--${name}`);
   if (i === -1) return undefined;
   const v = args[i + 1];
@@ -34,18 +34,18 @@ const defaultType = flag('default');
 const csvIn = flag('csv');
 const csvOut = flag('csv-out');
 
-function normType(t) {
+function normType(t: unknown) {
   if (typeof t !== 'string') return null;
   return VALID.find((v) => v.toLowerCase() === t.trim().toLowerCase()) || null;
 }
 
-function parseCsv(path) {
+function parseCsv(path: string) {
   const lines = fs.readFileSync(path, 'utf-8').split(/\r?\n/).filter((l) => l.trim());
-  const header = lines.shift().split(',').map((h) => h.trim());
+  const header = (lines.shift() ?? '').split(',').map((h) => h.trim());
   const di = header.indexOf('docketNoQtnNo');
   const ti = header.indexOf('type');
   if (di === -1 || ti === -1) throw new Error('CSV header must contain docketNoQtnNo,type');
-  const map = new Map();
+  const map = new Map<string, string>();
   for (const line of lines) {
     const cols = line.split(',');
     const dn = (cols[di] || '').trim();
@@ -78,12 +78,13 @@ async function main() {
       console.log(`Wrote ${blanks.length} rows to ${csvOut}. Fill the "type" column with Tender or Purchase.`);
     }
 
-    let plan = [];
+    let plan: { d: (typeof blanks)[number]; type: string }[] = [];
     if (typeof csvIn === 'string') {
       const map = parseCsv(csvIn);
-      plan = blanks
-        .filter((d) => d.docketNoQtnNo && map.has(d.docketNoQtnNo.trim().toUpperCase()))
-        .map((d) => ({ d, type: map.get(d.docketNoQtnNo.trim().toUpperCase()) }));
+      plan = blanks.flatMap((d) => {
+        const type = map.get((d.docketNoQtnNo || '').trim().toUpperCase());
+        return type ? [{ d, type }] : [];
+      });
     } else if (defaultType !== undefined) {
       const t = normType(defaultType);
       if (!t) throw new Error(`--default must be one of ${VALID.join(', ')}`);
@@ -111,7 +112,7 @@ async function main() {
             fieldName: 'type',
             oldValue: d.type || '',
             newValue: type,
-            userName: 'backfill script (scripts/backfill_docket_type.js)',
+            userName: 'backfill script (scripts/backfill_docket_type.ts)',
           },
         }),
       ]);

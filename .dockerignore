@@ -33,7 +33,7 @@ terms_conditions.csv
 
 # Logs
 *.log
-logs/
+/logs/
 
 # Test coverage
 coverage/
