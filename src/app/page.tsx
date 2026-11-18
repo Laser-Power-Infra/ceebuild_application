@@ -208,6 +208,8 @@ export default function Dashboard() {
   const [confirmState, setConfirmState] = useState<ConfirmDialogOptions | null>(null);
   // In-app attachment preview (eye icon) — keeps the file inside the dashboard instead of a new tab
   const [previewAttachment, setPreviewAttachment] = useState<{ key: string; name: string } | null>(null);
+  // Docket whose attachment list popup is open (eye button beside "+ Attach Files")
+  const [attachmentListDocId, setAttachmentListDocId] = useState<number | null>(null);
 
   // Master Values state for Admin Management
   const [masterList, setMasterList] = useState<MasterValueItem[]>([]);
@@ -3889,66 +3891,22 @@ export default function Dashboard() {
                                       }}
                                     />
                                   </label>
-                                </div>
-
-                                <div className="flex flex-col gap-1 max-h-[85px] overflow-y-auto">
-                                  {parseAttachments(doc.attachments).map((att, attIdx) => {
-                                    const displayName = attachmentDisplayName(att);
-
+                                  {(() => {
+                                    const attCount = parseAttachments(doc.attachments).length;
                                     return (
-                                      <div key={attIdx} className="flex items-center justify-between bg-white border border-emerald-200 rounded px-1.5 py-0.5 text-[11px] shadow-2xs">
-                                        <span
-                                          className="flex items-center space-x-1 text-emerald-800 font-bold truncate max-w-[95px]"
-                                          title={displayName}
-                                        >
-                                          <File className="w-2.5 h-2.5 text-emerald-600 shrink-0" />
-                                          <span className="truncate">{displayName}</span>
-                                        </span>
-                                        <button
-                                          type="button"
-                                          onClick={() => setPreviewAttachment({ key: att, name: displayName })}
-                                          className="text-emerald-600 hover:text-emerald-800 ml-auto p-0.5"
-                                          title="View"
-                                          aria-label={`View ${displayName}`}
-                                        >
-                                          <Eye className="w-3 h-3" />
-                                        </button>
-                                        <a
-                                          href={getAttachmentUrl(att, true)}
-                                          download={displayName}
-                                          className="text-sky-600 hover:text-sky-800 p-0.5"
-                                          title="Download"
-                                          aria-label={`Download ${displayName}`}
-                                        >
-                                          <Download className="w-3 h-3" />
-                                        </a>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setConfirmState({
-                                              title: 'Remove attachment?',
-                                              message: (
-                                                <>
-                                                  Remove <strong>&quot;{displayName}&quot;</strong> from docket{' '}
-                                                  {doc.docketNoQtnNo || '#' + doc.id}?
-                                                </>
-                                              ),
-                                              confirmLabel: 'Remove',
-                                              onConfirm: () => {
-                                                const currentAtts = parseAttachments(doc.attachments);
-                                                const updatedAtts = currentAtts.filter((_, i) => i !== attIdx);
-                                                return handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
-                                              },
-                                            });
-                                          }}
-                                          className="text-rose-500 hover:text-rose-700 font-bold ml-1 p-0.5"
-                                          title="Remove Attachment"
-                                        >
-                                          <X className="w-2.5 h-2.5" />
-                                        </button>
-                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setAttachmentListDocId(doc.id)}
+                                        disabled={attCount === 0}
+                                        className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-1.5 py-0.5 text-[10px] font-extrabold text-emerald-700 shadow-2xs transition-all hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                        title={attCount === 0 ? 'No attachments' : `View ${attCount} attachment${attCount > 1 ? 's' : ''}`}
+                                        aria-label="View attachments"
+                                      >
+                                        <Eye className="w-3 h-3" />
+                                        <span>{attCount}</span>
+                                      </button>
                                     );
-                                  })}
+                                  })()}
                                 </div>
                               </div>
                             </td>
@@ -5905,6 +5863,113 @@ export default function Dashboard() {
         onConfirm={confirmState?.onConfirm || (() => {})}
         onClose={() => setConfirmState(null)}
       />
+
+      {(() => {
+        const listDoc = attachmentListDocId != null ? dockets.find((d) => d.id === attachmentListDocId) : null;
+        if (!listDoc) return null;
+        const atts = parseAttachments(listDoc.attachments);
+        const closeList = () => setAttachmentListDocId(null);
+        return (
+          <div
+            className="fixed inset-0 z-[55] flex items-center justify-center bg-slate-900/60 p-4"
+            onClick={closeList}
+            onKeyDown={(e) => e.key === 'Escape' && closeList()}
+            role="presentation"
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Attachments"
+              className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <Paperclip className="h-4 w-4 shrink-0 text-emerald-600" />
+                  <h2 className="truncate text-sm font-extrabold text-slate-900">
+                    Attachments — {listDoc.docketNoQtnNo || '#' + listDoc.id}
+                  </h2>
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700">
+                    {atts.length}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={closeList}
+                  aria-label="Close attachments"
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex-1 space-y-1.5 overflow-y-auto p-3">
+                {atts.length === 0 ? (
+                  <p className="py-6 text-center text-xs font-bold text-slate-400">No attachments</p>
+                ) : (
+                  atts.map((att, attIdx) => {
+                    const displayName = attachmentDisplayName(att);
+                    return (
+                      <div
+                        key={`${att}-${attIdx}`}
+                        className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50/40 px-2.5 py-1.5 text-xs"
+                      >
+                        <File className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                        <span className="min-w-0 flex-1 truncate font-bold text-emerald-900" title={displayName}>
+                          {displayName}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPreviewAttachment({ key: att, name: displayName })}
+                          className="rounded p-1 text-emerald-600 hover:bg-emerald-100 hover:text-emerald-800"
+                          title="View"
+                          aria-label={`View ${displayName}`}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                        </button>
+                        <a
+                          href={getAttachmentUrl(att, true)}
+                          download={displayName}
+                          className="rounded p-1 text-sky-600 hover:bg-sky-100 hover:text-sky-800"
+                          title="Download"
+                          aria-label={`Download ${displayName}`}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </a>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setConfirmState({
+                              title: 'Remove attachment?',
+                              message: (
+                                <>
+                                  Remove <strong>&quot;{displayName}&quot;</strong> from docket{' '}
+                                  {listDoc.docketNoQtnNo || '#' + listDoc.id}?
+                                </>
+                              ),
+                              confirmLabel: 'Remove',
+                              onConfirm: () => {
+                                const currentAtts = parseAttachments(listDoc.attachments);
+                                const updatedAtts = currentAtts.filter((_, i) => i !== attIdx);
+                                return handleDocketFieldUpdate(listDoc.id, 'attachments' as any, JSON.stringify(updatedAtts));
+                              },
+                            });
+                          }}
+                          className="rounded p-1 text-rose-500 hover:bg-rose-100 hover:text-rose-700"
+                          title="Remove Attachment"
+                          aria-label={`Remove ${displayName}`}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {previewAttachment && (
         <div
