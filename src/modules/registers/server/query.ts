@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { fetchFacet, fetchPage, plain, type FieldSql, type TableSpec } from '@/lib/serverTable';
 import type { TablePage, TableQuery } from '@/components/data-table/types';
-import type { RegisterKey, RegisterRow } from '../columns';
+import { REGISTER_KEYS, type RegisterKey, type RegisterRow } from '../columns';
 
 const sql = Prisma.sql;
 
@@ -98,7 +98,8 @@ const DEFS: Record<RegisterKey, RegisterDef> = {
 };
 
 export function isRegisterKey(k: unknown): k is RegisterKey {
-  return typeof k === 'string' && k in DEFS;
+  // Own keys only: `k in DEFS` would also accept inherited names like 'constructor'.
+  return typeof k === 'string' && (REGISTER_KEYS as readonly string[]).includes(k);
 }
 
 /** Spec of one register; scoped to one order when `orderId` is given (order page), else all orders (/execution). */

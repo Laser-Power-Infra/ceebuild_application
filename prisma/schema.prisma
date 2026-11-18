@@ -35,7 +35,8 @@ model ItemTable {
 
 model DockerPartyName {
   id               Int      @id @default(autoincrement())
-  docketNoQtnNo    String?  @map("docket_no_qtn_no")
+  // Stored trimmed + upper-case (normalizeDocketNo); unique so two saves can't get the same number.
+  docketNoQtnNo    String?  @unique @map("docket_no_qtn_no")
   partyName        String?  @map("party_name")
   address          String?
   state            String?

@@ -24,7 +24,7 @@ const ALLOWED_OUR_ITEM_NAMES = [
 
 const ALLOWED_TYPES_OF_ITEM = ['CHANNEL', 'ROD', 'PIPE', 'NONE'];
 
-import { getGroqApiKey, saveGroqApiKeyToDb } from '@/lib/groqHelper';
+import { getGroqApiKey } from '@/lib/groqHelper';
 
 export async function POST(req: Request) {
   const auth = await requireUser(EDITOR_ROLES);
@@ -33,36 +33,35 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { docketNoQtnNo, itemIds, forceAll, apiKey: customApiKey } = body;
+    const { docketNoQtnNo, itemIds, forceAll } = body;
 
-    const apiKey = await getGroqApiKey(customApiKey);
-    if (customApiKey && customApiKey.startsWith('gsk_')) {
-      await saveGroqApiKeyToDb(customApiKey);
-    }
+    const apiKey = getGroqApiKey();
     if (!apiKey) {
       return NextResponse.json(
         {
-          error:
-            'Groq API Key missing. Please set GROQ_API_KEY in your .env file or provide it in the request.',
+          error: 'Groq API Key missing. Ask the administrator to set GROQ_API_KEY in the server .env file.',
         },
         { status: 400 }
       );
     }
 
     let candidateItems: any[] = [];
-    if (Array.isArray(itemIds) && itemIds.length > 0) {
+    const ids = Array.isArray(itemIds) ? itemIds.map(Number).filter((n) => Number.isInteger(n) && n > 0) : [];
+    const docketNo = typeof docketNoQtnNo === 'string' ? docketNoQtnNo.trim() : '';
+    if (ids.length > 0) {
       candidateItems = await prisma.itemTable.findMany({
-        where: { id: { in: itemIds } },
+        where: { id: { in: ids } },
       });
-    } else if (docketNoQtnNo && docketNoQtnNo.trim()) {
+    } else if (docketNo) {
       candidateItems = await prisma.itemTable.findMany({
-        where: { docketNoQtnNo: docketNoQtnNo.trim() },
+        where: { docketNoQtnNo: { equals: docketNo, mode: 'insensitive' } },
       });
     } else {
-      candidateItems = await prisma.itemTable.findMany({
-        take: 500,
-        orderBy: { id: 'asc' },
-      });
+      // Never fall back to "all items": that would re-classify unrelated dockets.
+      return NextResponse.json(
+        { error: 'A docket number (or item ids) is required for AI autofill.' },
+        { status: 400 }
+      );
     }
 
     const eligibleItems: any[] = [];
@@ -304,7 +303,7 @@ ITEM_ID: [id] | TYPE OF ITEM: [Value] | Our item Name: [Value]`;
               return NextResponse.json(
                 {
                   error:
-                    'Your Groq API Key is invalid or expired. Please generate a new free API key at https://console.groq.com/keys and update your GROQ_API_KEY in .env or enter it in the dashboard.',
+                    'Your Groq API Key is invalid or expired. Please generate a new free API key at https://console.groq.com/keys and ask the administrator to update GROQ_API_KEY in the server .env file.',
                 },
                 { status: 401 }
               );
@@ -376,27 +375,28 @@ ITEM_ID: [id] | TYPE OF ITEM: [Value] | Our item Name: [Value]`;
             }
           }
 
-          if (itemId) {
-            // Update Database record
-            const updatedItem = await prisma.itemTable.update({
-              where: { id: itemId },
-              data: {
-                ourItemName: finalOurItemName,
-                typeOfItem: finalTypeOfItem,
-              },
-            });
-
-            // Log AI Edit
-            await prisma.editLog.create({
-              data: {
-                tableName: 'iteam-table',
-                recordId: itemId,
-                fieldName: 'AI_AUTOFILL',
-                oldValue: 'Blank / Unclassified',
-                newValue: `Set Our item Name: "${finalOurItemName}", Type: "${finalTypeOfItem || 'N/A'}" (by Groq AI)`,
-                ...auditUser(user),
-              },
-            });
+          // Only items of this batch may be changed: the model can echo or invent other ids.
+          const original = batch.find((b: any) => b.id === itemId);
+          if (original && !updatedItemsResults.some((u) => u.id === itemId)) {
+            const [updatedItem] = await prisma.$transaction([
+              prisma.itemTable.update({
+                where: { id: itemId },
+                data: {
+                  ourItemName: finalOurItemName,
+                  typeOfItem: finalTypeOfItem,
+                },
+              }),
+              prisma.editLog.create({
+                data: {
+                  tableName: 'iteam-table',
+                  recordId: itemId,
+                  fieldName: 'AI_AUTOFILL',
+                  oldValue: `Our item Name: "${original.ourItemName || ''}", Type: "${original.typeOfItem || ''}"`,
+                  newValue: `Set Our item Name: "${finalOurItemName}", Type: "${finalTypeOfItem || 'N/A'}" (by Groq AI)`,
+                  ...auditUser(user),
+                },
+              }),
+            ]);
 
             updatedItemsResults.push(updatedItem);
           }

@@ -39,7 +39,7 @@ function parseKgm(v: unknown) {
   return n;
 }
 
-/** Add or replace by match key; re-checks every draft BOM. */
+/** Add or replace by match key; then (after commit) re-checks every draft BOM. */
 export async function upsertSection(input: Record<string, unknown>, user: AuthUser) {
   const label = String(input.label ?? '').trim().slice(0, 100);
   const key = sectionKey(label);
@@ -51,7 +51,7 @@ export async function upsertSection(input: Record<string, unknown>, user: AuthUs
     approved: input.approved !== false && input.approved !== 'No',
     source: String(input.source ?? '').trim().slice(0, 200) || null,
   };
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const before = await tx.sectionMaster.findUnique({ where: { sectionKey: key } });
     const row = await tx.sectionMaster.upsert({ where: { sectionKey: key }, create: { sectionKey: key, ...data }, update: data });
     await tx.editLog.create({
@@ -64,14 +64,15 @@ export async function upsertSection(input: Record<string, unknown>, user: AuthUs
         ...auditUser(user),
       },
     });
-    await recheckOpenUploads(tx);
     return { id: row.id };
-  }, { timeout: 60_000 });
+  });
+  await recheckOpenUploads(); // after commit: one short transaction per draft BOM
+  return result;
 }
 
 export async function updateSectionField(id: number, field: string, value: string, user: AuthUser) {
   if (!(EDITABLE_SECTION_FIELDS as readonly string[]).includes(field)) throw new UserError('This column cannot be edited.');
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const row = await tx.sectionMaster.findUnique({ where: { id } });
     if (!row) throw new UserError('Section not found.');
     const text = value.trim();
@@ -90,20 +91,22 @@ export async function updateSectionField(id: number, field: string, value: strin
     await tx.sectionMaster.update({ where: { id }, data });
     const old = field === 'approved' ? (row.approved ? 'Yes' : 'No') : String((row as Record<string, unknown>)[field] ?? '');
     await tx.editLog.create({ data: { tableName: 'section_master', recordId: id, fieldName: field, oldValue: old, newValue: text, ...auditUser(user) } });
-    await recheckOpenUploads(tx);
     return { id };
-  }, { timeout: 60_000 });
+  });
+  await recheckOpenUploads();
+  return result;
 }
 
 export async function deleteSection(id: number, user: AuthUser) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const row = await tx.sectionMaster.findUnique({ where: { id } });
     if (!row) throw new UserError('Section not found.');
     await tx.sectionMaster.delete({ where: { id } });
     await tx.editLog.create({ data: { tableName: 'section_master', recordId: id, fieldName: 'DELETED', oldValue: JSON.stringify(row), newValue: null, ...auditUser(user) } });
-    await recheckOpenUploads(tx);
     return { id };
-  }, { timeout: 60_000 });
+  });
+  await recheckOpenUploads();
+  return result;
 }
 
 /**
@@ -142,7 +145,7 @@ export async function importSections(buffer: Buffer, fileName: string, user: Aut
   }
   if (rows.length === 0) throw new UserError('No valid section rows found.');
 
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     let added = 0;
     let updated = 0;
     for (const s of rows) {
@@ -155,7 +158,8 @@ export async function importSections(buffer: Buffer, fileName: string, user: Aut
     await tx.editLog.create({
       data: { tableName: 'section_master', recordId: 0, fieldName: 'IMPORT', oldValue: null, newValue: JSON.stringify({ fileName, added, updated, skippedRows: skipped }), ...auditUser(user) },
     });
-    await recheckOpenUploads(tx);
     return { added, updated, skipped };
   }, { timeout: 120_000 });
+  await recheckOpenUploads();
+  return result;
 }

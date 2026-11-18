@@ -1,24 +1,10 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
+import { nextDocketNumber } from '@/lib/docketNumber';
 
+// Only a suggestion for the form; POST /api/dockets re-checks and renumbers if it was taken meanwhile.
 export async function GET() {
   try {
-    const latest = await prisma.dockerPartyName.findFirst({
-      where: { docketNoQtnNo: { startsWith: 'CEE-' } },
-      orderBy: { id: 'desc' },
-      select: { docketNoQtnNo: true },
-    });
-
-    let nextNumber = 518;
-    if (latest && latest.docketNoQtnNo) {
-      const match = latest.docketNoQtnNo.match(/\d+/);
-      if (match) {
-        nextNumber = parseInt(match[0], 10) + 1;
-      }
-    }
-
-    const formattedDocketNo = `CEE-${String(nextNumber).padStart(6, '0')}`;
-    return NextResponse.json({ nextDocketNo: formattedDocketNo, nextNumber });
+    return NextResponse.json(await nextDocketNumber());
   } catch (error) {
     console.error('Error generating next docket number:', error);
     return NextResponse.json({ error: 'Failed to generate next docket number' }, { status: 500 });

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { normalizeDocketNo } from '@/lib/dockets';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -24,7 +25,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
       const rawItems = await prisma.itemTable.findMany({
         where: {
           docketNoQtnNo: {
-            equals: docket.docketNoQtnNo.trim(),
+            equals: normalizeDocketNo(docket.docketNoQtnNo),
             mode: 'insensitive',
           },
         },

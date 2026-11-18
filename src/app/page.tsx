@@ -157,18 +157,23 @@ const TABLE_LABELS: Record<string, string> = {
 };
 
 // Lightweight auto-resizing text component that avoids browser thread locking
+// onSave may return a promise; resolving to false means the save failed and the cell reverts.
+type CellSaveHandler = (val: string) => unknown;
+
 function AutoResizeTextarea({
   defaultValue,
   onSave,
   onPaste,
   className = '',
   placeholder = '',
+  readOnly = false,
 }: {
   defaultValue: string;
-  onSave: (val: string) => void;
+  onSave: CellSaveHandler;
   onPaste?: (e: React.ClipboardEvent<HTMLTextAreaElement>) => void;
   className?: string;
   placeholder?: string;
+  readOnly?: boolean;
 }) {
   const [val, setVal] = useState(defaultValue || '');
 
@@ -176,15 +181,82 @@ function AutoResizeTextarea({
     setVal(defaultValue || '');
   }, [defaultValue]);
 
+  // Only save when the text differs from the current stored value, so leaving a cell never
+  // writes an old value over one that was pasted / applied by AI in the meantime.
+  const handleBlur = async () => {
+    const original = defaultValue || '';
+    if (readOnly || val === original) return;
+    const ok = await onSave(val);
+    if (ok === false) setVal(original);
+  };
+
   return (
     <textarea
       value={val}
       placeholder={placeholder}
+      readOnly={readOnly}
       onChange={(e) => setVal(e.target.value)}
-      onBlur={() => onSave(val)}
-      onPaste={onPaste}
+      onBlur={handleBlur}
+      onPaste={readOnly ? undefined : onPaste}
       rows={val && val.length > 35 ? 2 : 1}
       className={`w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-medium text-slate-900 focus:outline-none resize-y leading-snug transition-all ${className}`}
+    />
+  );
+}
+
+// Controlled single-line (or plain multi-line) cell: follows the stored value, saves on blur only when changed.
+function CellInput({
+  value,
+  onSave,
+  onPaste,
+  className = '',
+  readOnly = false,
+  multiline = false,
+  rows,
+}: {
+  value: string;
+  onSave: CellSaveHandler;
+  onPaste?: (e: React.ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
+  className?: string;
+  readOnly?: boolean;
+  multiline?: boolean;
+  rows?: number;
+}) {
+  const [val, setVal] = useState(value || '');
+
+  useEffect(() => {
+    setVal(value || '');
+  }, [value]);
+
+  const handleBlur = async () => {
+    const original = value || '';
+    if (readOnly || val === original) return;
+    const ok = await onSave(val);
+    if (ok === false) setVal(original);
+  };
+
+  if (multiline) {
+    return (
+      <textarea
+        value={val}
+        readOnly={readOnly}
+        rows={rows}
+        onChange={(e) => setVal(e.target.value)}
+        onBlur={handleBlur}
+        onPaste={readOnly ? undefined : onPaste}
+        className={className}
+      />
+    );
+  }
+  return (
+    <input
+      type="text"
+      value={val}
+      readOnly={readOnly}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={handleBlur}
+      onPaste={readOnly ? undefined : onPaste}
+      className={className}
     />
   );
 }
@@ -343,6 +415,8 @@ export default function Dashboard() {
 
   // Dockets
   const [dockets, setDockets] = useState<DockerParty[]>([]);
+  const docketsRef = useRef<DockerParty[]>(dockets);
+  docketsRef.current = dockets;
   const [docketsLoading, setDocketsLoading] = useState(false);
   const [docketFilters, setDocketFilters] = useState<{
     docketNoQtnNo: string[];
@@ -539,25 +613,27 @@ export default function Dashboard() {
     unitWtOfMemberKg: '',
   });
 
-  // User Groq API Key state (saved in localStorage)
-  const [userGroqApiKey, setUserGroqApiKey] = useState<string>('');
-  const [showApiKeyModal, setShowApiKeyModal] = useState<boolean>(false);
   const [structuralErrorMessage, setStructuralErrorMessage] = useState<string>('');
 
+  // Guards against slow responses overwriting newer ones (search/filter changes, skipped AI items).
+  const structuralRequestRef = useRef(0);
+  const reasoningRequestRef = useRef(0);
+  const itemsAbortRef = useRef<AbortController | null>(null);
+  const docketsAbortRef = useRef<AbortController | null>(null);
+  const logsAbortRef = useRef<AbortController | null>(null);
+  const docketItemsAbortRef = useRef<{ [docketNo: string]: AbortController }>({});
+
+  // The Groq key is server-side only now (AI routes ignore client keys); drop any key a browser saved earlier.
   useEffect(() => {
-    const savedKey = localStorage.getItem('groq_api_key');
-    if (savedKey) {
-      setUserGroqApiKey(savedKey);
-    }
+    try {
+      localStorage.removeItem('groq_api_key');
+    } catch {}
   }, []);
 
-  const saveUserGroqApiKey = (key: string) => {
-    setUserGroqApiKey(key);
-    localStorage.setItem('groq_api_key', key.trim());
-    showToast('Saved Groq API Key!');
-  };
-
   const fetchStructuralOptionsForItem = async (item: Item) => {
+    // Each call supersedes the previous one; a late answer for a skipped item is dropped.
+    const requestId = ++structuralRequestRef.current;
+    const isCurrent = () => requestId === structuralRequestRef.current;
     setStructuralLoading(true);
     setStructuralOptions([]);
     setSelectedStructuralOption(null);
@@ -569,8 +645,6 @@ export default function Dashboard() {
       unitWtOfMemberKg: '',
     });
 
-    const storedApiKey = userGroqApiKey || (typeof window !== 'undefined' ? localStorage.getItem('groq_api_key') || '' : '');
-
     try {
       const res = await fetch('/api/ai/structural', {
         method: 'POST',
@@ -578,11 +652,11 @@ export default function Dashboard() {
         body: JSON.stringify({
           itemId: item.id,
           itemNameParty: item.itemNameParty,
-          apiKey: storedApiKey,
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!isCurrent()) return;
       if (!res.ok || data.error) {
         setStructuralErrorMessage(data.error || 'Failed to fetch AI structural calculations');
       } else if (data.options && Array.isArray(data.options)) {
@@ -601,10 +675,11 @@ export default function Dashboard() {
         }
       }
     } catch (err: any) {
+      if (!isCurrent()) return;
       console.error('Error fetching structural options for item:', err);
       setStructuralErrorMessage(err.message || 'Failed to connect to Groq AI API');
     } finally {
-      setStructuralLoading(false);
+      if (isCurrent()) setStructuralLoading(false);
     }
   };
 
@@ -614,10 +689,16 @@ export default function Dashboard() {
 
     try {
       setStructuralLoading(true);
-      await handleItemFieldUpdate(currentItem.id, 'sectionMm', customStructuralForm.sectionMm);
-      await handleItemFieldUpdate(currentItem.id, 'sectionalWtKgMtr', customStructuralForm.sectionalWtKgMtr);
-      await handleItemFieldUpdate(currentItem.id, 'lengthInMtr', customStructuralForm.lengthInMtr);
-      await handleItemFieldUpdate(currentItem.id, 'unitWtOfMemberKg', customStructuralForm.unitWtOfMemberKg);
+      const structuralFields: Array<keyof typeof customStructuralForm> = [
+        'sectionMm',
+        'sectionalWtKgMtr',
+        'lengthInMtr',
+        'unitWtOfMemberKg',
+      ];
+      for (const f of structuralFields) {
+        const ok = await handleItemFieldUpdate(currentItem.id, f, customStructuralForm[f], currentItem.docketNoQtnNo);
+        if (!ok) return; // error toast already shown; stay on this item
+      }
 
       showToast(`Saved Structural Section for Item #${currentItem.id}!`);
 
@@ -655,9 +736,11 @@ export default function Dashboard() {
     setReasoningUserNote('');
     setReasoningLoading(true);
     setReasoningModalOpen(true);
+    // A late explanation for a previously opened item must not replace this one.
+    const requestId = ++reasoningRequestRef.current;
+    const isCurrent = () => requestId === reasoningRequestRef.current;
 
     try {
-      const storedApiKey = userGroqApiKey || (typeof window !== 'undefined' ? localStorage.getItem('groq_api_key') || '' : '');
       const res = await fetch('/api/ai/explain', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -665,11 +748,11 @@ export default function Dashboard() {
           itemNameParty,
           typeOfItem: typeOfItem || '',
           selectedCategory,
-          apiKey: storedApiKey,
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!isCurrent()) return;
       if (res.ok && data.reasoning) {
         setReasoningContent(data.reasoning);
         setReasoningUserNote(data.reasoning);
@@ -678,11 +761,12 @@ export default function Dashboard() {
         setReasoningUserNote(data.error || 'Categorized strictly based on raw item text specifications.');
       }
     } catch (err: any) {
+      if (!isCurrent()) return;
       console.error(err);
       setReasoningContent('Factual categorization based on raw item text specifications.');
       setReasoningUserNote('Factual categorization based on raw item text specifications.');
     } finally {
-      setReasoningLoading(false);
+      if (isCurrent()) setReasoningLoading(false);
     }
   };
 
@@ -719,6 +803,11 @@ export default function Dashboard() {
 
   // Handle Groq AI Categorization ("Autofill by AI")
   const handleAiAutofill = async (targetDocketNo?: string) => {
+    targetDocketNo = (targetDocketNo || '').trim() || undefined;
+    if (!targetDocketNo) {
+      showToast('Autofill by AI needs a docket number. Set the Docket / Qtn No (or filter Items to one docket) first.');
+      return;
+    }
     setAiProcessing(true);
     setAiProgressText(
       targetDocketNo
@@ -727,21 +816,20 @@ export default function Dashboard() {
     );
 
     try {
-      const storedApiKey = userGroqApiKey || (typeof window !== 'undefined' ? localStorage.getItem('groq_api_key') || '' : '');
       const res = await fetch('/api/ai/categorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          docketNoQtnNo: targetDocketNo || null,
-          apiKey: storedApiKey,
+          docketNoQtnNo: targetDocketNo,
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         throw new Error(data.error || 'AI categorization failed');
       }
 
+      let freshDocketItems: Item[] | null = null;
       if (data.updatedCount === 0) {
         showToast('AI Check Complete: No unclassified Manufacturing/Trading items found.');
       } else {
@@ -750,7 +838,7 @@ export default function Dashboard() {
         await fetchItems();
         await fetchDockets();
         if (targetDocketNo) {
-          await fetchItemsForDocket(targetDocketNo, true);
+          freshDocketItems = await fetchItemsForDocket(targetDocketNo, true);
         } else {
           // Force refresh all currently cached expanded dockets so item count is never 0
           Object.keys(docketItemsMap).forEach((dNo) => {
@@ -761,8 +849,10 @@ export default function Dashboard() {
 
       // Collect candidate items for Structural Calculator (MANUFACTURING/TRADING items with blank sectionMm)
       let candidates: Item[] = [];
-      if (targetDocketNo && docketItemsMap[targetDocketNo]) {
-        candidates = docketItemsMap[targetDocketNo].filter(
+      // docketItemsMap in this closure predates the AI update, so prefer the freshly fetched list.
+      const targetDocketItems = targetDocketNo ? freshDocketItems ?? docketItemsMap[targetDocketNo] : undefined;
+      if (targetDocketNo && targetDocketItems) {
+        candidates = targetDocketItems.filter(
           (it) =>
             (it.ourItemNot === 'MANUFACTURING' || it.ourItemNot === 'TRADING') &&
             (!it.sectionMm || it.sectionMm.trim() === '')
@@ -845,9 +935,13 @@ export default function Dashboard() {
         setNewMasterForm((prev) => ({ ...prev, value: '' }));
         fetchMasterValues();
         showToast(`Added new option to ${newMasterForm.type}!`);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(`Error: ${data.error || 'Failed to add option'}`);
       }
     } catch (err) {
       console.error(err);
+      showToast('Error: Failed to add option');
     }
   };
 
@@ -865,14 +959,18 @@ export default function Dashboard() {
         );
         fetchMasterValues();
         showToast(`Updated active state for option #${id}`);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(`Error: ${data.error || 'Failed to update option'}`);
       }
     } catch (err) {
       console.error(err);
+      showToast('Error: Failed to update option');
     }
   };
 
   // Edit value string for Master Value (Admin)
-  const handleUpdateMasterValue = async (id: number, newValue: string) => {
+  const handleUpdateMasterValue = async (id: number, newValue: string): Promise<boolean> => {
     try {
       const res = await fetch('/api/master-values', {
         method: 'PUT',
@@ -885,9 +983,15 @@ export default function Dashboard() {
         );
         fetchMasterValues();
         showToast(`Updated option #${id} value to "${newValue.trim()}"`);
+        return true;
       }
+      const data = await res.json().catch(() => ({}));
+      showToast(`Error: ${data.error || 'Failed to update option'}`);
+      return false;
     } catch (err) {
       console.error(err);
+      showToast('Error: Failed to update option');
+      return false;
     }
   };
 
@@ -954,6 +1058,9 @@ export default function Dashboard() {
 
   // Fetch Items
   const fetchItems = async () => {
+    itemsAbortRef.current?.abort();
+    const controller = new AbortController();
+    itemsAbortRef.current = controller;
     setItemsLoading(true);
     try {
       const params = new URLSearchParams();
@@ -978,22 +1085,27 @@ export default function Dashboard() {
       if (startDate) params.append('startDate', startDate);
       if (endDate) params.append('endDate', endDate);
 
-      const res = await fetch(`/api/items?${params.toString()}`);
+      const res = await fetch(`/api/items?${params.toString()}`, { signal: controller.signal });
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (data.items) {
         setItems(data.items);
         setItemTotalCount(data.totalCount || data.items.length);
         setItemTotalPages(data.totalPages || 1);
       }
     } catch (err) {
+      if (controller.signal.aborted) return;
       console.error(err);
     } finally {
-      setItemsLoading(false);
+      if (itemsAbortRef.current === controller) setItemsLoading(false);
     }
   };
 
   // Fetch Dockets
   const fetchDockets = async () => {
+    docketsAbortRef.current?.abort();
+    const controller = new AbortController();
+    docketsAbortRef.current = controller;
     setDocketsLoading(true);
     try {
       const params = new URLSearchParams();
@@ -1016,8 +1128,9 @@ export default function Dashboard() {
       if (startDate) params.append('startDate', startDate);
       if (endDate) params.append('endDate', endDate);
 
-      const res = await fetch(`/api/dockets?${params.toString()}`);
+      const res = await fetch(`/api/dockets?${params.toString()}`, { signal: controller.signal });
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (data.dockets) {
         setDockets(data.dockets);
         setDocketTotalCount(data.totalCount || data.dockets.length);
@@ -1028,26 +1141,40 @@ export default function Dashboard() {
         if (data.utilities) setUtilityOptions(data.utilities);
       }
     } catch (err) {
+      if (controller.signal.aborted) return;
       console.error(err);
     } finally {
-      setDocketsLoading(false);
+      if (docketsAbortRef.current === controller) setDocketsLoading(false);
     }
   };
 
   // Fetch Items belonging to a specific docket number for sub-table accordion
-  const fetchItemsForDocket = async (docketNo: string, forceRefresh: boolean = false) => {
-    if (!docketNo || (!forceRefresh && docketItemsMap[docketNo] && docketItemsMap[docketNo].length > 0)) return;
+  // Returns the fetched items (null when skipped, failed or superseded by a newer request).
+  const fetchItemsForDocket = async (docketNo: string, forceRefresh: boolean = false): Promise<Item[] | null> => {
+    if (!docketNo || (!forceRefresh && docketItemsMap[docketNo] && docketItemsMap[docketNo].length > 0)) return null;
+    docketItemsAbortRef.current[docketNo]?.abort();
+    const controller = new AbortController();
+    docketItemsAbortRef.current[docketNo] = controller;
     setLoadingDocketItems((prev) => ({ ...prev, [docketNo]: true }));
     try {
-      const res = await fetch(`/api/items?docketNoQtnNo=${encodeURIComponent(docketNo.trim())}&limit=200`);
+      const res = await fetch(`/api/items?docketNoQtnNo=${encodeURIComponent(docketNo.trim())}&limit=1000`, {
+        signal: controller.signal,
+      });
       const data = await res.json();
+      if (controller.signal.aborted) return null;
       if (data.items) {
         setDocketItemsMap((prev) => ({ ...prev, [docketNo]: data.items }));
+        return data.items as Item[];
       }
+      return null;
     } catch (err) {
-      console.error(err);
+      if (!controller.signal.aborted) console.error(err);
+      return null;
     } finally {
-      setLoadingDocketItems((prev) => ({ ...prev, [docketNo]: false }));
+      if (docketItemsAbortRef.current[docketNo] === controller) {
+        delete docketItemsAbortRef.current[docketNo];
+        setLoadingDocketItems((prev) => ({ ...prev, [docketNo]: false }));
+      }
     }
   };
 
@@ -1079,19 +1206,24 @@ export default function Dashboard() {
 
   // Fetch Edit Logs
   const fetchLogs = async () => {
+    logsAbortRef.current?.abort();
+    const controller = new AbortController();
+    logsAbortRef.current = controller;
     setLogsLoading(true);
     try {
       const params = new URLSearchParams();
       if (logTableFilter) params.append('tableName', logTableFilter);
       if (search) params.append('search', search);
 
-      const res = await fetch(`/api/logs?${params.toString()}`);
+      const res = await fetch(`/api/logs?${params.toString()}`, { signal: controller.signal });
       const data = await res.json();
+      if (controller.signal.aborted) return;
       if (data.logs) setLogs(data.logs);
     } catch (err) {
+      if (controller.signal.aborted) return;
       console.error(err);
     } finally {
-      setLogsLoading(false);
+      if (logsAbortRef.current === controller) setLogsLoading(false);
     }
   };
 
@@ -1170,10 +1302,22 @@ export default function Dashboard() {
     else if (activeTab === 'master') fetchMasterValues();
   }, [activeTab, search, startDate, endDate, itemFilters, docketFilters, logTableFilter, itemPage, itemLimit, docketPage, docketLimit]);
 
-  // General field updater for ItemTable
-  const handleItemFieldUpdate = async (id: number, field: keyof Item, value: string, docketNo?: string | null) => {
-    const currentItem = items.find((i) => i.id === id);
-    if (currentItem && currentItem[field] === value) return;
+  const readOnlyToast = () => showToast('Error: You have read-only access. Ask an Admin for edit rights.');
+
+  // General field updater for ItemTable. Resolves false when the save was refused or failed.
+  const handleItemFieldUpdate = async (
+    id: number,
+    field: keyof Item,
+    value: string,
+    docketNo?: string | null
+  ): Promise<boolean> => {
+    if (!canEdit) {
+      readOnlyToast();
+      return false;
+    }
+    const currentItem =
+      items.find((i) => i.id === id) || (docketNo ? (docketItemsMap[docketNo] || []).find((i) => i.id === id) : undefined);
+    if (currentItem && (currentItem[field] ?? '') === value) return true;
 
     try {
       const res = await fetch('/api/items', {
@@ -1183,24 +1327,58 @@ export default function Dashboard() {
       });
       if (res.ok) {
         setItems((prev) => prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)));
-        if (docketNo && docketItemsMap[docketNo]) {
-          setDocketItemsMap((prev) => ({
-            ...prev,
-            [docketNo]: prev[docketNo].map((item) => (item.id === id ? { ...item, [field]: value } : item)),
-          }));
-        }
+        // Keep every cached docket sub-table in sync (the item may be cached even when edited from the Items tab).
+        setDocketItemsMap((prev) => {
+          const copy = { ...prev };
+          Object.keys(copy).forEach((dNo) => {
+            if (copy[dNo].some((it) => it.id === id)) {
+              copy[dNo] = copy[dNo].map((it) => (it.id === id ? { ...it, [field]: value } : it));
+            }
+          });
+          return copy;
+        });
         showToast(`Item #${id} updated in DB by ${currentUser.name}`);
         if (activeTab === 'logs') fetchLogs();
+        return true;
       }
+      const data = await res.json().catch(() => ({}));
+      showToast(`Error: ${data.error || `Failed to update item #${id}`}`);
+      return false;
     } catch (err) {
       console.error(err);
+      showToast(`Error: Failed to update item #${id}`);
+      return false;
     }
   };
 
+  // Saves several item rows in parallel; returns how many failed and the first server error.
+  const persistItemUpdates = async (updates: Array<{ id: number; fields: Partial<Item> }>) => {
+    const results = await Promise.all(
+      updates.map(async (up): Promise<string | null> => {
+        try {
+          const res = await fetch('/api/items', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id: up.id, ...up.fields }),
+          });
+          if (res.ok) return null;
+          const data = await res.json().catch(() => ({}));
+          return data.error || `Failed to save item #${up.id}`;
+        } catch (err: any) {
+          return err?.message || `Failed to save item #${up.id}`;
+        }
+      })
+    );
+    const errors = results.filter((r): r is string => !!r);
+    return { failed: errors.length, firstError: errors[0] || null };
+  };
+
   // Multi-Cell Excel / Sheets Grid Paste for Expanded Docket Sub-Items
+  // visibleItemIds = ids of the rows as currently shown (after sub-table filters), in display order.
   const handleSubItemGridPaste = async (
     e: React.ClipboardEvent,
     docketNo: string,
+    visibleItemIds: number[],
     startIdx: number,
     startField: keyof Item
   ) => {
@@ -1211,6 +1389,10 @@ export default function Dashboard() {
     }
 
     e.preventDefault();
+    if (!canEdit) {
+      readOnlyToast();
+      return;
+    }
     const rawLines = pasteText.split(/\r?\n/).filter((l) => l.trim() !== '');
     if (rawLines.length === 0) return;
 
@@ -1239,11 +1421,14 @@ export default function Dashboard() {
     if (docketItems.length === 0) return;
 
     const updates: Array<{ id: number; fields: Partial<Item> }> = [];
+    // Target rows by id: the pasted block maps onto the visible rows, never onto hidden (filtered-out) ones.
+    const targetIds = visibleItemIds.slice(startIdx, startIdx + matrix.length);
 
     // Optimistically update docketItemsMap
-    const updatedDocketItems = docketItems.map((item, idx) => {
-      if (idx >= startIdx && idx < startIdx + matrix.length) {
-        const rowData = matrix[idx - startIdx];
+    const updatedDocketItems = docketItems.map((item) => {
+      const rowIdx = targetIds.indexOf(item.id);
+      if (rowIdx !== -1) {
+        const rowData = matrix[rowIdx];
         const updatedFields: any = {};
         rowData.forEach((val, c) => {
           const colIdx = startColIdx + c;
@@ -1273,24 +1458,17 @@ export default function Dashboard() {
       })
     );
 
-    showToast(`✨ Pasted ${matrix.length} rows across ${matrix[0]?.length || 1} columns into Docket ${docketNo} items!`);
-
-    // Persist all updates to DB via /api/items in parallel
-    try {
-      await Promise.all(
-        updates.map((up) =>
-          fetch('/api/items', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: up.id, ...up.fields }),
-          })
-        )
-      );
-      if (activeTab === 'logs') fetchLogs();
-    } catch (err) {
-      console.error('Error batch updating sub-items:', err);
-      showToast('Error persisting some pasted cells to database.');
+    // Persist all updates to DB via /api/items in parallel; only report success once saved.
+    const { failed, firstError } = await persistItemUpdates(updates);
+    if (failed === 0) {
+      showToast(`✨ Pasted ${updates.length} rows across ${matrix[0]?.length || 1} columns into Docket ${docketNo} items!`);
+    } else {
+      showToast(`Error: ${failed} of ${updates.length} pasted rows were not saved: ${firstError}`);
+      // Revert the optimistic update to what the database actually holds.
+      fetchItemsForDocket(docketNo, true);
+      fetchItems();
     }
+    if (activeTab === 'logs') fetchLogs();
   };
 
   // Multi-Cell Excel / Sheets Grid Paste for Main Item Table
@@ -1306,6 +1484,10 @@ export default function Dashboard() {
     }
 
     e.preventDefault();
+    if (!canEdit) {
+      readOnlyToast();
+      return;
+    }
     const rawLines = pasteText.split(/\r?\n/).filter((l) => l.trim() !== '');
     if (rawLines.length === 0) return;
 
@@ -1371,24 +1553,19 @@ export default function Dashboard() {
       return copy;
     });
 
-    showToast(`✨ Pasted ${matrix.length} rows across ${matrix[0]?.length || 1} columns into Items Table!`);
-
-    // Persist all updates to DB via /api/items in parallel
-    try {
-      await Promise.all(
-        updates.map((up) =>
-          fetch('/api/items', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ id: up.id, ...up.fields }),
-          })
-        )
-      );
-      if (activeTab === 'logs') fetchLogs();
-    } catch (err) {
-      console.error('Error batch updating main items:', err);
-      showToast('Error persisting some pasted cells to database.');
+    // Persist all updates to DB via /api/items in parallel; only report success once saved.
+    const { failed, firstError } = await persistItemUpdates(updates);
+    if (failed === 0) {
+      showToast(`✨ Pasted ${updates.length} rows across ${matrix[0]?.length || 1} columns into Items Table!`);
+    } else {
+      showToast(`Error: ${failed} of ${updates.length} pasted rows were not saved: ${firstError}`);
+      // Revert the optimistic update to what the database actually holds.
+      fetchItems();
+      Array.from(new Set(updates.map((u) => u.docketNo).filter((d): d is string => !!d))).forEach((dNo) => {
+        if (docketItemsMap[dNo]) fetchItemsForDocket(dNo, true);
+      });
     }
+    if (activeTab === 'logs') fetchLogs();
   };
 
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
@@ -1450,12 +1627,16 @@ export default function Dashboard() {
   };
 
   // General field updater for DockerPartyName
-  const handleDocketFieldUpdate = async (id: number, field: keyof DockerParty, value: string) => {
+  const handleDocketFieldUpdate = async (id: number, field: keyof DockerParty, value: string): Promise<boolean> => {
+    if (!canEdit) {
+      readOnlyToast();
+      return false;
+    }
     const currentDoc = dockets.find((d) => d.id === id);
-    if (currentDoc && currentDoc[field] === value) return;
+    if (currentDoc && (currentDoc[field] ?? '') === value) return true;
     if (field === 'type' && !isDocketType(value)) {
       showToast('Error: Type is required (Tender or Purchase).');
-      return;
+      return false;
     }
 
     try {
@@ -1478,12 +1659,15 @@ export default function Dashboard() {
         }
         showToast(`Docket Party #${id} updated in DB by ${currentUser.name}`);
         if (activeTab === 'logs') fetchLogs();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        showToast(`Error: ${data.error || 'Failed to update docket'}`);
+        return true;
       }
+      const data = await res.json().catch(() => ({}));
+      showToast(`Error: ${data.error || 'Failed to update docket'}`);
+      return false;
     } catch (err) {
       console.error(err);
+      showToast('Error: Failed to update docket');
+      return false;
     }
   };
 
@@ -1593,9 +1777,13 @@ export default function Dashboard() {
   };
 
   // General field updater for Terms
-  const handleTermFieldUpdate = async (id: number, field: keyof TermCondition, value: string) => {
+  const handleTermFieldUpdate = async (id: number, field: keyof TermCondition, value: string): Promise<boolean> => {
+    if (!canEdit) {
+      readOnlyToast();
+      return false;
+    }
     const currentTerm = terms.find((t) => t.id === id);
-    if (currentTerm && currentTerm[field] === value) return;
+    if (currentTerm && (currentTerm[field] ?? '') === value) return true;
 
     try {
       const res = await fetch('/api/terms', {
@@ -1607,9 +1795,15 @@ export default function Dashboard() {
         setTerms((prev) => prev.map((term) => (term.id === id ? { ...term, [field]: value } : term)));
         showToast(`Terms Option #${id} updated in DB`);
         fetchTerms();
+        return true;
       }
+      const data = await res.json().catch(() => ({}));
+      showToast(`Error: ${data.error || 'Failed to update terms option'}`);
+      return false;
     } catch (err) {
       console.error(err);
+      showToast('Error: Failed to update terms option');
+      return false;
     }
   };
 
@@ -1648,7 +1842,23 @@ export default function Dashboard() {
         const norm = normalizeHeader(cell || '');
         if (!norm) return;
 
-        if (
+        // Order matters: "Our item/Not" and "Our item Name" both contain "item", and "ouritemname"
+        // contains "itemname", so the specific "our item" headers are matched before the party item name.
+        if (norm.includes('ouritemnot') || norm.includes('mfgtrading') || norm.includes('ouritemornot')) {
+          tempMap[cIndex] = 'ourItemNot';
+          matchesCount++;
+        } else if (
+          norm.includes('ouritemname') ||
+          norm.includes('ouritem') ||
+          norm.includes('category') ||
+          norm.includes('standardname')
+        ) {
+          tempMap[cIndex] = 'ourItemName';
+          matchesCount++;
+        } else if (norm === 'typeofitem' || norm === 'itemtype') {
+          tempMap[cIndex] = 'typeOfItem';
+          matchesCount++;
+        } else if (
           norm.includes('itemnameparty') ||
           norm.includes('partyitemname') ||
           norm.includes('itemname') ||
@@ -1665,17 +1875,6 @@ export default function Dashboard() {
           matchesCount++;
         } else if (norm === 'qty' || norm.includes('quantity') || norm === 'quantities' || norm === 'nos') {
           tempMap[cIndex] = 'qty';
-          matchesCount++;
-        } else if (
-          norm.includes('ouritemnot') ||
-          norm.includes('mfgtrading') ||
-          norm.includes('ouritemornot') ||
-          norm.includes('type')
-        ) {
-          tempMap[cIndex] = 'ourItemNot';
-          matchesCount++;
-        } else if (norm.includes('ouritemname') || norm.includes('ouritem') || norm.includes('category') || norm.includes('standardname')) {
-          tempMap[cIndex] = 'ourItemName';
           matchesCount++;
         } else if (norm === 'size' || norm.includes('spec') || norm.includes('dimension')) {
           tempMap[cIndex] = 'size';
@@ -1913,7 +2112,9 @@ export default function Dashboard() {
         fetchItems();
         fetchNextDocketNo();
         showToast(
-          `Created Docket #${created.id} (${created.docketNoQtnNo}) with ${data.createdItemsCount || 0} items by ${currentUser.name}!`
+          data.renumbered
+            ? `Docket number ${data.requestedDocketNo} was taken; saved as ${created.docketNoQtnNo} (with ${data.createdItemsCount || 0} items).`
+            : `Created Docket #${created.id} (${created.docketNoQtnNo}) with ${data.createdItemsCount || 0} items by ${currentUser.name}!`
         );
       } else {
         const data = await res.json().catch(() => ({}));
@@ -1921,6 +2122,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error(err);
+      showToast('Error: Failed to create docket');
     }
   };
 
@@ -1956,9 +2158,13 @@ export default function Dashboard() {
           fetchItemsForDocket(targetDocketNo, true);
         }
         showToast(`Created Item #${created.id} under Docket ${targetDocketNo || 'N/A'}!`);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(`Error: ${data.error || 'Failed to create item'}`);
       }
     } catch (err) {
       console.error(err);
+      showToast('Error: Failed to create item');
     }
   };
 
@@ -1976,9 +2182,13 @@ export default function Dashboard() {
         setNewTerm({ price: '', payment: '', delivery: '', warranty: '', approval: '', inspection: '' });
         fetchTerms();
         showToast('New Terms & Conditions preset created in DB!');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showToast(`Error: ${data.error || 'Failed to create terms preset'}`);
       }
     } catch (err) {
       console.error(err);
+      showToast('Error: Failed to create terms preset');
     }
   };
 
@@ -2248,26 +2458,18 @@ export default function Dashboard() {
                   </span>
                 </div>
                 <p className="text-slate-600 text-[11px]">
-                  Please enter a valid <strong>Groq API Key</strong> below (from <code>console.groq.com</code>) to power AI structural calculations:
+                  The Groq API key is configured on the server (GROQ_API_KEY). If the problem persists, ask the administrator.
                 </p>
                 <div className="flex items-center space-x-2">
-                  <input
-                    type="password"
-                    placeholder="gsk_..."
-                    value={userGroqApiKey}
-                    onChange={(e) => setUserGroqApiKey(e.target.value)}
-                    className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl font-mono text-xs font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
                   <button
                     onClick={() => {
-                      saveUserGroqApiKey(userGroqApiKey);
                       if (structuralQueue[currentStructuralIndex]) {
                         fetchStructuralOptionsForItem(structuralQueue[currentStructuralIndex]);
                       }
                     }}
                     className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all shrink-0"
                   >
-                    Save & Retry AI
+                    Retry AI
                   </button>
                 </div>
               </div>
@@ -2724,10 +2926,16 @@ export default function Dashboard() {
               <div className="flex items-center space-x-3">
                 <h2 className="text-sm font-bold text-slate-900">Items</h2>
                 <button
-                  onClick={() => handleAiAutofill()}
-                  disabled={aiProcessing}
+                  onClick={() =>
+                    handleAiAutofill(itemFilters.docketNoQtnNo.length === 1 ? itemFilters.docketNoQtnNo[0] : undefined)
+                  }
+                  disabled={aiProcessing || !canEdit || itemFilters.docketNoQtnNo.length !== 1}
                   className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-xs px-3.5 py-1.5 rounded-xl shadow-md transition-all animate-in fade-in"
-                  title="Automatically categorize MANUFACTURING/TRADING items using Groq AI"
+                  title={
+                    itemFilters.docketNoQtnNo.length === 1
+                      ? `Categorize MANUFACTURING/TRADING items of docket ${itemFilters.docketNoQtnNo[0]} using Groq AI`
+                      : 'Autofill by AI works per docket - filter the Docket No column to exactly one docket first'
+                  }
                 >
                   <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
                   <span>Autofill by AI</span>
@@ -3073,6 +3281,7 @@ export default function Dashboard() {
                         <td className="p-3 w-[150px] min-w-[150px] sticky left-[70px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs font-bold text-blue-600">
                           {currentUser.role === 'Admin' ? (
                             <AutoResizeTextarea
+                              readOnly={!canEdit}
                               defaultValue={item.docketNoQtnNo || ''}
                               onSave={(val) => handleItemFieldUpdate(item.id, 'docketNoQtnNo', val)}
                               onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'docketNoQtnNo')}
@@ -3088,6 +3297,7 @@ export default function Dashboard() {
                         {/* Sticky Body Cell 3: Item Name */}
                         <td className="p-3 w-[260px] min-w-[260px] sticky left-[220px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={item.itemNameParty || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'itemNameParty', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'itemNameParty')}
@@ -3097,10 +3307,10 @@ export default function Dashboard() {
 
                         {/* Sticky Body Cell 4: UOM */}
                         <td className="p-3 w-[80px] min-w-[80px] sticky left-[480px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
-                          <input
-                            type="text"
-                            defaultValue={item.uom || ''}
-                            onBlur={(e) => handleItemFieldUpdate(item.id, 'uom', e.target.value)}
+                          <CellInput
+                            readOnly={!canEdit}
+                            value={item.uom || ''}
+                            onSave={(val) => handleItemFieldUpdate(item.id, 'uom', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'uom')}
                             className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 focus:outline-none"
                           />
@@ -3108,10 +3318,10 @@ export default function Dashboard() {
 
                         {/* Sticky Body Cell 5: QTY */}
                         <td className="p-3 w-[80px] min-w-[80px] sticky left-[560px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-slate-400 shadow-xs">
-                          <input
-                            type="text"
-                            defaultValue={item.qty || ''}
-                            onBlur={(e) => handleItemFieldUpdate(item.id, 'qty', e.target.value)}
+                          <CellInput
+                            readOnly={!canEdit}
+                            value={item.qty || ''}
+                            onSave={(val) => handleItemFieldUpdate(item.id, 'qty', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'qty')}
                             className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 font-extrabold focus:outline-none"
                           />
@@ -3119,6 +3329,7 @@ export default function Dashboard() {
 
                         <td className="p-3 bg-blue-50/20 min-w-[180px]">
                           <select
+                            disabled={!canEdit}
                             value={item.ourItemNot || ''}
                             onChange={(e) => handleItemFieldUpdate(item.id, 'ourItemNot', e.target.value)}
                             className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-extrabold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
@@ -3132,6 +3343,7 @@ export default function Dashboard() {
 
                         <td className="p-3 min-w-[160px]">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={item.typeOfItem || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'typeOfItem', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'typeOfItem')}
@@ -3141,6 +3353,7 @@ export default function Dashboard() {
                         <td className="p-3 bg-blue-50/20 min-w-[240px]">
                           <div className="flex items-center space-x-1.5">
                             <select
+                              disabled={!canEdit}
                               value={item.ourItemName || ''}
                               onChange={(e) => {
                                 handleItemFieldUpdate(item.id, 'ourItemName', e.target.value);
@@ -3172,6 +3385,7 @@ export default function Dashboard() {
 
                         <td className="p-3 min-w-[140px]">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={item.size || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'size', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'size')}
@@ -3180,6 +3394,7 @@ export default function Dashboard() {
 
                         <td className="p-3 min-w-[140px]">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={item.sectionMm || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'sectionMm', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'sectionMm')}
@@ -3189,6 +3404,7 @@ export default function Dashboard() {
 
                         <td className="p-3 min-w-[160px]">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={item.sectionalWtKgMtr || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'sectionalWtKgMtr', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'sectionalWtKgMtr')}
@@ -3198,6 +3414,7 @@ export default function Dashboard() {
 
                         <td className="p-3 min-w-[130px]">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={item.lengthInMtr || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'lengthInMtr', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'lengthInMtr')}
@@ -3207,6 +3424,7 @@ export default function Dashboard() {
 
                         <td className="p-3 bg-blue-50/20 min-w-[130px]">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={item.weightPerPiece || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'weightPerPiece', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'weightPerPiece')}
@@ -3216,6 +3434,7 @@ export default function Dashboard() {
 
                         <td className="p-3 min-w-[180px]">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={item.unitWtOfMemberKg || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'unitWtOfMemberKg', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'unitWtOfMemberKg')}
@@ -3224,10 +3443,10 @@ export default function Dashboard() {
                         </td>
 
                         <td className="p-3 min-w-[120px]">
-                          <input
-                            type="text"
-                            defaultValue={item.price || ''}
-                            onBlur={(e) => handleItemFieldUpdate(item.id, 'price', e.target.value)}
+                          <CellInput
+                            readOnly={!canEdit}
+                            value={item.price || ''}
+                            onSave={(val) => handleItemFieldUpdate(item.id, 'price', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'price')}
                             className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none"
                           />
@@ -3235,6 +3454,7 @@ export default function Dashboard() {
 
                         <td className="p-3 bg-blue-50/20 min-w-[160px]">
                           <select
+                            disabled={!canEdit}
                             value={item.status || ''}
                             onChange={(e) => handleItemFieldUpdate(item.id, 'status', e.target.value)}
                             className={`w-full border rounded-md px-2 py-1.5 text-xs font-extrabold focus:outline-none ${
@@ -3729,9 +3949,13 @@ export default function Dashboard() {
 
                                 <button
                                   onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
-                                  disabled={aiProcessing}
+                                  disabled={aiProcessing || !canEdit || !doc.docketNoQtnNo?.trim()}
                                   className="inline-flex items-center space-x-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-extrabold text-[10px] px-1.5 py-0.5 rounded-lg shadow-2xs transition-all"
-                                  title="Autofill unclassified items for this docket using Groq AI"
+                                  title={
+                                    doc.docketNoQtnNo?.trim()
+                                      ? 'Autofill unclassified items for this docket using Groq AI'
+                                      : 'Autofill by AI needs a Docket / Qtn No - set one first'
+                                  }
                                 >
                                   <Sparkles className="w-2.5 h-2.5 text-yellow-300" />
                                   <span>AI</span>
@@ -3775,6 +3999,7 @@ export default function Dashboard() {
                                 <div className="flex-1 min-w-0">
                                   {currentUser.role === 'Admin' ? (
                                     <AutoResizeTextarea
+                                      readOnly={!canEdit}
                                       defaultValue={doc.docketNoQtnNo || ''}
                                       onSave={(val) => handleDocketFieldUpdate(doc.id, 'docketNoQtnNo', val)}
                                       className="font-bold text-blue-600 text-xs"
@@ -3805,6 +4030,7 @@ export default function Dashboard() {
 
                             <td className="p-1.5 w-[200px] min-w-[200px]">
                               <AutoResizeTextarea
+                                readOnly={!canEdit}
                                 defaultValue={doc.partyName || ''}
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'partyName', val)}
                                 placeholder="Party Name..."
@@ -3814,6 +4040,7 @@ export default function Dashboard() {
 
                             <td className="p-1.5 w-[110px] min-w-[110px]">
                               <AutoResizeTextarea
+                                readOnly={!canEdit}
                                 defaultValue={doc.state || ''}
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'state', val)}
                                 className="text-xs"
@@ -3822,6 +4049,7 @@ export default function Dashboard() {
 
                             <td className="p-1.5 w-[100px] min-w-[100px]">
                               <AutoResizeTextarea
+                                readOnly={!canEdit}
                                 defaultValue={doc.utility || ''}
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'utility', val)}
                                 className="text-xs"
@@ -3830,6 +4058,7 @@ export default function Dashboard() {
 
                             <td className="p-1.5 w-[160px] min-w-[160px]">
                               <AutoResizeTextarea
+                                readOnly={!canEdit}
                                 defaultValue={doc.deliveryLocation || ''}
                                 onSave={(val) => handleDocketFieldUpdate(doc.id, 'deliveryLocation', val)}
                                 className="text-xs"
@@ -3876,7 +4105,7 @@ export default function Dashboard() {
                                       type="file"
                                       multiple
                                       className="hidden"
-                                      disabled={uploadingAttachment}
+                                      disabled={uploadingAttachment || !canEdit}
                                       onChange={async (e) => {
                                         const input = e.target;
                                         const files = input.files ? Array.from(input.files) : [];
@@ -3884,7 +4113,9 @@ export default function Dashboard() {
                                         if (files.length === 0) return;
                                         const uploadedNames = await handleUploadDocketAttachments(files);
                                         if (uploadedNames.length > 0) {
-                                          const currentAtts = parseAttachments(doc.attachments);
+                                          // Read the latest list (not this render's closure) so concurrent uploads aren't lost.
+                                          const latestDoc = docketsRef.current.find((d) => d.id === doc.id) || doc;
+                                          const currentAtts = parseAttachments(latestDoc.attachments);
                                           const updatedAtts = [...currentAtts, ...uploadedNames];
                                           handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
                                         }
@@ -4015,15 +4246,20 @@ export default function Dashboard() {
                                     <div className="flex items-center space-x-2">
                                       <button
                                         onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
-                                        disabled={aiProcessing}
+                                        disabled={aiProcessing || !canEdit || !doc.docketNoQtnNo?.trim()}
                                         className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
-                                        title="Autofill items for this docket using Groq AI"
+                                        title={
+                                          doc.docketNoQtnNo?.trim()
+                                            ? 'Autofill items for this docket using Groq AI'
+                                            : 'Autofill by AI needs a Docket / Qtn No - set one first'
+                                        }
                                       >
                                         <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
                                         <span>Autofill by AI</span>
                                       </button>
 
-                                      {/* Add Item to Docket Button */}
+                                      {/* Add Item to Docket Button (editors only) */}
+                                      {canEdit && (
                                       <button
                                         onClick={() => {
                                           setNewItemForm((prev) => ({
@@ -4037,6 +4273,7 @@ export default function Dashboard() {
                                         <Plus className="w-4 h-4" />
                                         <span>Create Item inside Docket</span>
                                       </button>
+                                      )}
 
                                       {/* Delete Docket Button (Admin Only) */}
                                       {currentUser.role === 'Admin' && (
@@ -4062,6 +4299,7 @@ export default function Dashboard() {
                                       <p className="text-xs font-bold text-slate-600">
                                         No items currently added under docket {doc.docketNoQtnNo || 'N/A'}.
                                       </p>
+                                      {canEdit && (
                                       <button
                                         onClick={() => {
                                           setNewItemForm((prev) => ({
@@ -4075,6 +4313,7 @@ export default function Dashboard() {
                                         <Plus className="w-3.5 h-3.5" />
                                         <span>Add First Item</span>
                                       </button>
+                                      )}
                                     </div>
                                   ) : (
                                     <div className="overflow-x-auto">
@@ -4345,43 +4584,41 @@ export default function Dashboard() {
                                                <td className="p-2.5 font-mono text-slate-500 font-bold w-[75px] min-w-[75px] max-w-[75px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">#{subItem.id}</td>
                                                <td className="p-2.5 w-[240px] min-w-[240px] max-w-[240px] sticky left-[75px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
                                                  <AutoResizeTextarea
+                                                   readOnly={!canEdit}
                                                    defaultValue={subItem.itemNameParty || ''}
                                                    onSave={(val) =>
                                                      handleItemFieldUpdate(subItem.id, 'itemNameParty', val, doc.docketNoQtnNo)
                                                    }
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'itemNameParty')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'itemNameParty')
                                                    }
                                                  />
                                                </td>
                                                <td className="p-2.5 w-[80px] min-w-[80px] max-w-[80px] sticky left-[315px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
-                                                 <input
-                                                   type="text"
-                                                   defaultValue={subItem.uom || ''}
-                                                   onBlur={(e) =>
-                                                     handleItemFieldUpdate(subItem.id, 'uom', e.target.value, doc.docketNoQtnNo)
-                                                   }
+                                                 <CellInput
+                                                   readOnly={!canEdit}
+                                                   value={subItem.uom || ''}
+                                                   onSave={(val) => handleItemFieldUpdate(subItem.id, 'uom', val, doc.docketNoQtnNo)}
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'uom')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'uom')
                                                    }
                                                    className="w-16 p-1 border border-slate-200 rounded text-xs"
                                                  />
                                                </td>
                                                <td className="p-2.5 font-bold w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-b border-slate-400 shadow-md">
-                                                 <input
-                                                   type="text"
-                                                   defaultValue={subItem.qty || ''}
-                                                   onBlur={(e) =>
-                                                     handleItemFieldUpdate(subItem.id, 'qty', e.target.value, doc.docketNoQtnNo)
-                                                   }
+                                                 <CellInput
+                                                   readOnly={!canEdit}
+                                                   value={subItem.qty || ''}
+                                                   onSave={(val) => handleItemFieldUpdate(subItem.id, 'qty', val, doc.docketNoQtnNo)}
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'qty')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'qty')
                                                    }
                                                    className="w-16 p-1 border border-slate-200 rounded text-xs font-extrabold"
                                                  />
                                                </td>
                                               <td className="p-2.5 border-b border-slate-200">
                                                 <select
+                                                  disabled={!canEdit}
                                                   value={subItem.ourItemNot || ''}
                                                   onChange={(e) =>
                                                     handleItemFieldUpdate(subItem.id, 'ourItemNot', e.target.value, doc.docketNoQtnNo)
@@ -4397,6 +4634,7 @@ export default function Dashboard() {
                                               <td className="p-2.5 font-bold text-blue-700 w-[200px] min-w-[200px] border-b border-slate-200">
                                                  <div className="flex items-center space-x-1.5">
                                                    <select
+                                                     disabled={!canEdit}
                                                      value={subItem.ourItemName || ''}
                                                      onChange={(e) => {
                                                        handleItemFieldUpdate(subItem.id, 'ourItemName', e.target.value, doc.docketNoQtnNo);
@@ -4428,90 +4666,95 @@ export default function Dashboard() {
                                               </td>
                                                <td className="p-2.5 border-b border-slate-200">
                                                  <AutoResizeTextarea
+                                                   readOnly={!canEdit}
                                                    defaultValue={subItem.size || ''}
                                                    onSave={(val) =>
                                                      handleItemFieldUpdate(subItem.id, 'size', val, doc.docketNoQtnNo)
                                                    }
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'size')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'size')
                                                    }
                                                  />
                                                </td>
                                                <td className="p-2.5 border-b border-slate-200 bg-blue-50/20">
                                                  <AutoResizeTextarea
+                                                   readOnly={!canEdit}
                                                    defaultValue={subItem.weightPerPiece || ''}
                                                    onSave={(val) =>
                                                      handleItemFieldUpdate(subItem.id, 'weightPerPiece', val, doc.docketNoQtnNo)
                                                    }
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'weightPerPiece')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'weightPerPiece')
                                                    }
                                                    placeholder="Unit Wt."
                                                  />
                                                </td>
                                                <td className="p-2.5 border-b border-slate-200">
                                                  <AutoResizeTextarea
+                                                   readOnly={!canEdit}
                                                    defaultValue={subItem.unitWtOfMemberKg || ''}
                                                    onSave={(val) =>
                                                      handleItemFieldUpdate(subItem.id, 'unitWtOfMemberKg', val, doc.docketNoQtnNo)
                                                    }
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'unitWtOfMemberKg')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'unitWtOfMemberKg')
                                                    }
                                                    placeholder="Kg"
                                                  />
                                                </td>
                                                <td className="p-2.5 font-extrabold border-b border-slate-200 bg-blue-50/30">
-                                                 <input
-                                                   type="text"
-                                                   defaultValue={subItem.price || ''}
-                                                   onBlur={(e) =>
-                                                     handleItemFieldUpdate(subItem.id, 'price', e.target.value, doc.docketNoQtnNo)
-                                                   }
+                                                 <CellInput
+                                                   readOnly={!canEdit}
+                                                   value={subItem.price || ''}
+                                                   onSave={(val) => handleItemFieldUpdate(subItem.id, 'price', val, doc.docketNoQtnNo)}
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'price')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'price')
                                                    }
                                                    className="w-20 p-1 border border-slate-200 rounded text-xs font-extrabold"
                                                  />
                                                </td>
                                                <td className="p-2.5 border-b border-slate-200">
                                                  <AutoResizeTextarea
+                                                   readOnly={!canEdit}
                                                    defaultValue={subItem.sectionMm || ''}
                                                    onSave={(val) =>
                                                      handleItemFieldUpdate(subItem.id, 'sectionMm', val, doc.docketNoQtnNo)
                                                    }
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'sectionMm')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'sectionMm')
                                                    }
                                                    placeholder="e.g. 125x65x6mm"
                                                  />
                                                </td>
                                                <td className="p-2.5 border-b border-slate-200">
                                                  <AutoResizeTextarea
+                                                   readOnly={!canEdit}
                                                    defaultValue={subItem.sectionalWtKgMtr || ''}
                                                    onSave={(val) =>
                                                      handleItemFieldUpdate(subItem.id, 'sectionalWtKgMtr', val, doc.docketNoQtnNo)
                                                    }
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'sectionalWtKgMtr')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'sectionalWtKgMtr')
                                                    }
                                                    placeholder="Kg/Mtr."
                                                  />
                                                </td>
                                                <td className="p-2.5 border-b border-slate-200">
                                                  <AutoResizeTextarea
+                                                   readOnly={!canEdit}
                                                    defaultValue={subItem.lengthInMtr || ''}
                                                    onSave={(val) =>
                                                      handleItemFieldUpdate(subItem.id, 'lengthInMtr', val, doc.docketNoQtnNo)
                                                    }
                                                    onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', sIdx, 'lengthInMtr')
+                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'lengthInMtr')
                                                    }
                                                    placeholder="Mtr."
                                                  />
                                                </td>
                                               <td className="p-2.5 border-b border-slate-200">
                                                 <select
+                                                  disabled={!canEdit}
                                                   value={subItem.status || ''}
                                                   onChange={(e) =>
                                                     handleItemFieldUpdate(subItem.id, 'status', e.target.value, doc.docketNoQtnNo)
@@ -4562,6 +4805,7 @@ export default function Dashboard() {
                   Every field is editable. Editing options automatically updates available dropdown choices.
                 </p>
               </div>
+              {canEdit && (
               <button
                 onClick={() => setShowAddTerm(!showAddTerm)}
                 className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold px-4 py-2.5 rounded-xl transition-all shadow-sm"
@@ -4569,6 +4813,7 @@ export default function Dashboard() {
                 <Plus className="w-4 h-4" />
                 <span>Add Terms Preset</span>
               </button>
+              )}
             </div>
 
             {/* Add Term Form */}
@@ -4686,49 +4931,61 @@ export default function Dashboard() {
                       <tr key={t.id} className="hover:bg-slate-50/90 transition-colors">
                         <td className="p-3.5 font-mono font-bold text-slate-500 text-xs">#{t.id}</td>
                         <td className="p-3.5">
-                          <textarea
-                            defaultValue={t.price || ''}
-                            onBlur={(e) => handleTermFieldUpdate(t.id, 'price', e.target.value)}
+                          <CellInput
+                            multiline
+                            readOnly={!canEdit}
+                            value={t.price || ''}
+                            onSave={(val) => handleTermFieldUpdate(t.id, 'price', val)}
                             className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded p-1.5 text-xs text-slate-900 focus:outline-none"
                             rows={2}
                           />
                         </td>
                         <td className="p-3.5">
-                          <textarea
-                            defaultValue={t.payment || ''}
-                            onBlur={(e) => handleTermFieldUpdate(t.id, 'payment', e.target.value)}
+                          <CellInput
+                            multiline
+                            readOnly={!canEdit}
+                            value={t.payment || ''}
+                            onSave={(val) => handleTermFieldUpdate(t.id, 'payment', val)}
                             className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded p-1.5 text-xs text-slate-900 focus:outline-none"
                             rows={2}
                           />
                         </td>
                         <td className="p-3.5">
-                          <textarea
-                            defaultValue={t.delivery || ''}
-                            onBlur={(e) => handleTermFieldUpdate(t.id, 'delivery', e.target.value)}
+                          <CellInput
+                            multiline
+                            readOnly={!canEdit}
+                            value={t.delivery || ''}
+                            onSave={(val) => handleTermFieldUpdate(t.id, 'delivery', val)}
                             className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded p-1.5 text-xs text-slate-900 focus:outline-none"
                             rows={2}
                           />
                         </td>
                         <td className="p-3.5">
-                          <textarea
-                            defaultValue={t.warranty || ''}
-                            onBlur={(e) => handleTermFieldUpdate(t.id, 'warranty', e.target.value)}
+                          <CellInput
+                            multiline
+                            readOnly={!canEdit}
+                            value={t.warranty || ''}
+                            onSave={(val) => handleTermFieldUpdate(t.id, 'warranty', val)}
                             className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded p-1.5 text-xs text-slate-900 focus:outline-none"
                             rows={2}
                           />
                         </td>
                         <td className="p-3.5">
-                          <textarea
-                            defaultValue={t.approval || ''}
-                            onBlur={(e) => handleTermFieldUpdate(t.id, 'approval', e.target.value)}
+                          <CellInput
+                            multiline
+                            readOnly={!canEdit}
+                            value={t.approval || ''}
+                            onSave={(val) => handleTermFieldUpdate(t.id, 'approval', val)}
                             className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded p-1.5 text-xs text-slate-900 focus:outline-none"
                             rows={2}
                           />
                         </td>
                         <td className="p-3.5">
-                          <textarea
-                            defaultValue={t.inspection || ''}
-                            onBlur={(e) => handleTermFieldUpdate(t.id, 'inspection', e.target.value)}
+                          <CellInput
+                            multiline
+                            readOnly={!canEdit}
+                            value={t.inspection || ''}
+                            onSave={(val) => handleTermFieldUpdate(t.id, 'inspection', val)}
                             className="w-full bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded p-1.5 text-xs text-slate-900 focus:outline-none"
                             rows={2}
                           />
@@ -4970,6 +5227,7 @@ export default function Dashboard() {
                         </td>
                         <td className="p-3">
                           <AutoResizeTextarea
+                            readOnly={!canEdit}
                             defaultValue={m.value}
                             onSave={(newVal) => handleUpdateMasterValue(m.id, newVal)}
                             className="font-bold text-slate-900"
@@ -5948,10 +6206,14 @@ export default function Dashboard() {
                                 </>
                               ),
                               confirmLabel: 'Remove',
-                              onConfirm: () => {
-                                const currentAtts = parseAttachments(listDoc.attachments);
-                                const updatedAtts = currentAtts.filter((_, i) => i !== attIdx);
-                                return handleDocketFieldUpdate(listDoc.id, 'attachments' as any, JSON.stringify(updatedAtts));
+                              onConfirm: async () => {
+                                // Use the latest list and remove by key, not by an index from an older render.
+                                const latestDoc = docketsRef.current.find((d) => d.id === listDoc.id) || listDoc;
+                                const currentAtts = parseAttachments(latestDoc.attachments);
+                                const removeIdx = currentAtts.indexOf(att);
+                                if (removeIdx === -1) return;
+                                const updatedAtts = currentAtts.filter((_, i) => i !== removeIdx);
+                                await handleDocketFieldUpdate(listDoc.id, 'attachments' as any, JSON.stringify(updatedAtts));
                               },
                             });
                           }}

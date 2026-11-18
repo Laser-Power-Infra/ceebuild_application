@@ -1,4 +1,5 @@
 import 'server-only';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
@@ -6,6 +7,8 @@ import { toNum } from '@/lib/bom/parse';
 import type { RegisterKey } from '../columns';
 
 type Input = Record<string, unknown>;
+type Tx = Prisma.TransactionClient;
+const sql = Prisma.sql;
 
 const str = (v: unknown, max = 200) => {
   const s = String(v ?? '').trim();
@@ -33,21 +36,31 @@ const optInt = (v: unknown, label: string) => {
   return n;
 };
 
-async function orderExists(orderId: number) {
-  const o = await prisma.order.findUnique({ where: { id: orderId }, select: { id: true } });
-  if (!o) throw new UserError('Order not found.');
+/**
+ * Lock the order row for the rest of the transaction. Galvanising saves and deletes for one order
+ * take this lock first, so the "IN can't exceed OUT" check and the write that follows it can never
+ * interleave with another save. Throws when the order does not exist.
+ */
+async function lockOrder(tx: Tx, orderId: number) {
+  const rows = await tx.$queryRaw<{ id: number }[]>(sql`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`);
+  if (rows.length === 0) throw new UserError('Order not found.');
 }
 
 const created = (user: AuthUser) => ({ createdById: user.id, createdByName: user.name });
 
-async function audit(table: string, id: number, data: unknown, user: AuthUser) {
-  await prisma.editLog.create({
-    data: { tableName: table, recordId: id, fieldName: 'ALL_FIELDS', oldValue: 'NONE (New Record)', newValue: JSON.stringify(data), ...auditUser(user) },
-  });
+/** OUT / IN piece totals per (upper-cased) mark for the given marks of one order. */
+async function galvTotals(tx: Tx, orderId: number, marks: string[]) {
+  if (marks.length === 0) return new Map<string, { out: number; inn: number }>();
+  const totals = await tx.$queryRaw<{ mark: string; out: number; inn: number }[]>(sql`SELECT upper(l.mark_no) AS mark,
+      coalesce(sum(l.pieces) FILTER (WHERE c.direction = 'OUT'), 0)::int AS out,
+      coalesce(sum(l.pieces) FILTER (WHERE c.direction = 'IN'), 0)::int AS inn
+    FROM galv_challan_lines l JOIN galv_challans c ON c.id = l.challan_id
+    WHERE c.order_id = ${orderId} AND upper(l.mark_no) IN (${Prisma.join(marks)}) GROUP BY 1`);
+  return new Map(totals.map((t) => [t.mark, { out: t.out, inn: t.inn }]));
 }
 
 /** Galvanising challan. Pieces coming back IN for a mark can never exceed what went OUT for it. */
-async function addGalv(orderId: number, i: Input, user: AuthUser) {
+async function addGalv(tx: Tx, orderId: number, i: Input, user: AuthUser) {
   const direction = i.direction === 'IN' ? 'IN' : i.direction === 'OUT' ? 'OUT' : null;
   if (!direction) throw new UserError('Choose Out or In.');
   const lines = (Array.isArray(i.lines) ? i.lines : [])
@@ -57,42 +70,35 @@ async function addGalv(orderId: number, i: Input, user: AuthUser) {
   const merged = new Map<string, number>();
   for (const l of lines) merged.set(l.markNo!.toUpperCase(), (merged.get(l.markNo!.toUpperCase()) ?? 0) + l.pieces!);
 
-  return prisma.$transaction(async (tx) => {
-    if (direction === 'IN' && merged.size) {
-      const totals = await tx.$queryRaw<{ mark: string; out: number; inn: number }[]>`SELECT upper(l.mark_no) AS mark,
-          coalesce(sum(l.pieces) FILTER (WHERE c.direction = 'OUT'), 0)::int AS out,
-          coalesce(sum(l.pieces) FILTER (WHERE c.direction = 'IN'), 0)::int AS inn
-        FROM galv_challan_lines l JOIN galv_challans c ON c.id = l.challan_id
-        WHERE c.order_id = ${orderId} GROUP BY 1`;
-      const byMark = new Map(totals.map((t) => [t.mark, t]));
-      const over = [...merged].filter(([m, p]) => (byMark.get(m)?.inn ?? 0) + p > (byMark.get(m)?.out ?? 0));
-      if (over.length) {
-        throw new UserError(
-          'More pieces back in than sent out for: ' +
-            over.map(([m, p]) => `${m} (out ${byMark.get(m)?.out ?? 0}, in ${byMark.get(m)?.inn ?? 0} + ${p})`).join(', '),
-        );
-      }
+  // The order row is already locked by addRegisterEntry, so this check and the insert are atomic.
+  if (direction === 'IN' && merged.size) {
+    const byMark = await galvTotals(tx, orderId, [...merged.keys()]);
+    const over = [...merged].filter(([m, p]) => (byMark.get(m)?.inn ?? 0) + p > (byMark.get(m)?.out ?? 0));
+    if (over.length) {
+      throw new UserError(
+        'More pieces back in than sent out for: ' +
+          over.map(([m, p]) => `${m} (out ${byMark.get(m)?.out ?? 0}, in ${byMark.get(m)?.inn ?? 0} + ${p})`).join(', '),
+      );
     }
-    const row = await tx.galvChallan.create({
-      data: {
-        orderId,
-        challanNo: reqStr(i.challanNo, 'Challan no'),
-        direction,
-        challanDate: reqDate(i.date, 'Date'),
-        jobWorker: str(i.jobWorker),
-        blackWtKg: optNum(i.blackWtKg, 'Black wt'),
-        galvWtKg: optNum(i.galvWtKg, 'Galv wt'),
-        remarks: str(i.remarks, 1000),
-        ...created(user),
-        lines: { create: [...merged].map(([markNo, pieces]) => ({ markNo, pieces })) },
-      },
-    });
-    return row;
+  }
+  return tx.galvChallan.create({
+    data: {
+      orderId,
+      challanNo: reqStr(i.challanNo, 'Challan no'),
+      direction,
+      challanDate: reqDate(i.date, 'Date'),
+      jobWorker: str(i.jobWorker),
+      blackWtKg: optNum(i.blackWtKg, 'Black wt'),
+      galvWtKg: optNum(i.galvWtKg, 'Galv wt'),
+      remarks: str(i.remarks, 1000),
+      ...created(user),
+      lines: { create: [...merged].map(([markNo, pieces]) => ({ markNo, pieces })) },
+    },
   });
 }
 
-async function addInspection(orderId: number, i: Input, user: AuthUser) {
-  return prisma.inspection.create({
+async function addInspection(tx: Tx, orderId: number, i: Input, user: AuthUser) {
+  return tx.inspection.create({
     data: {
       orderId,
       inspectionNo: reqStr(i.inspectionNo, 'Inspection no'),
@@ -106,8 +112,8 @@ async function addInspection(orderId: number, i: Input, user: AuthUser) {
   });
 }
 
-async function addDi(orderId: number, i: Input, user: AuthUser) {
-  return prisma.dispatchInstruction.create({
+async function addDi(tx: Tx, orderId: number, i: Input, user: AuthUser) {
+  return tx.dispatchInstruction.create({
     data: {
       orderId,
       diNo: reqStr(i.diNo, 'DI no'),
@@ -120,14 +126,16 @@ async function addDi(orderId: number, i: Input, user: AuthUser) {
   });
 }
 
-async function addDispatch(orderId: number, i: Input, user: AuthUser) {
+async function addDispatch(tx: Tx, orderId: number, i: Input, user: AuthUser) {
   let diId: number | null = null;
-  if (i.diId) {
-    const di = await prisma.dispatchInstruction.findUnique({ where: { id: Number(i.diId) }, select: { id: true, orderId: true } });
+  if (i.diId !== null && i.diId !== undefined && i.diId !== '') {
+    const wanted = Number(i.diId);
+    if (!Number.isSafeInteger(wanted) || wanted <= 0) throw new UserError('That DI is not on this order.');
+    const di = await tx.dispatchInstruction.findUnique({ where: { id: wanted }, select: { id: true, orderId: true } });
     if (!di || di.orderId !== orderId) throw new UserError('That DI is not on this order.');
     diId = di.id;
   }
-  return prisma.dispatch.create({
+  return tx.dispatch.create({
     data: {
       orderId,
       diId,
@@ -145,14 +153,27 @@ async function addDispatch(orderId: number, i: Input, user: AuthUser) {
 
 const TABLE: Record<RegisterKey, string> = { galv: 'galv_challans', inspection: 'inspections', di: 'dispatch_instructions', dispatch: 'dispatches' };
 
+/** Entry and its audit row are saved in one transaction: a failed log write saves nothing (no duplicate on retry). */
 export async function addRegisterEntry(key: RegisterKey, orderId: number, input: Input, user: AuthUser) {
-  await orderExists(orderId);
-  const row =
-    key === 'galv' ? await addGalv(orderId, input, user)
-    : key === 'inspection' ? await addInspection(orderId, input, user)
-    : key === 'di' ? await addDi(orderId, input, user)
-    : await addDispatch(orderId, input, user);
-  await audit(TABLE[key], row.id, { orderId, ...input }, user);
+  const row = await prisma.$transaction(async (tx) => {
+    await lockOrder(tx, orderId);
+    const r =
+      key === 'galv' ? await addGalv(tx, orderId, input, user)
+      : key === 'inspection' ? await addInspection(tx, orderId, input, user)
+      : key === 'di' ? await addDi(tx, orderId, input, user)
+      : await addDispatch(tx, orderId, input, user);
+    await tx.editLog.create({
+      data: {
+        tableName: TABLE[key],
+        recordId: r.id,
+        fieldName: 'ALL_FIELDS',
+        oldValue: 'NONE (New Record)',
+        newValue: JSON.stringify({ orderId, ...input }),
+        ...auditUser(user),
+      },
+    });
+    return r;
+  });
   return { id: row.id, warning: key === 'dispatch' ? await dispatchWarning(orderId) : null };
 }
 
@@ -169,19 +190,45 @@ async function dispatchWarning(orderId: number): Promise<string | null> {
     : null;
 }
 
-/** Admin only (checked by the action). The audit row keeps a snapshot. */
+const notFound = (err: unknown): never => {
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') throw new UserError('Entry not found.');
+  throw err;
+};
+
+/** Delete a galvanising challan. Deleting an OUT is refused if it would leave more pieces IN than OUT for a mark. */
+async function deleteGalv(tx: Tx, id: number) {
+  const ref = await tx.galvChallan.findUnique({ where: { id }, select: { orderId: true } });
+  if (!ref) throw new UserError('Entry not found.');
+  await lockOrder(tx, ref.orderId);
+  const row = await tx.galvChallan.findUnique({ where: { id }, include: { lines: true } });
+  if (!row) throw new UserError('Entry not found.');
+  await tx.galvChallan.delete({ where: { id } });
+  if (row.direction === 'OUT' && row.lines.length) {
+    const marks = [...new Set(row.lines.map((l) => l.markNo.toUpperCase()))];
+    const byMark = await galvTotals(tx, row.orderId, marks);
+    const short = marks.filter((m) => (byMark.get(m)?.inn ?? 0) > (byMark.get(m)?.out ?? 0));
+    if (short.length) {
+      throw new UserError(
+        'Cannot delete this OUT challan: more pieces have come back in than would remain sent out for: ' +
+          short.map((m) => `${m} (out ${byMark.get(m)?.out ?? 0}, in ${byMark.get(m)?.inn ?? 0})`).join(', ') +
+          '. Delete the matching IN challan first.',
+      );
+    }
+  }
+  return row;
+}
+
+/** Admin only (checked by the action). Delete and audit row (with a snapshot) in one transaction. */
 export async function deleteRegisterEntry(key: RegisterKey, id: number, user: AuthUser) {
-  const del = {
-    galv: () => prisma.galvChallan.delete({ where: { id }, include: { lines: true } }),
-    inspection: () => prisma.inspection.delete({ where: { id } }),
-    di: () => prisma.dispatchInstruction.delete({ where: { id } }),
-    dispatch: () => prisma.dispatch.delete({ where: { id } }),
-  }[key];
-  const row = await del().catch(() => {
-    throw new UserError('Entry not found.');
+  return prisma.$transaction(async (tx) => {
+    const row =
+      key === 'galv' ? await deleteGalv(tx, id)
+      : key === 'inspection' ? await tx.inspection.delete({ where: { id } }).catch(notFound)
+      : key === 'di' ? await tx.dispatchInstruction.delete({ where: { id } }).catch(notFound)
+      : await tx.dispatch.delete({ where: { id } }).catch(notFound);
+    await tx.editLog.create({
+      data: { tableName: TABLE[key], recordId: id, fieldName: 'DELETED', oldValue: JSON.stringify(row), newValue: null, ...auditUser(user) },
+    });
+    return { id };
   });
-  await prisma.editLog.create({
-    data: { tableName: TABLE[key], recordId: id, fieldName: 'DELETED', oldValue: JSON.stringify(row), newValue: null, ...auditUser(user) },
-  });
-  return { id };
 }

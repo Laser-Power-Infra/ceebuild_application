@@ -94,6 +94,8 @@ export function sectionKey(section: string | null | undefined): string | null {
   const k = section
     .toUpperCase()
     .replace(/[×*]/g, 'X')
+    // "6MM" / "6 MM" (unit touching a digit) as well as a free-standing "MM".
+    .replace(/(\d)\s*MM(?![A-Z])/g, '$1')
     .replace(/\bMM\b/g, '')
     .replace(/[\s\-_.]/g, '');
   return k || null;
@@ -113,12 +115,19 @@ export interface ParsedPiece {
   unitWtKg: number | null;
   totalWtKg: number | null;
   raw: Record<string, unknown>;
+  /** Fields holding a negative number in the sheet (the import rejects such rows). */
+  negative: PieceField[];
 }
+
+/** "TOTAL", "Grand Total", "Sub-total:" ... in a label cell marks a summary row, not a piece. */
+const TOTAL_LABEL = /^(grand|sub)?[\s-]*totals?\b/i;
+const NUMERIC_FIELDS = ['lengthMm', 'qtyPerSet', 'sets', 'totalQty', 'kgPerM', 'unitWtKg', 'totalWtKg'] as const;
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
 
 /**
- * Rows below `headerRow` -> pieces. Blank rows are skipped. A length header that says metres
+ * Rows below `headerRow` -> pieces. Blank rows and TOTAL / sub-total rows are skipped; negative
+ * numbers are listed in `negative` (the import rejects them). A length header that says metres
  * ("Length (m)", "Length in Mtr") is converted to mm. Missing totals are derived:
  * total qty = qty/set x sets; total wt = unit wt x total qty, else kg/m x length x total qty.
  */
@@ -126,7 +135,9 @@ export function parsePieces(cells: unknown[][], headerRow: number, map: ColumnMa
   const headers = (cells[headerRow] ?? []).map((c) => String(c ?? '').trim());
   const idx = (f: PieceField) => (map[f] ? headers.indexOf(map[f] as string) : -1);
   const lengthHeader = normHeader(map.lengthMm);
-  const lengthInMetres = /(mtr|metre|meter|\(m\)|inm$)/.test(lengthHeader) || /\(m\)/i.test(map.lengthMm ?? '');
+  // "Length (mm)" / "Length in millimetre" are mm even though "millimetre" contains "metre".
+  const lengthInMm = /(mm|millimet)/.test(lengthHeader);
+  const lengthInMetres = !lengthInMm && (/(mtr|metre|meter|inm$)/.test(lengthHeader) || /\(m\)/i.test(map.lengthMm ?? ''));
 
   const out: ParsedPiece[] = [];
   for (let r = headerRow + 1; r < cells.length; r++) {
@@ -135,6 +146,16 @@ export function parsePieces(cells: unknown[][], headerRow: number, map: ColumnMa
     const get = (f: PieceField) => (idx(f) >= 0 ? row[idx(f)] : undefined);
 
     const section = toText(get('section'));
+    // Summary rows (TOTAL / Grand total / Sub-total) would double-count the weight: skip them.
+    const firstText = toText(row.find((c) => String(c ?? '').trim() !== ''));
+    const labels = [firstText, toText(get('markNo')), toText(get('description')), section];
+    if (labels.some((l) => l !== null && TOTAL_LABEL.test(l)) && (section === null || TOTAL_LABEL.test(section))) continue;
+
+    const negative = NUMERIC_FIELDS.filter((f) => {
+      const n = toNum(get(f));
+      return n !== null && n < 0;
+    });
+
     let lengthMm = toNum(get('lengthMm'));
     if (lengthMm !== null && lengthInMetres) lengthMm = lengthMm * 1000;
     const qtyPerSet = toNum(get('qtyPerSet'));
@@ -169,6 +190,7 @@ export function parsePieces(cells: unknown[][], headerRow: number, map: ColumnMa
       unitWtKg,
       totalWtKg,
       raw,
+      negative: [...negative],
     });
   }
   return out;

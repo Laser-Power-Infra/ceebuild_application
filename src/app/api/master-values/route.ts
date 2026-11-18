@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, auditUser, ADMIN_ROLES } from '@/lib/auth/server';
+import { SECRET_MASTER_VALUE_TYPES } from '@/lib/groqHelper';
 
 export async function GET(req: Request) {
   try {
@@ -8,8 +9,12 @@ export async function GET(req: Request) {
     const type = searchParams.get('type');
     const activeOnly = searchParams.get('activeOnly') === 'true';
 
-    const where: any = {};
+    // Secret/setting rows (e.g. an old Groq key) are never exposed by this public endpoint.
+    const where: any = { type: { notIn: SECRET_MASTER_VALUE_TYPES } };
     if (type) {
+      if (SECRET_MASTER_VALUE_TYPES.includes(type)) {
+        return NextResponse.json({ masterValues: [], grouped: {} });
+      }
       where.type = type;
     }
     if (activeOnly) {
@@ -52,8 +57,11 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { type, value, isActive = true } = body;
 
-    if (!type || !value || !value.trim()) {
+    if (typeof type !== 'string' || typeof value !== 'string' || !type.trim() || !value.trim()) {
       return NextResponse.json({ error: 'Type and Value are required' }, { status: 400 });
+    }
+    if (SECRET_MASTER_VALUE_TYPES.includes(type.trim())) {
+      return NextResponse.json({ error: 'This type cannot be stored as a master value' }, { status: 400 });
     }
 
     const created = await prisma.masterValue.create({
@@ -81,6 +89,9 @@ export async function PUT(req: Request) {
 
     if (!id) {
       return NextResponse.json({ error: 'Missing ID' }, { status: 400 });
+    }
+    if (typeof type === 'string' && SECRET_MASTER_VALUE_TYPES.includes(type.trim())) {
+      return NextResponse.json({ error: 'This type cannot be stored as a master value' }, { status: 400 });
     }
 
     const updated = await prisma.masterValue.update({

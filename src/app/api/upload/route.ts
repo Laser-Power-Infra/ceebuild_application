@@ -1,67 +1,46 @@
 import { NextResponse } from 'next/server';
+import { randomBytes } from 'crypto';
 import { requireUser, EDITOR_ROLES } from '@/lib/auth/server';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { putObject, cleanFileName, s3Configured } from '@/lib/s3';
 
-const S3_ENDPOINT_URL = process.env.S3_ENDPOINT_URL || 'http://192.168.1.190:8500';
-const S3_BUCKET = process.env.S3_BUCKET || 'ceebuild-docket';
-const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY || 'ai_server';
-const S3_SECRET_KEY = process.env.S3_SECRET_KEY || 'asmitabidyututsabminmoyarecool';
-const S3_REGION = process.env.S3_REGION || 'us-east-1';
-const S3_PUBLIC_URL = process.env.S3_PUBLIC_URL || 'http://192.168.1.190:8500';
-
-const s3Client = new S3Client({
-  endpoint: S3_ENDPOINT_URL,
-  region: S3_REGION,
-  credentials: {
-    accessKeyId: S3_ACCESS_KEY,
-    secretAccessKey: S3_SECRET_KEY,
-  },
-  forcePathStyle: true,
-});
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 export async function POST(req: Request) {
   const auth = await requireUser(EDITOR_ROLES);
   if (auth.error) return auth.error;
+  if (!s3Configured) {
+    return NextResponse.json({ error: 'File storage is not configured on the server.' }, { status: 503 });
+  }
 
   try {
     const formData = await req.formData();
-    const file = formData.get('file') as File | null;
+    const file = formData.get('file');
 
-    if (!file) {
+    if (!file || typeof file === 'string') {
       return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      return NextResponse.json({ error: 'File is larger than 50 MB' }, { status: 413 });
+    }
 
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    const buffer = Buffer.from(await file.arrayBuffer());
 
-    // Random strict prefix for attachment filename
-    const randomStr = Math.random().toString(36).substring(2, 8);
+    // Random prefix + timestamp keeps keys unguessable and unique; the original name follows the 2nd "_".
+    const randomStr = randomBytes(6).toString('hex');
     const timeStamp = Date.now().toString(36);
-    const cleanFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const attachmentKey = `${randomStr}_${timeStamp}_${cleanFileName}`;
+    const attachmentKey = `${randomStr}_${timeStamp}_${cleanFileName(file.name)}`;
 
-    const command = new PutObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: attachmentKey,
-      Body: buffer,
-      ContentType: file.type || 'application/octet-stream',
-    });
-
-    await s3Client.send(command);
-
-    const publicUrl = `${S3_PUBLIC_URL.replace(/\/$/, '')}/${S3_BUCKET}/${attachmentKey}`;
+    await putObject(attachmentKey, buffer, file.type || 'application/octet-stream');
 
     return NextResponse.json({
       success: true,
       filename: attachmentKey,
       originalName: file.name,
-      url: publicUrl,
+      // Files are served through the app (safe headers), never straight from the storage server.
+      url: `/api/attachments/${encodeURIComponent(attachmentKey)}`,
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('S3 Upload Error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to upload attachment to S3' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to upload attachment' }, { status: 500 });
   }
 }

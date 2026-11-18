@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { getGroqApiKey, saveGroqApiKeyToDb } from '@/lib/groqHelper';
+import { getGroqApiKey } from '@/lib/groqHelper';
 import { requireUser, auditUser, EDITOR_ROLES } from '@/lib/auth/server';
 
 export async function POST(req: Request) {
@@ -10,7 +10,7 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const { itemNameParty, typeOfItem, selectedCategory, saveToKnowledge, userReason, apiKey: customApiKey } = body;
+    const { itemNameParty, typeOfItem, selectedCategory, saveToKnowledge, userReason } = body;
 
     if (!itemNameParty || !selectedCategory) {
       return NextResponse.json({ error: 'Missing itemNameParty or selectedCategory' }, { status: 400 });
@@ -52,14 +52,11 @@ export async function POST(req: Request) {
     }
 
     // Otherwise generate auto-reasoning using Groq AI
-    const apiKey = await getGroqApiKey(customApiKey);
-    if (customApiKey && customApiKey.startsWith('gsk_')) {
-      await saveGroqApiKeyToDb(customApiKey);
-    }
+    const apiKey = getGroqApiKey();
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'Groq API Key is missing. Please enter your Groq API key in Settings or update GROQ_API_KEY in .env.' },
+        { error: 'Groq API Key is missing. Ask the administrator to set GROQ_API_KEY in the server .env file.' },
         { status: 400 }
       );
     }

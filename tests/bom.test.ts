@@ -104,3 +104,34 @@ test('kg/m exactly at +5% passes; derived from unit weight when kg/m is blank', 
   assert.equal(ok.flagKgm, false);
   assert.equal(bad.flagKgm, true);
 });
+
+test('sectionKey strips "mm" touching a digit', () => {
+  assert.equal(sectionKey('ISA 50x50x6mm'), 'ISA50X50X6');
+  assert.equal(sectionKey('ISA 50X50X6 MM'), 'ISA50X50X6');
+});
+
+test('"Length in millimetre" header is read as mm, not metres', () => {
+  const cells = [['Mark', 'Section', 'Length in millimetre', 'Qty', 'kg/m'], ['A', 'ISA 50x50x6', 2200, 2, 4.5]];
+  const pieces = parsePieces(cells, 0, autoMapHeaders(cells[0] as string[]));
+  assert.equal(pieces[0].lengthMm, 2200);
+  assert.equal(pieces[0].totalWtKg, 19.8); // 4.5 kg/m x 2.2 m x 2
+});
+
+test('TOTAL rows are not imported as pieces', () => {
+  const cells = [
+    ['Mark', 'Section', 'Length', 'Qty', 'Total Wt'],
+    ['A', 'ISA 50x50x6', 2200, 2, 19.8],
+    ['TOTAL', '', '', 2, 19.8],
+    ['', 'Grand Total', '', '', 19.8],
+  ];
+  const pieces = parsePieces(cells, 0, autoMapHeaders(cells[0] as string[]));
+  assert.equal(pieces.length, 1);
+  assert.equal(pieces[0].markNo, 'A');
+});
+
+test('negative numbers are reported so the import can reject them', () => {
+  const cells = [['Mark', 'Section', 'Length', 'Qty'], ['A', 'ISA 50x50x6', -2200, 2], ['B', 'ISA 50x50x6', 1000, 3]];
+  const pieces = parsePieces(cells, 0, autoMapHeaders(cells[0] as string[]));
+  assert.deepEqual(pieces[0].negative, ['lengthMm']);
+  assert.deepEqual(pieces[1].negative, []);
+});
