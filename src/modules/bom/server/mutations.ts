@@ -69,12 +69,22 @@ export async function importBom(
   const { cells } = sheetCells(readWorkbook(file.buffer), preview.sheetName);
   const pieces = parsePieces(cells, preview.headerRow, map);
   if (pieces.length === 0) throw new UserError('No data rows found under the header row.');
+  const negativeRows = pieces.filter((p) => p.negative.length > 0);
+  if (negativeRows.length) {
+    throw new UserError(
+      'Negative numbers are not allowed. Fix the sheet and upload again: ' +
+        negativeRows.slice(0, 10).map((p) => `row ${p.rowNo} (${p.negative.join(', ')})`).join('; ') +
+        (negativeRows.length > 10 ? ` and ${negativeRows.length - 10} more` : ''),
+    );
+  }
 
   // Archive first (outside the transaction): a failed upload stops the import with nothing saved.
   const s3Key = await archiveFile(`bom/order-${orderId}`, file.name, file.buffer, file.type);
 
   return prisma.$transaction(
     async (tx) => {
+      // Same lock as confirmBom: a new version and a confirm of the previous one can't interleave.
+      await lockOrderRow(tx, orderId);
       const flags = checkPieces(pieces, await sectionMaster(tx));
       const upload = await tx.bomUpload.create({
         data: {
@@ -150,10 +160,46 @@ export async function recheckUpload(tx: Tx, uploadId: number) {
     FROM (VALUES ${values}) AS v(id, ml, bq, kg, fs, sc, iss) WHERE p.id = v.id`);
 }
 
-/** Re-check every BOM still in DRAFT, e.g. after the section master changed. */
-export async function recheckOpenUploads(tx: Tx) {
-  const open = await tx.bomUpload.findMany({ where: { status: 'DRAFT' }, select: { id: true } });
-  for (const u of open) await recheckUpload(tx, u.id);
+/**
+ * Lock one BOM upload row for the rest of the transaction. Every write that changes a BOM's pieces,
+ * flags or status takes this lock first, so an edit and "Correct BOM" (or a re-check) can never
+ * interleave. Returns false when the upload does not exist.
+ */
+/** Locks the order row. Lock order is always order -> upload, so the two locks can't deadlock. */
+async function lockOrderRow(tx: Tx, orderId: number): Promise<void> {
+  const rows = await tx.$queryRaw<{ id: number }[]>(sql`SELECT id FROM orders WHERE id = ${orderId} FOR UPDATE`);
+  if (rows.length === 0) throw new UserError('Order not found.');
+}
+
+export async function lockUpload(tx: Tx, uploadId: number): Promise<boolean> {
+  const rows = await tx.$queryRaw<{ id: number }[]>(sql`SELECT id FROM bom_uploads WHERE id = ${uploadId} FOR UPDATE`);
+  return rows.length > 0;
+}
+
+/**
+ * Re-check every BOM still in DRAFT, e.g. after the section master changed. Call it AFTER the
+ * section change has committed: each BOM is re-checked in its own short transaction (under the
+ * BOM's lock), so a long list of drafts never blocks BOM edits for long. A failure on one BOM is
+ * logged and the rest still run; confirmBom re-checks again under its lock, so a stale flag can
+ * never get a BOM past the gate.
+ */
+export async function recheckOpenUploads() {
+  const open = await prisma.bomUpload.findMany({ where: { status: 'DRAFT' }, select: { id: true }, orderBy: { id: 'asc' } });
+  for (const u of open) {
+    try {
+      await prisma.$transaction(
+        async (tx) => {
+          if (!(await lockUpload(tx, u.id))) return;
+          const cur = await tx.bomUpload.findUnique({ where: { id: u.id }, select: { status: true } });
+          if (cur?.status !== 'DRAFT') return;
+          await recheckUpload(tx, u.id);
+        },
+        { timeout: 30_000 },
+      );
+    } catch (err) {
+      console.error(`[bom] re-check of upload ${u.id} failed`, err);
+    }
+  }
 }
 
 const round3 = (n: number) => Math.round(n * 1000) / 1000;
@@ -164,9 +210,12 @@ export async function updatePiece(pieceId: number, field: string, value: string,
   const f = field as EditablePieceField;
 
   return prisma.$transaction(async (tx) => {
+    // Lock the BOM first, then read the row and its status under the lock (see lockUpload).
+    const ref = await tx.bomPiece.findUnique({ where: { id: pieceId }, select: { uploadId: true } });
+    if (!ref || !(await lockUpload(tx, ref.uploadId))) throw new UserError('Row not found.');
     const piece = await tx.bomPiece.findUnique({ where: { id: pieceId }, include: { upload: { select: { status: true } } } });
     if (!piece) throw new UserError('Row not found.');
-    if (piece.upload.status === 'CORRECT') throw new UserError('This BOM is marked correct. Reopen it to edit.');
+    if (piece.upload.status !== 'DRAFT') throw new UserError('This BOM is marked correct. Reopen it to edit.');
 
     const text = value.trim();
     const data: Prisma.BomPieceUpdateInput = {};
@@ -218,18 +267,25 @@ export async function updatePiece(pieceId: number, field: string, value: string,
       },
     });
     return { id: pieceId };
-  });
+  }, { timeout: 30_000 });
 }
 
 /** "✓ Correct BOM": needs no flags left, or an Admin override with a note. */
 export async function confirmBom(uploadId: number, note: string, user: AuthUser) {
   return prisma.$transaction(async (tx) => {
+    const ref = await tx.bomUpload.findUnique({ where: { id: uploadId }, select: { orderId: true } });
+    if (!ref) throw new UserError('BOM not found.');
+    // Order lock first (same as importBom), so a newer upload can't slip in while this one is confirmed.
+    await lockOrderRow(tx, ref.orderId);
+    if (!(await lockUpload(tx, uploadId))) throw new UserError('BOM not found.');
     const upload = await tx.bomUpload.findUnique({ where: { id: uploadId } });
     if (!upload) throw new UserError('BOM not found.');
     if (upload.status === 'CORRECT') throw new UserError('This BOM is already marked correct.');
     const latest = await tx.bomUpload.findFirst({ where: { orderId: upload.orderId }, orderBy: { id: 'desc' }, select: { id: true } });
     if (latest?.id !== uploadId) throw new UserError('Only the latest BOM of the order can be confirmed.');
 
+    // Fresh flags under the lock (the section master may have changed since the last re-check).
+    await recheckUpload(tx, uploadId);
     const [{ flagged }] = await tx.$queryRaw<{ flagged: number }[]>(sql`SELECT count(*)::int AS flagged FROM bom_pieces
       WHERE upload_id = ${uploadId} AND (flag_mark_length OR flag_blank_qty OR flag_kgm OR flag_fractional_sets OR flag_section)`);
     const overrideNote = note.trim().slice(0, 1000);
@@ -252,19 +308,31 @@ export async function confirmBom(uploadId: number, note: string, user: AuthUser)
       },
     });
     return { id: uploadId };
-  });
+  }, { timeout: 30_000 });
 }
 
+/** Reopen a confirmed BOM. One an Admin confirmed with an override note can only be reopened by an Admin. */
 export async function reopenBom(uploadId: number, user: AuthUser) {
   return prisma.$transaction(async (tx) => {
+    if (!(await lockUpload(tx, uploadId))) throw new UserError('BOM not found.');
     const upload = await tx.bomUpload.findUnique({ where: { id: uploadId } });
     if (!upload) throw new UserError('BOM not found.');
     if (upload.status !== 'CORRECT') throw new UserError('This BOM is not marked correct.');
+    if (upload.overrideNote && user.role !== 'Admin') {
+      throw new UserError('An Admin approved this BOM with an override. Only an Admin can reopen it.');
+    }
     await tx.bomUpload.update({ where: { id: uploadId }, data: { status: 'DRAFT', confirmedById: null, confirmedByName: null, confirmedAt: null, overrideNote: null } });
     await recheckUpload(tx, uploadId);
     await tx.editLog.create({
-      data: { tableName: 'bom_uploads', recordId: uploadId, fieldName: 'status', oldValue: 'CORRECT', newValue: 'DRAFT (reopened)', ...auditUser(user) },
+      data: {
+        tableName: 'bom_uploads',
+        recordId: uploadId,
+        fieldName: 'status',
+        oldValue: upload.overrideNote ? `CORRECT (override: ${upload.overrideNote})` : 'CORRECT',
+        newValue: 'DRAFT (reopened)',
+        ...auditUser(user),
+      },
     });
     return { id: uploadId };
-  });
+  }, { timeout: 30_000 });
 }

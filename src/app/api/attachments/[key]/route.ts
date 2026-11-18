@@ -1,23 +1,22 @@
 import { NextResponse } from 'next/server';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getObject, s3Configured } from '@/lib/s3';
 
-const S3_ENDPOINT_URL = process.env.S3_ENDPOINT_URL || 'http://192.168.1.190:8500';
-const S3_BUCKET = process.env.S3_BUCKET || 'ceebuild-docket';
-const S3_ACCESS_KEY = process.env.S3_ACCESS_KEY || 'ai_server';
-const S3_SECRET_KEY = process.env.S3_SECRET_KEY || 'asmitabidyututsabminmoyarecool';
-const S3_REGION = process.env.S3_REGION || 'us-east-1';
-
-const s3Client = new S3Client({
-  endpoint: S3_ENDPOINT_URL,
-  region: S3_REGION,
-  credentials: {
-    accessKeyId: S3_ACCESS_KEY,
-    secretAccessKey: S3_SECRET_KEY,
-  },
-  forcePathStyle: true,
-});
+// Only these types may be shown inline (in-app preview). Everything else, notably HTML/SVG/XML,
+// is always sent as a download so an uploaded file can never run script on the app's origin.
+const INLINE_TYPES: Record<string, string> = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+};
 
 export async function GET(req: Request, { params }: { params: Promise<{ key: string }> }) {
+  if (!s3Configured) {
+    return NextResponse.json({ error: 'File storage is not configured on the server.' }, { status: 503 });
+  }
   try {
     const { key } = await params;
     if (!key) {
@@ -25,43 +24,42 @@ export async function GET(req: Request, { params }: { params: Promise<{ key: str
     }
 
     const decodedKey = decodeURIComponent(key);
+    if (decodedKey.includes('..') || decodedKey.startsWith('/')) {
+      return NextResponse.json({ error: 'Invalid attachment key' }, { status: 400 });
+    }
 
-    const command = new GetObjectCommand({
-      Bucket: S3_BUCKET,
-      Key: decodedKey,
-    });
-
-    const s3Response = await s3Client.send(command);
-
-    if (!s3Response.Body) {
+    const object = await getObject(decodedKey);
+    if (!object) {
       return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
     }
 
-    const byteArray = await s3Response.Body.transformToByteArray();
-    const buffer = Buffer.from(byteArray);
-    let contentType = s3Response.ContentType || 'application/octet-stream';
-    // Older uploads may lack a proper type; browsers only preview PDFs inline when typed correctly.
-    if (/\.pdf$/i.test(decodedKey) && !/pdf/i.test(contentType)) contentType = 'application/pdf';
+    // The type is decided by the file extension, never by what the uploader claimed.
+    const ext = (decodedKey.match(/\.([a-z0-9]+)$/i)?.[1] || '').toLowerCase();
+    const inlineType = INLINE_TYPES[ext];
 
-    // ?download=1 forces a save dialog; otherwise the file is shown inline (in-app preview).
+    // ?download=1 forces a save dialog; otherwise only safe types are previewed inline.
     const wantsDownload = new URL(req.url).searchParams.get('download') === '1';
+    const inline = !wantsDownload && !!inlineType;
+
     const parts = decodedKey.split('_');
     const originalName = parts.length > 2 ? parts.slice(2).join('_') : decodedKey;
-    const safeName = originalName.replace(/["\\\r\n]/g, '_');
+    const safeName = originalName.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-    return new Response(buffer, {
+    return new Response(Buffer.from(object.body), {
       status: 200,
       headers: {
-        'Content-Type': contentType,
-        'Content-Disposition': `${wantsDownload ? 'attachment' : 'inline'}; filename="${safeName}"`,
-        'Cache-Control': 'public, max-age=31536000, immutable',
+        'Content-Type': inline ? inlineType : 'application/octet-stream',
+        'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`,
+        'X-Content-Type-Options': 'nosniff',
+        'Cache-Control': 'private, max-age=86400',
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const name = (error as { name?: string })?.name;
+    if (name === 'NoSuchKey' || name === 'NotFound') {
+      return NextResponse.json({ error: 'Attachment not found' }, { status: 404 });
+    }
     console.error('Attachment proxy fetch error:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to retrieve attachment from S3' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to retrieve attachment' }, { status: 500 });
   }
 }

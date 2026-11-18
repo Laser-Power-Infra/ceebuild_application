@@ -15,7 +15,7 @@ export class UserError extends Error {}
 function toMessage(err: unknown, fallback: string) {
   if (err instanceof UserError) return err.message;
   if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-    return 'That number already exists for this order.';
+    return 'That value already exists (it must be unique).';
   }
   console.error(fallback, err);
   return fallback;

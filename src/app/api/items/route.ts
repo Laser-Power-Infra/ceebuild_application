@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { autoDetectOurItemNot, autoDetectOurItemNotAsync, extractKeyPhrases } from '@/lib/classifier';
 import { requireUser, auditUser, pickFields, EDITOR_ROLES, ADMIN_ROLES } from '@/lib/auth/server';
+import { normalizeDocketNo } from '@/lib/dockets';
+import { createdAtRange } from '@/lib/dateRange';
 
 // Fields a client may change through PUT /api/items.
 const EDITABLE_ITEM_FIELDS = [
@@ -72,8 +74,8 @@ export async function GET(req: Request) {
     const startDate = searchParams.get('startDate');
     const endDate = searchParams.get('endDate');
 
-    const page = parseInt(searchParams.get('page') || '1');
-    const limit = parseInt(searchParams.get('limit') || '100');
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1') || 1);
+    const limit = Math.min(Math.max(1, parseInt(searchParams.get('limit') || '100') || 100), 1000);
     const skip = (page - 1) * limit;
 
     const where: any = {};
@@ -89,10 +91,13 @@ export async function GET(req: Request) {
       ];
     }
 
-    if (docketFilters.length === 1) {
-      where.docketNoQtnNo = { contains: docketFilters[0], mode: 'insensitive' };
-    } else if (docketFilters.length > 1) {
-      where.docketNoQtnNo = { in: docketFilters };
+    // Items belong to a docket by exact number (trimmed, case-insensitive) - never "contains",
+    // otherwise CEE-000518 would also pull in CEE-000518-R1.
+    const and: any[] = [];
+    if (docketFilters.length > 0) {
+      and.push({
+        OR: docketFilters.map((d) => ({ docketNoQtnNo: { equals: normalizeDocketNo(d), mode: 'insensitive' } })),
+      });
     }
 
     if (itemFilters.length === 1) {
@@ -179,11 +184,9 @@ export async function GET(req: Request) {
       where.status = { in: statusFilters };
     }
 
-    if (startDate || endDate) {
-      where.createdAt = {};
-      if (startDate) where.createdAt.gte = new Date(startDate);
-      if (endDate) where.createdAt.lte = new Date(endDate);
-    }
+    const createdAt = createdAtRange(startDate, endDate);
+    if (createdAt) where.createdAt = createdAt;
+    if (and.length) where.AND = and;
 
     const [items, totalCount] = await Promise.all([
       prisma.itemTable.findMany({
@@ -275,9 +278,10 @@ export async function POST(req: Request) {
     // OUR ITEM/NOT automatic fill function is OFF (disabled per user request)
     const finalOurItemNot = (ourItemNot && ourItemNot.trim()) ? ourItemNot.trim() : null;
 
-    const created = await prisma.itemTable.create({
+    const created = await prisma.$transaction(async (tx) => {
+     const item = await tx.itemTable.create({
       data: {
-        docketNoQtnNo: docketNoQtnNo ? docketNoQtnNo.trim() : null,
+        docketNoQtnNo: docketNoQtnNo ? normalizeDocketNo(docketNoQtnNo) : null,
         itemNameParty: itemNameParty.trim(),
         uom: uom ? uom.trim() : null,
         qty: qty ? qty.trim() : null,
@@ -294,17 +298,18 @@ export async function POST(req: Request) {
         uomOfQtn: (uomOfQtn && uomOfQtn.trim()) ? uomOfQtn.trim() : (unitWtOfMemberKg && unitWtOfMemberKg.trim() ? unitWtOfMemberKg.trim() : null),
         status: (status && status.trim()) ? status.trim() : null,
       },
-    });
-
-    await prisma.editLog.create({
+     });
+     await tx.editLog.create({
       data: {
         tableName: 'iteam-table',
-        recordId: created.id,
+        recordId: item.id,
         fieldName: 'CREATE_ITEM',
         oldValue: null,
-        newValue: `Created Item: "${created.itemNameParty}" under Docket: ${created.docketNoQtnNo || 'N/A'}`,
+        newValue: `Created Item: "${item.itemNameParty}" under Docket: ${item.docketNoQtnNo || 'N/A'}`,
         ...auditUser(user),
       },
+     });
+     return item;
     });
 
     return NextResponse.json(created, { status: 201 });
@@ -328,19 +333,23 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'No editable fields supplied' }, { status: 400 });
     }
 
-    const existing = await prisma.itemTable.findUnique({ where: { id: Number(id) } });
-    if (!existing) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
+    if (typeof data.docketNoQtnNo === 'string') data.docketNoQtnNo = normalizeDocketNo(data.docketNoQtnNo) || null;
 
-    const updated = await prisma.itemTable.update({
-      where: { id: Number(id) },
-      data,
-    });
+    const result = await prisma.$transaction(async (tx) => {
+      const existing = await tx.itemTable.findUnique({ where: { id: Number(id) } });
+      if (!existing) return null;
 
-    for (const key of Object.keys(data)) {
-      const oldVal = (existing as any)[key] != null ? String((existing as any)[key]) : '';
-      const newVal = data[key] != null ? String(data[key]) : '';
-      if (oldVal !== newVal) {
-        await prisma.editLog.create({
+      const updated = await tx.itemTable.update({
+        where: { id: Number(id) },
+        data,
+      });
+
+      for (const key of Object.keys(data)) {
+        const oldVal = (existing as any)[key] != null ? String((existing as any)[key]) : '';
+        const newVal = data[key] != null ? String(data[key]) : '';
+        if (oldVal === newVal) continue;
+
+        await tx.editLog.create({
           data: {
             tableName: 'iteam-table',
             recordId: Number(id),
@@ -351,42 +360,52 @@ export async function PUT(req: Request) {
           },
         });
 
-        // If user manually updated ourItemNot, extract candidate phrases, save rule to master-values, and update all matching items!
-        if (key === 'ourItemNot' && newVal && existing.itemNameParty) {
-          const newCat = newVal.toUpperCase();
-          const phrases = extractKeyPhrases(existing.itemNameParty);
-          const topPhrase = phrases[0] || '';
+        // A manual "Our item/Not" choice is remembered as a keyword rule (once per keyword+category)
+        // and copied ONLY to items with exactly the same party item name, each change logged.
+        if (key === 'ourItemNot' && newVal && existing.itemNameParty?.trim()) {
+          const newCat = newVal.trim().toUpperCase();
+          const topPhrase = extractKeyPhrases(existing.itemNameParty)[0] || '';
 
           if (topPhrase) {
-            await prisma.masterValue.create({
-              data: {
-                type: 'KEYWORD_CLASSIFICATION_RULE',
-                value: JSON.stringify({
-                  keyword: topPhrase,
-                  category: newCat,
-                  sourceItem: existing.itemNameParty,
-                }),
-                isActive: true,
-              },
-            }).catch(console.error);
+            const ruleValue = JSON.stringify({ keyword: topPhrase, category: newCat, sourceItem: existing.itemNameParty });
+            const sameRule = await tx.masterValue.findFirst({
+              where: { type: 'KEYWORD_CLASSIFICATION_RULE', value: { contains: JSON.stringify(topPhrase) } },
+            });
+            if (!sameRule) {
+              await tx.masterValue.create({ data: { type: 'KEYWORD_CLASSIFICATION_RULE', value: ruleValue, isActive: true } });
+            } else if (sameRule.value !== ruleValue || !sameRule.isActive) {
+              await tx.masterValue.update({ where: { id: sameRule.id }, data: { value: ruleValue, isActive: true } });
+            }
           }
 
-          // Propagate change to all items sharing identical or similar description
-          try {
-            await prisma.itemTable.updateMany({
-              where: {
-                itemNameParty: { contains: existing.itemNameParty.trim(), mode: 'insensitive' },
-              },
+          const twins = await tx.itemTable.findMany({
+            where: {
+              id: { not: existing.id },
+              itemNameParty: { equals: existing.itemNameParty.trim(), mode: 'insensitive' },
+            },
+            select: { id: true, ourItemNot: true },
+          });
+          for (const twin of twins) {
+            if ((twin.ourItemNot || '').trim().toUpperCase() === newCat) continue;
+            await tx.itemTable.update({ where: { id: twin.id }, data: { ourItemNot: newCat } });
+            await tx.editLog.create({
               data: {
-                ourItemNot: newCat,
+                tableName: 'iteam-table',
+                recordId: twin.id,
+                fieldName: 'ourItemNot',
+                oldValue: twin.ourItemNot || '',
+                newValue: `${newCat} (copied from item #${existing.id} with the same name)`,
+                ...auditUser(user),
               },
             });
-          } catch (batchErr) {
-            console.error('Error updating matching items batch:', batchErr);
           }
         }
       }
-    }
+      return updated;
+    });
+
+    if (!result) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
+    const updated = result;
 
     return NextResponse.json(updated);
   } catch (error) {

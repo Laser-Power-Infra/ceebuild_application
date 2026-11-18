@@ -1,8 +1,12 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { requireUser } from '@/lib/auth/server';
 
-// Audit trail for the dashboard's Logs tab. Auth is enforced by proxy.ts.
+// Audit trail for the dashboard's Logs tab. proxy.ts lets every GET through without a login,
+// and the log holds full snapshots of deleted records and user emails, so a login is required here.
 export async function GET(req: Request) {
+  const auth = await requireUser();
+  if (auth.error) return auth.error;
   try {
     const { searchParams } = new URL(req.url);
     const tableName = searchParams.get('tableName');

@@ -52,7 +52,8 @@ export function buildWhere(spec: TableSpec, query: TableQuery, skip?: string, ex
   for (const [key, value] of Object.entries(query.columnSearch ?? {})) {
     const f = spec.fields[key];
     if (key === skip || !f || !value.trim()) continue;
-    parts.push(sql`regexp_replace(${text(f.text)}, '\s', '', 'g') ILIKE ${`%${escapeLike(squish(value))}%`}`);
+    // '\\s' in the template reaches SQL as \s (whitespace); a single '\s' would arrive as a plain 's'.
+    parts.push(sql`regexp_replace(${text(f.text)}, '\\s', '', 'g') ILIKE ${`%${escapeLike(squish(value))}%`}`);
   }
   for (const [key, range] of Object.entries(query.dateRanges ?? {})) {
     const f = spec.fields[key];
@@ -65,7 +66,7 @@ export function buildWhere(spec: TableSpec, query: TableQuery, skip?: string, ex
   const searchable = Object.values(spec.fields).filter((f) => f.searchable !== false);
   if (search && searchable.length) {
     const all = Prisma.join(searchable.map((f) => text(f.text)), " || ' ' || ");
-    parts.push(sql`regexp_replace(${all}, '\s', '', 'g') ILIKE ${`%${escapeLike(squish(search))}%`}`);
+    parts.push(sql`regexp_replace(${all}, '\\s', '', 'g') ILIKE ${`%${escapeLike(squish(search))}%`}`);
   }
   parts.push(...extra);
   return parts.length ? Prisma.join(parts, ' AND ') : sql`TRUE`;

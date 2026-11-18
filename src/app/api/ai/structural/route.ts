@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser, EDITOR_ROLES } from '@/lib/auth/server';
-import { getGroqApiKey, saveGroqApiKeyToDb } from '@/lib/groqHelper';
+import { getGroqApiKey } from '@/lib/groqHelper';
 
 const GROQ_MODELS = [
   'groq/compound',
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
   let rawDescription = '';
   try {
     const body = await req.json();
-    const { itemNameParty, apiKey: customApiKey } = body;
+    const { itemNameParty } = body;
 
     if (!itemNameParty || !itemNameParty.trim()) {
       return NextResponse.json(
@@ -134,13 +134,11 @@ export async function POST(req: Request) {
     }
 
     rawDescription = itemNameParty.trim();
-    const apiKey = (customApiKey || process.env.GROQ_API_KEY || '')
-      .replace(/^["']|["']$/g, '')
-      .trim();
+    const apiKey = getGroqApiKey();
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'Groq API Key is missing. Please set GROQ_API_KEY or enter your API key in Settings.' },
+        { error: 'Groq API Key is missing. Ask the administrator to set GROQ_API_KEY in the server .env file.' },
         { status: 400 }
       );
     }
@@ -202,11 +200,11 @@ Rules:
             lastErrorText.includes('model_not_found') ||
             res.status === 401
           ) {
-            console.error('❌ GROQ API KEY INVALID OR EXPIRED! Key sent:', apiKey.substring(0, 10) + '...');
+            console.error('GROQ API key invalid or expired');
             return NextResponse.json(
               {
                 error:
-                  'Your Groq API Key is invalid or expired. Please generate a new free API key at https://console.groq.com/keys and update GROQ_API_KEY in your .env file or enter it in the dashboard popup.',
+                  'Your Groq API Key is invalid or expired. Please generate a new free API key at https://console.groq.com/keys and ask the administrator to update GROQ_API_KEY in the server .env file.',
               },
               { status: 401 }
             );

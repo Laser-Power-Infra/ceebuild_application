@@ -41,7 +41,8 @@ export async function POST(req: Request) {
 
   try {
     const body = await req.json();
-    const newTerm = await prisma.treamAndConditions.create({
+    const newTerm = await prisma.$transaction(async (tx) => {
+     const term = await tx.treamAndConditions.create({
       data: {
         price: body.price || null,
         payment: body.payment || null,
@@ -50,17 +51,18 @@ export async function POST(req: Request) {
         approval: body.approval || null,
         inspection: body.inspection || null,
       },
-    });
-
-    await prisma.editLog.create({
+     });
+     await tx.editLog.create({
       data: {
         tableName: 'tream-and-conditions',
-        recordId: newTerm.id,
+        recordId: term.id,
         fieldName: 'ALL_FIELDS',
         oldValue: 'NONE (New Record)',
         newValue: JSON.stringify(pickFields(body, EDITABLE_TERM_FIELDS)),
         ...auditUser(user),
       },
+     });
+     return term;
     });
 
     return NextResponse.json(newTerm);
@@ -84,19 +86,20 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: 'No editable fields supplied' }, { status: 400 });
     }
 
-    const existing = await prisma.treamAndConditions.findUnique({ where: { id: Number(id) } });
-    if (!existing) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
+    const updated = await prisma.$transaction(async (tx) => {
+     const existing = await tx.treamAndConditions.findUnique({ where: { id: Number(id) } });
+     if (!existing) return null;
 
-    const updated = await prisma.treamAndConditions.update({
+     const row = await tx.treamAndConditions.update({
       where: { id: Number(id) },
       data,
-    });
+     });
 
-    for (const key of Object.keys(data)) {
+     for (const key of Object.keys(data)) {
       const oldVal = (existing as any)[key] != null ? String((existing as any)[key]) : '';
       const newVal = data[key] != null ? String(data[key]) : '';
       if (oldVal !== newVal) {
-        await prisma.editLog.create({
+        await tx.editLog.create({
           data: {
             tableName: 'tream-and-conditions',
             recordId: Number(id),
@@ -107,8 +110,11 @@ export async function PUT(req: Request) {
           },
         });
       }
-    }
+     }
+     return row;
+    });
 
+    if (!updated) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
     return NextResponse.json(updated);
   } catch (error) {
     console.error('Error updating term:', error);

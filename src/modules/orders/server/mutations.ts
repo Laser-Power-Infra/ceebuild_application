@@ -2,6 +2,7 @@ import 'server-only';
 import { prisma } from '@/lib/prisma';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
+import { normalizeDocketNo } from '@/lib/dockets';
 
 export interface NewOrderInput {
   docketId: number;
@@ -25,7 +26,7 @@ export async function createOrder(input: NewOrderInput, user: AuthUser) {
     if (await tx.order.findUnique({ where: { poNumber } })) throw new UserError(`PO ${poNumber} already has an order.`);
 
     const items = docket.docketNoQtnNo
-      ? await tx.itemTable.findMany({ where: { docketNoQtnNo: docket.docketNoQtnNo }, orderBy: { id: 'asc' } })
+      ? await tx.itemTable.findMany({ where: { docketNoQtnNo: { equals: normalizeDocketNo(docket.docketNoQtnNo), mode: 'insensitive' } }, orderBy: { id: 'asc' } })
       : [];
 
     const order = await tx.order.create({

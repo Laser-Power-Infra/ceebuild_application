@@ -63,15 +63,22 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
     setTimeout(() => setNotification(null), 4000);
   };
 
+  const docketNo = (docket?.docketNoQtnNo || '').trim();
+
   const handleAiCategorize = async () => {
     if (!docket) return;
+    // The categorize API only works per docket; without a number it would touch unrelated items.
+    if (!docketNo) {
+      showToast('Autofill by AI needs a docket number. Set the Docket / Qtn No on the dashboard first.');
+      return;
+    }
     setAiCategorizing(true);
     try {
       const res = await fetch('/api/ai/categorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          docketNoQtnNo: docket.docketNoQtnNo,
+          docketNoQtnNo: docketNo,
         }),
       });
       const data = await res.json();
@@ -83,8 +90,8 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
         showToast(`✨ AI Categorization Complete! Updated ${data.updatedCount} items.`);
         // Refetch updated items for this quotation
         const refreshedRes = await fetch(`/api/quotation/${id}`);
-        const refreshedData = await refreshedRes.json();
-        if (refreshedData.items) setItems(refreshedData.items);
+        const refreshedData = await refreshedRes.json().catch(() => ({}));
+        if (refreshedRes.ok && refreshedData.items) setItems(refreshedData.items);
       }
     } catch (err: any) {
       console.error('AI Error:', err);
@@ -265,9 +272,13 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
         <div className="flex items-center space-x-3">
           <button
             onClick={handleAiCategorize}
-            disabled={aiCategorizing}
+            disabled={aiCategorizing || !docketNo}
             className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-sm px-4 py-2.5 rounded-xl shadow-md transition-all"
-            title="Autofill unclassified Manufacturing & Trading items using Groq AI"
+            title={
+              docketNo
+                ? 'Autofill unclassified Manufacturing & Trading items using Groq AI'
+                : 'Autofill by AI is unavailable: this docket has no Docket / Qtn No'
+            }
           >
             {aiCategorizing ? (
               <>

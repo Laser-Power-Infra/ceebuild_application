@@ -85,7 +85,8 @@ export function BomTab({ orderId, role, quotedMt, onChanged }: { orderId: number
                 <CheckCircle2 /> Correct BOM
               </Button>
             )}
-            {upload && locked && (
+            {/* An Admin override approval can only be reopened by an Admin (enforced on the server too). */}
+            {upload && locked && (!upload.overrideNote || role === 'Admin') && (
               <Button
                 variant="outline"
                 onClick={async () => {
