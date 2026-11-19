@@ -29,15 +29,29 @@ export const initialTable: TableState = {
   selectedId: null,
 };
 
-export type OrderTab = 'bom' | 'galv' | 'inspection' | 'di' | 'dispatch' | 'quotation';
+/** Tabs of the order page, in business-process order (see src/modules/orders/ui/OrderPage.tsx). */
+export type OrderTab =
+  | 'summary'
+  | 'bom'
+  | 'indent'
+  | 'receipt'
+  | 'production'
+  | 'stage'
+  | 'galv'
+  | 'inspection'
+  | 'di'
+  | 'dispatch'
+  | 'billing'
+  | 'quotation';
 
 interface OpsState {
   tables: Record<string, TableState>;
   orderTab: OrderTab;
-  executionTab: Exclude<OrderTab, 'bom' | 'quotation'>;
+  /** Active register on the cross-order /execution page (a RegisterKey). */
+  executionTab: string;
 }
 
-const initialState: OpsState = { tables: {}, orderTab: 'bom', executionTab: 'galv' };
+const initialState: OpsState = { tables: {}, orderTab: 'summary', executionTab: 'galv' };
 
 const t = (s: OpsState, id: string) => (s.tables[id] ??= { ...initialTable });
 
@@ -102,7 +116,7 @@ const slice = createSlice({
     setOrderTab(s, a: PayloadAction<OrderTab>) {
       s.orderTab = a.payload;
     },
-    setExecutionTab(s, a: PayloadAction<OpsState['executionTab']>) {
+    setExecutionTab(s, a: PayloadAction<string>) {
       s.executionTab = a.payload;
     },
   },

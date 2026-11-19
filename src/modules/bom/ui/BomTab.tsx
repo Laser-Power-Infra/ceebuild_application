@@ -61,7 +61,7 @@ export function BomTab({ orderId, role, quotedMt, onChanged }: { orderId: number
               {upload.fileName}
               {upload.sheetName ? <span className="font-medium text-slate-500"> · sheet {upload.sheetName}</span> : null}
               <span
-                className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-extrabold ${locked ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}
+                className={`ml-2 rounded-full px-2 py-0.5 text-[11px] font-semibold ${locked ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}
               >
                 {locked ? '✓ Correct BOM' : 'Draft – being checked'}
               </span>

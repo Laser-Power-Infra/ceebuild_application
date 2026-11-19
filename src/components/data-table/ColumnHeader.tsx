@@ -36,8 +36,8 @@ export function ColumnHeader<Row>({ column, sort, onSortChange, selected, facetO
           aria-sort={dir === "asc" ? "ascending" : dir === "desc" ? "descending" : "none"}
           aria-label={`Sort by ${column.label}`}
           className={cn(
-            "flex min-w-0 flex-1 items-center gap-1 rounded-md px-1 py-1 text-left outline-none transition-colors duration-100 hover:text-primary-foreground focus-visible:ring-2 focus-visible:ring-primary-foreground/60 active:opacity-70 motion-reduce:transition-none",
-            dir ? "text-primary-foreground" : "text-primary-foreground/85",
+            "flex min-w-0 flex-1 items-center gap-1 rounded-md px-1 py-1 text-left outline-none transition-colors duration-100 hover:text-slate-900 focus-visible:ring-2 focus-visible:ring-primary/40 active:opacity-70 motion-reduce:transition-none",
+            dir ? "text-slate-900" : "text-slate-600",
           )}
         >
           <span className="truncate">{column.label}</span>
@@ -47,7 +47,7 @@ export function ColumnHeader<Row>({ column, sort, onSortChange, selected, facetO
           />
         </button>
       ) : (
-        <span className="min-w-0 flex-1 truncate px-1 text-primary-foreground/85">{column.label}</span>
+        <span className="min-w-0 flex-1 truncate px-1 text-slate-600">{column.label}</span>
       )}
       {column.filter && column.kind === "date" && <DateFilter label={column.label} value={dateRange} onChange={onDateRangeChange} />}
       {column.filter && column.kind !== "date" && (

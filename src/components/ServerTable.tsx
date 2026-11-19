@@ -190,7 +190,7 @@ export function Kpi({ label, value, tone, active, onClick }: { label: string; va
       className={`min-w-36 rounded-xl border bg-white px-4 py-3 text-left shadow-sm ${active ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200'} ${onClick ? 'hover:border-blue-300' : ''}`}
     >
       <div className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{label}</div>
-      <div className={`mt-1 text-xl font-extrabold tabular-nums ${toneCls}`}>{value}</div>
+      <div className={`mt-1 text-xl font-semibold tabular-nums ${toneCls}`}>{value}</div>
     </Tag>
   );
 }

@@ -41,7 +41,7 @@ export function ResizeHandle({ min = 60, onResize, onReset, label }: ResizeHandl
       onClick={(e) => e.stopPropagation()}
       className="absolute top-0 right-0 z-10 flex h-full w-2 cursor-col-resize touch-none items-center justify-center opacity-0 transition-opacity duration-100 group-hover/th:opacity-100 hover:opacity-100 active:opacity-100 motion-reduce:transition-none"
     >
-      <span className="h-4 w-px rounded-full bg-primary-foreground/40 group-hover/th:bg-primary-foreground/80" />
+      <span className="h-4 w-px rounded-full bg-slate-300 group-hover/th:bg-slate-400" />
     </div>
   );
 }

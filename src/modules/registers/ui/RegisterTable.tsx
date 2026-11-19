@@ -5,7 +5,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import { ServerTable, Kpi, fmtNum } from '@/components/ServerTable';
 import { Button } from '@/components/ui/button';
 import type { DataColumn } from '@/components/data-table/types';
-import { deleteRegisterEntryAction, listRegisterAction, listRegisterFacetAction } from '@/app/actions/registers';
+import { deleteRegisterEntryAction, listRegisterAction, listRegisterFacetAction, updateSecurityStatusAction } from '@/app/actions/registers';
 import { REGISTER_KPIS, REGISTER_LABELS, registerColumns, type RegisterKey, type RegisterRow } from '../columns';
 import { RegisterForm } from './RegisterForm';
 
@@ -69,6 +69,17 @@ export function RegisterTable({ register, orderId, role, onChanged }: { register
         reloadToken={reload}
         fetchPage={listRegisterAction}
         fetchFacet={listRegisterFacetAction}
+        onEdit={
+          register === 'security' && canEdit
+            ? async (row, column, value) => {
+                if (column.key !== 'status') return false;
+                const res = await updateSecurityStatusAction(row.id, value);
+                if (!res.success) setNotice({ tone: 'red', text: res.error });
+                else onChanged?.();
+                return res.success;
+              }
+            : undefined
+        }
         searchPlaceholder={`Search ${REGISTER_LABELS[register].toLowerCase()}`}
         header={({ meta, total }) => (
           <div className="flex flex-wrap gap-3">

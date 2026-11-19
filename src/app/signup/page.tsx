@@ -51,13 +51,13 @@ export default function SignupPage() {
     <div className="min-h-screen flex items-center justify-center bg-slate-900 font-sans p-4 relative overflow-hidden">
       <div className="absolute -top-32 -left-32 w-96 h-96 bg-blue-600/30 rounded-full blur-3xl" />
       <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-indigo-600/30 rounded-full blur-3xl" />
-      <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl border border-slate-100 p-8 space-y-6 relative z-10">
+      <div className="w-full max-w-md bg-white rounded-xl shadow-2xl border border-slate-100 p-8 space-y-6 relative z-10">
         <div className="text-center space-y-3">
-          <div className="inline-flex p-3 bg-blue-50 rounded-2xl border border-blue-100 shadow-sm">
+          <div className="inline-flex p-3 bg-blue-50 rounded-xl border border-blue-100 shadow-sm">
             <img src="/ceebuild-logo.png" alt="CEEBUILD Logo" className="h-12 w-auto object-contain" />
           </div>
           <div>
-            <h1 className="text-xl font-extrabold text-slate-900">Create a CEEBUILD account</h1>
+            <h1 className="text-xl font-semibold text-slate-900">Create a CEEBUILD account</h1>
             <p className="text-xs text-slate-500 font-medium mt-1">An account lets you add and edit dockets, items and terms</p>
           </div>
         </div>
@@ -65,7 +65,7 @@ export default function SignupPage() {
         {error && (
           <div
             role="alert"
-            className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-2xl text-xs font-bold text-center"
+            className="bg-rose-50 border border-rose-200 text-rose-700 px-4 py-3 rounded-xl text-xs font-bold text-center"
           >
             {error}
           </div>
@@ -73,7 +73,7 @@ export default function SignupPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4 text-xs font-medium">
           <div>
-            <label htmlFor="name" className="font-extrabold text-slate-700 block mb-1.5">
+            <label htmlFor="name" className="font-semibold text-slate-700 block mb-1.5">
               Full name
             </label>
             <div className="relative">
@@ -83,7 +83,7 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label htmlFor="email" className="font-extrabold text-slate-700 block mb-1.5">
+            <label htmlFor="email" className="font-semibold text-slate-700 block mb-1.5">
               Email
             </label>
             <div className="relative">
@@ -102,7 +102,7 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label htmlFor="password" className="font-extrabold text-slate-700 block mb-1.5">
+            <label htmlFor="password" className="font-semibold text-slate-700 block mb-1.5">
               Password <span className="font-medium text-slate-400">(at least {MIN_PASSWORD_LENGTH} characters)</span>
             </label>
             <div className="relative">
@@ -112,7 +112,7 @@ export default function SignupPage() {
           </div>
 
           <div>
-            <label htmlFor="confirm" className="font-extrabold text-slate-700 block mb-1.5">
+            <label htmlFor="confirm" className="font-semibold text-slate-700 block mb-1.5">
               Confirm password
             </label>
             <div className="relative">
@@ -124,7 +124,7 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-extrabold py-3.5 rounded-xl shadow-md shadow-blue-500/20 text-xs flex items-center justify-center space-x-2"
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white font-semibold py-3.5 rounded-xl shadow-sm shadow-blue-500/20 text-xs flex items-center justify-center space-x-2"
           >
             <UserPlus className="w-4 h-4" />
             <span>{submitting ? 'Creating account...' : 'Sign up'}</span>

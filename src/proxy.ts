@@ -27,7 +27,9 @@ export async function proxy(req: NextRequest) {
 
   const session = await getToken({ req, secret: process.env.AUTH_SECRET });
 
-  if ((pathname === '/login' || pathname === '/signup') && session) return NextResponse.redirect(new URL('/', req.url));
+  // No redirect away from /login or /signup when a cookie exists: the cookie may be stale (user
+  // disabled, password/role changed, cookie from another server), and the user must be able to
+  // sign in again. Pages decide "signed in" with the database check in getSessionUser().
 
   // Public read access: pages and safe methods need no login.
   if (!pathname.startsWith('/api/') || SAFE_METHODS.has(method)) return NextResponse.next();

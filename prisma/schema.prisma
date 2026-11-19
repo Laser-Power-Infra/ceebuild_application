@@ -54,7 +54,7 @@ model DockerPartyName {
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   // Orders raised when this offer became a PO (A15). Linked by id; ON DELETE RESTRICT.
-  orders           Order[]
+  orders Order[]
 
   @@map("docket-party-name")
 }
@@ -91,7 +91,7 @@ model EditLog {
 
 model MasterValue {
   id        Int      @id @default(autoincrement())
-  type      String   // e.g. 'PARTY_NAME', 'STATE', 'UTILITY', 'ADDRESS', 'STATUS'
+  type      String // e.g. 'PARTY_NAME', 'STATE', 'UTILITY', 'ADDRESS', 'STATUS'
   value     String
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
@@ -135,12 +135,24 @@ model Order {
   poDate        DateTime        @map("po_date") @db.Date
   client        String?
   remarks       String?
+  // M14: contract value (Rs, incl. tax) and contractual delivery date, for billing and delay flags.
+  contractValue Decimal?        @map("contract_value") @db.Decimal(16, 2)
+  deliveryDue   DateTime?       @map("delivery_due") @db.Date
   createdById   Int?            @map("created_by_id")
   createdByName String?         @map("created_by_name")
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
 
   lines                OrderLine[]
+  rmIndents            RmIndent[]
+  rmReceipts           RmReceipt[]
+  cuttingPlans         CuttingPlan[]
+  pieceRoutings        PieceRouting[]
+  productionEntries    ProductionEntry[]
+  stageInspections     StageInspection[]
+  invoices             Invoice[]
+  collections          Collection[]
+  securities           OrderSecurity[]
   bomUploads           BomUpload[]
   bomPieces            BomPiece[]
   galvChallans         GalvChallan[]
@@ -240,6 +252,9 @@ model SectionMaster {
   kgPerM     Decimal  @map("kg_per_m") @db.Decimal(10, 3)
   grade      String?
   approved   Boolean  @default(true)
+  // Longest bar the mill supplies for this section (null = plan_settings.max_custom_mm),
+  // e.g. ISMC 100x50 up to 6600 mm (3 x 2200).
+  maxBarMm   Int?     @map("max_bar_mm")
   source     String?
   createdAt  DateTime @default(now()) @map("created_at")
   updatedAt  DateTime @updatedAt @map("updated_at")
@@ -330,6 +345,7 @@ model Dispatch {
   diId          Int?                 @map("di_id")
   di            DispatchInstruction? @relation(fields: [diId], references: [id], onDelete: SetNull)
   invoiceNo     String?              @map("invoice_no")
+  ewayBillNo    String?              @map("eway_bill_no")
   lrNo          String?              @map("lr_no")
   vehicleNo     String?              @map("vehicle_no")
   dispatchDate  DateTime             @map("dispatch_date") @db.Date
@@ -341,7 +357,322 @@ model Dispatch {
   createdAt     DateTime             @default(now()) @map("created_at")
   updatedAt     DateTime             @updatedAt @map("updated_at")
 
+  invoices Invoice[]
+
   @@index([orderId])
   @@index([diId])
   @@map("dispatches")
+}
+
+// ---------------------------------------------------------------------------
+// A15 steps 2-4 + M14: RM indent / receipt / cutting plan, machine plan, production,
+// stage inspection, billing & collection, securities. All additive.
+// ---------------------------------------------------------------------------
+
+// Plant planning defaults (single row, id = 1). Shown as "to confirm" in the UI until the
+// plant signs them off (confirmed = true).
+model PlanSettings {
+  id               Int      @id @default(1)
+  stdBarMm         Int      @default(6000) @map("std_bar_mm")
+  maxCustomMm      Int      @default(6000) @map("max_custom_mm")
+  // Trim the plant needs per bar (both ends together), added on top of k x piece length.
+  endAllowanceMm   Int      @default(0) @map("end_allowance_mm")
+  // Blade loss per cut (0 for shearing/cropping).
+  kerfMm           Int      @default(0) @map("kerf_mm")
+  // Supply tolerance on ordered length: +0 / +tolPlusMm. Never negative.
+  tolPlusMm        Int      @default(20) @map("tol_plus_mm")
+  bufferPct        Decimal  @default(0) @map("buffer_pct") @db.Decimal(6, 2)
+  minOffcutMm      Int      @default(300) @map("min_offcut_mm")
+  // A mark gets its own custom bar length only when it needs at least this many such bars.
+  customMinBars    Int      @default(5) @map("custom_min_bars")
+  // Red-flag thresholds (days) for the overview.
+  bomDueDays       Int      @default(7) @map("bom_due_days")
+  galvAlertDays    Int      @default(7) @map("galv_alert_days")
+  diAlertDays      Int      @default(7) @map("di_alert_days")
+  paymentTermsDays Int      @default(30) @map("payment_terms_days")
+  workDaysPerWeek  Int      @default(6) @map("work_days_per_week")
+  confirmed        Boolean  @default(false)
+  updatedByName    String?  @map("updated_by_name")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("plan_settings")
+}
+
+// Raw-material indent for an order. PRIMARY from the BOM; SUPPLEMENTARY from a re-plan shortfall.
+model RmIndent {
+  id            Int       @id @default(autoincrement())
+  orderId       Int       @map("order_id")
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  indentNo      String    @unique @map("indent_no")
+  // PRIMARY | SUPPLEMENTARY
+  kind          String    @default("PRIMARY")
+  // MIXED (custom + 6 m) | STANDARD (6 m only)
+  strategy      String    @default("MIXED")
+  // DRAFT | ISSUED | CANCELLED. Issued indents are locked.
+  status        String    @default("DRAFT")
+  bomUploadId   Int?      @map("bom_upload_id")
+  // Settings used, Mixed vs 6 m comparison, and the bar patterns (pure-function output).
+  settings      Json
+  comparison    Json?
+  plan          Json?
+  totalBars     Int       @default(0) @map("total_bars")
+  totalWtKg     Decimal   @default(0) @map("total_wt_kg") @db.Decimal(16, 3)
+  remarks       String?
+  createdById   Int?      @map("created_by_id")
+  createdByName String?   @map("created_by_name")
+  issuedByName  String?   @map("issued_by_name")
+  issuedAt      DateTime? @map("issued_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  lines    RmIndentLine[]
+  receipts RmReceipt[]
+
+  @@index([orderId])
+  @@map("rm_indents")
+}
+
+model RmIndentLine {
+  id           Int      @id @default(autoincrement())
+  indentId     Int      @map("indent_id")
+  indent       RmIndent @relation(fields: [indentId], references: [id], onDelete: Cascade)
+  sectionKey   String   @map("section_key")
+  sectionLabel String?  @map("section_label")
+  barLengthMm  Int      @map("bar_length_mm")
+  // CUSTOM (exact multiple for one mark) | STANDARD (6 m nested) | OVERLENGTH (piece longer than a bar)
+  lineType     String   @map("line_type")
+  forMark      String?  @map("for_mark")
+  piecesPerBar Int?     @map("pieces_per_bar")
+  bars         Int
+  bufferBars   Int      @default(0) @map("buffer_bars")
+  kgPerM       Decimal? @map("kg_per_m") @db.Decimal(10, 3)
+  wtKg         Decimal? @map("wt_kg") @db.Decimal(16, 3)
+
+  @@index([indentId])
+  @@map("rm_indent_lines")
+}
+
+// RM received against an order (GRN). Each lot = one section + measured length + nos.
+model RmReceipt {
+  id            Int       @id @default(autoincrement())
+  orderId       Int       @map("order_id")
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  indentId      Int?      @map("indent_id")
+  indent        RmIndent? @relation(fields: [indentId], references: [id], onDelete: SetNull)
+  receiptNo     String    @map("receipt_no")
+  receiptDate   DateTime  @map("receipt_date") @db.Date
+  supplier      String?
+  invoiceNo     String?   @map("invoice_no")
+  remarks       String?
+  createdById   Int?      @map("created_by_id")
+  createdByName String?   @map("created_by_name")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  lots RmReceiptLot[]
+
+  @@unique([orderId, receiptNo])
+  @@map("rm_receipts")
+}
+
+model RmReceiptLot {
+  id               Int       @id @default(autoincrement())
+  receiptId        Int       @map("receipt_id")
+  receipt          RmReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  sectionKey       String    @map("section_key")
+  sectionLabel     String?   @map("section_label")
+  orderedLengthMm  Int       @map("ordered_length_mm")
+  measuredLengthMm Int       @map("measured_length_mm")
+  nos              Int
+  wtKg             Decimal?  @map("wt_kg") @db.Decimal(14, 3)
+  heatNo           String?   @map("heat_no")
+  // OK | SHORT (below ordered: reject/debit note) | OVER_TOL (above ordered + tolerance)
+  lengthStatus     String    @map("length_status")
+  // ACCEPTED | REJECTED | DEBIT_NOTE. Only ACCEPTED lots feed the re-plan.
+  decision         String    @default("ACCEPTED")
+  debitNoteNo      String?   @map("debit_note_no")
+  remarks          String?
+
+  @@index([receiptId])
+  @@map("rm_receipt_lots")
+}
+
+// Cutting plan made from the RM actually received (re-plan). Latest per order is current.
+model CuttingPlan {
+  id                    Int      @id @default(autoincrement())
+  orderId               Int      @map("order_id")
+  order                 Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  settings              Json
+  result                Json
+  piecesPlanned         Int      @default(0) @map("pieces_planned")
+  piecesShort           Int      @default(0) @map("pieces_short")
+  offcuts               Int      @default(0)
+  supplementaryIndentId Int?     @map("supplementary_indent_id")
+  createdByName         String?  @map("created_by_name")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  @@index([orderId])
+  @@map("cutting_plans")
+}
+
+// Ceebuild List of Machinery. Rates are editable; `rateConfirmed` stays false until the plant signs off.
+model Machine {
+  id             Int      @id @default(autoincrement())
+  code           String   @unique
+  name           String
+  // CROPPING | SHEARING | PUNCHING | NOTCHING | BENDING | WELDING | NUMBERING | THREADING
+  operation      String
+  // Identical machines of this code working in parallel (e.g. UP-1 x 2).
+  units          Int      @default(1)
+  ratePerHour    Decimal  @map("rate_per_hour") @db.Decimal(10, 2)
+  // cuts | holes | notches | bends | joints | pieces | threads
+  rateUnit       String   @map("rate_unit")
+  shiftsPerDay   Int      @default(1) @map("shifts_per_day")
+  hoursPerShift  Decimal  @default(8) @map("hours_per_shift") @db.Decimal(4, 2)
+  utilisationPct Decimal  @default(75) @map("utilisation_pct") @db.Decimal(5, 2)
+  rateConfirmed  Boolean  @default(false) @map("rate_confirmed")
+  active         Boolean  @default(true)
+  sortOrder      Int      @default(0) @map("sort_order")
+  remarks        String?
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  productionEntries ProductionEntry[]
+
+  @@map("machines")
+}
+
+// Operations each mark needs (defaults are derived from the section; saved rows override).
+model PieceRouting {
+  id            Int      @id @default(autoincrement())
+  orderId       Int      @map("order_id")
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  markNo        String   @map("mark_no")
+  // CROPPING | SHEARING | NONE
+  cutOp         String   @default("SHEARING") @map("cut_op")
+  holes         Int      @default(0)
+  notches       Int      @default(0)
+  bends         Int      @default(0)
+  welds         Int      @default(0)
+  threads       Int      @default(0)
+  numbering     Boolean  @default(true)
+  updatedByName String?  @map("updated_by_name")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([orderId, markNo])
+  @@map("piece_routings")
+}
+
+// Daily production by mark and machine.
+model ProductionEntry {
+  id            Int      @id @default(autoincrement())
+  orderId       Int      @map("order_id")
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  entryDate     DateTime @map("entry_date") @db.Date
+  // A | B | C
+  shift         String   @default("A")
+  machineId     Int      @map("machine_id")
+  machine       Machine  @relation(fields: [machineId], references: [id], onDelete: Restrict)
+  operation     String
+  markNo        String   @map("mark_no")
+  pieces        Int
+  operatorName  String?  @map("operator_name")
+  remarks       String?
+  createdById   Int?     @map("created_by_id")
+  createdByName String?  @map("created_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([orderId, markNo])
+  @@index([entryDate])
+  @@map("production_entries")
+}
+
+// In-house stage inspection after fabrication, before galvanising.
+model StageInspection {
+  id             Int      @id @default(autoincrement())
+  orderId        Int      @map("order_id")
+  order          Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  inspectionDate DateTime @map("inspection_date") @db.Date
+  stage          String
+  markNo         String?  @map("mark_no")
+  piecesOffered  Int      @map("pieces_offered")
+  piecesAccepted Int      @map("pieces_accepted")
+  piecesRejected Int      @default(0) @map("pieces_rejected")
+  inspector      String?
+  remarks        String?
+  createdById    Int?     @map("created_by_id")
+  createdByName  String?  @map("created_by_name")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([orderId])
+  @@map("stage_inspections")
+}
+
+model Invoice {
+  id            Int       @id @default(autoincrement())
+  orderId       Int       @map("order_id")
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  dispatchId    Int?      @map("dispatch_id")
+  dispatch      Dispatch? @relation(fields: [dispatchId], references: [id], onDelete: SetNull)
+  invoiceNo     String    @unique @map("invoice_no")
+  invoiceDate   DateTime  @map("invoice_date") @db.Date
+  wtKg          Decimal?  @map("wt_kg") @db.Decimal(14, 3)
+  taxableAmount Decimal?  @map("taxable_amount") @db.Decimal(16, 2)
+  totalAmount   Decimal   @map("total_amount") @db.Decimal(16, 2)
+  dueDate       DateTime? @map("due_date") @db.Date
+  remarks       String?
+  createdById   Int?      @map("created_by_id")
+  createdByName String?   @map("created_by_name")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  collections Collection[]
+
+  @@index([orderId])
+  @@map("invoices")
+}
+
+model Collection {
+  id            Int      @id @default(autoincrement())
+  orderId       Int      @map("order_id")
+  order         Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  invoiceId     Int?     @map("invoice_id")
+  invoice       Invoice? @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  receiptDate   DateTime @map("receipt_date") @db.Date
+  amount        Decimal  @db.Decimal(16, 2)
+  // RTGS | LC | CHEQUE | OTHER
+  mode          String   @default("RTGS")
+  reference     String?
+  // Amount withheld by the client against this receipt (retention).
+  retention     Decimal? @db.Decimal(16, 2)
+  remarks       String?
+  createdById   Int?     @map("created_by_id")
+  createdByName String?  @map("created_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([orderId])
+  @@index([invoiceId])
+  @@map("collections")
+}
+
+// PBG / LC / retention / security deposit held against an order.
+model OrderSecurity {
+  id            Int       @id @default(autoincrement())
+  orderId       Int       @map("order_id")
+  order         Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  // PBG | ABG | LC | RETENTION | SD
+  kind          String
+  refNo         String?   @map("ref_no")
+  bank          String?
+  amount        Decimal   @db.Decimal(16, 2)
+  issueDate     DateTime? @map("issue_date") @db.Date
+  expiryDate    DateTime? @map("expiry_date") @db.Date
+  // ACTIVE | RELEASED | CLAIMED
+  status        String    @default("ACTIVE")
+  releasedDate  DateTime? @map("released_date") @db.Date
+  remarks       String?
+  createdById   Int?      @map("created_by_id")
+  createdByName String?   @map("created_by_name")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([orderId])
+  @@map("order_securities")
 }

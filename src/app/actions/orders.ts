@@ -3,7 +3,7 @@
 import { read, write, cleanQuery, toId } from '@/lib/actionResult';
 import { ADMIN_ROLES } from '@/lib/auth/server';
 import { getOrder, listOrders, listOrdersFacet, searchDockets } from '@/modules/orders/server/query';
-import { createOrder, deleteOrder } from '@/modules/orders/server/mutations';
+import { createOrder, deleteOrder, updateOrderTerms } from '@/modules/orders/server/mutations';
 
 export async function listOrdersAction(query: unknown) {
   return read(() => listOrders(cleanQuery(query)));
@@ -39,4 +39,15 @@ export async function createOrderAction(input: unknown) {
 
 export async function deleteOrderAction(id: unknown) {
   return write((user) => deleteOrder(toId(id, 'order'), user), { roles: ADMIN_ROLES });
+}
+
+export async function updateOrderTermsAction(id: unknown, input: unknown) {
+  const i = (input ?? {}) as Record<string, unknown>;
+  return write((user) =>
+    updateOrderTerms(
+      toId(id, 'order'),
+      { ...('contractValue' in i ? { contractValue: i.contractValue } : {}), ...('deliveryDue' in i ? { deliveryDue: i.deliveryDue } : {}) },
+      user,
+    ),
+  );
 }

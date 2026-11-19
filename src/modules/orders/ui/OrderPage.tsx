@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Trash2 } from 'lucide-react';
 import { Kpi, fmtNum } from '@/components/ServerTable';
@@ -11,17 +11,31 @@ import { useAppDispatch, useAppSelector } from '@/lib/store';
 import { deleteOrderAction, getOrderAction } from '@/app/actions/orders';
 import { BomTab } from '@/modules/bom/ui/BomTab';
 import { RegisterTable } from '@/modules/registers/ui/RegisterTable';
+import type { RegisterKey } from '@/modules/registers/columns';
+import { OrderSummaryTab } from '@/modules/overview/ui/OrderSummaryTab';
+import { IndentTab } from '@/modules/rm/ui/IndentTab';
+import { ReceiptTab } from '@/modules/rm/ui/ReceiptTab';
+import { OrderProductionTab } from '@/modules/production/ui/OrderProductionTab';
+import { BillingTab } from '@/modules/billing/ui/BillingTab';
 import type { OrderDetail } from '../server/query';
 import { ORDER_STATUSES } from '../columns';
 
+// Business-process order: plan -> make -> inspect/galvanise -> ship -> bill.
 const TABS: { key: OrderTab; label: string }[] = [
+  { key: 'summary', label: 'Summary' },
   { key: 'bom', label: 'BOM' },
+  { key: 'indent', label: 'RM Indent' },
+  { key: 'receipt', label: 'RM Receipt & Re-plan' },
+  { key: 'production', label: 'Production' },
+  { key: 'stage', label: 'Stage inspection' },
   { key: 'galv', label: 'Galvanising' },
   { key: 'inspection', label: 'Inspection / MC' },
   { key: 'di', label: 'DI' },
   { key: 'dispatch', label: 'Dispatch' },
+  { key: 'billing', label: 'Billing & Collection' },
   { key: 'quotation', label: 'Quotation lines' },
 ];
+const REGISTER_TABS: OrderTab[] = ['stage', 'galv', 'inspection', 'di', 'dispatch'];
 
 export function OrderPage({ initial, role }: { initial: OrderDetail; role: string }) {
   const router = useRouter();
@@ -36,6 +50,13 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
     if (r.success && r.data) setOrder(r.data);
   }, [order.id]);
 
+  // Deep links (flags, alerts) open a tab with ?tab=<key>.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get('tab');
+    const match = TABS.find((t) => t.key === wanted);
+    if (match) dispatch(opsActions.setOrderTab(match.key));
+  }, [dispatch]);
+
   const step = ORDER_STATUSES.indexOf(order.status as (typeof ORDER_STATUSES)[number]);
 
   return (
@@ -45,7 +66,7 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
           <p className="text-xs font-bold text-slate-500">
             <a href="/orders" className="hover:underline">Orders</a> / PO {order.poNumber}
           </p>
-          <h1 className="text-xl font-extrabold text-slate-900">
+          <h1 className="text-xl font-semibold text-slate-900">
             PO {order.poNumber} <span className="text-base font-bold text-slate-500">· {order.client}</span>
           </h1>
           <p className="text-xs text-slate-500">
@@ -89,7 +110,7 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
         <Kpi label="Dispatched MT" value={fmtNum(order.dispatchedMt, 3)} tone="green" />
       </div>
 
-      <div role="tablist" aria-label="Order sections" className="flex flex-wrap gap-1 border-b border-slate-200">
+      <div role="tablist" aria-label="Order sections" className="flex gap-1 overflow-x-auto border-b border-slate-200">
         {TABS.map((t) => (
           <button
             key={t.key}
@@ -97,7 +118,7 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
             type="button"
             aria-selected={tab === t.key}
             onClick={() => dispatch(opsActions.setOrderTab(t.key))}
-            className={`-mb-px rounded-t-lg border-b-2 px-4 py-2 text-xs font-bold ${tab === t.key ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-900'}`}
+            className={`-mb-px shrink-0 whitespace-nowrap rounded-t-lg border-b-2 px-3 py-2 text-xs font-semibold ${tab === t.key ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-900'}`}
           >
             {t.label}
           </button>
@@ -105,10 +126,15 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
       </div>
 
       <div role="tabpanel">
+        {tab === 'summary' && <OrderSummaryTab order={order} role={role} onChanged={reloadOrder} />}
         {tab === 'bom' && <BomTab orderId={order.id} role={role} quotedMt={order.quotedMt} onChanged={reloadOrder} />}
-        {(tab === 'galv' || tab === 'inspection' || tab === 'di' || tab === 'dispatch') && (
-          <RegisterTable key={tab} register={tab} orderId={order.id} role={role} onChanged={reloadOrder} />
+        {tab === 'indent' && <IndentTab orderId={order.id} role={role} onChanged={reloadOrder} />}
+        {tab === 'receipt' && <ReceiptTab orderId={order.id} role={role} onChanged={reloadOrder} />}
+        {tab === 'production' && <OrderProductionTab orderId={order.id} role={role} onChanged={reloadOrder} />}
+        {REGISTER_TABS.includes(tab) && (
+          <RegisterTable key={tab} register={tab as RegisterKey} orderId={order.id} role={role} onChanged={reloadOrder} />
         )}
+        {tab === 'billing' && <BillingTab orderId={order.id} role={role} onChanged={reloadOrder} />}
         {tab === 'quotation' && (
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
             <p className="px-4 pt-3 text-xs text-slate-500">Copied from docket {order.docketNo ?? '–'} when the order was created.</p>

@@ -89,3 +89,34 @@ export async function deleteOrder(id: number, user: AuthUser) {
     return { id };
   });
 }
+
+/** Contract value (Rs, incl. tax) and contractual delivery date. Editors; each change audited. */
+export async function updateOrderTerms(id: number, input: { contractValue?: unknown; deliveryDue?: unknown }, user: AuthUser) {
+  const data: { contractValue?: number | null; deliveryDue?: Date | null } = {};
+  if ('contractValue' in input) {
+    const raw = String(input.contractValue ?? '').replace(/,/g, '').trim();
+    if (raw === '') data.contractValue = null;
+    else {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0 || n > 1e13) throw new UserError('Contract value must be a positive amount.');
+      data.contractValue = Math.round(n * 100) / 100;
+    }
+  }
+  if ('deliveryDue' in input) {
+    const raw = String(input.deliveryDue ?? '').trim();
+    if (raw === '') data.deliveryDue = null;
+    else if (!/^\d{4}-\d{2}-\d{2}$/.test(raw) || Number.isNaN(Date.parse(raw))) throw new UserError('Delivery due must be a date.');
+    else data.deliveryDue = new Date(`${raw}T00:00:00Z`);
+  }
+  return prisma.$transaction(async (tx) => {
+    const before = await tx.order.findUnique({ where: { id }, select: { contractValue: true, deliveryDue: true } });
+    if (!before) throw new UserError('Order not found.');
+    await tx.order.update({ where: { id }, data });
+    const fmt = (v: unknown) => (v === null || v === undefined ? null : v instanceof Date ? v.toISOString().slice(0, 10) : String(v));
+    const logs = (Object.keys(data) as (keyof typeof data)[])
+      .filter((k) => fmt(before[k]) !== fmt(data[k]))
+      .map((k) => ({ tableName: 'orders', recordId: id, fieldName: k, oldValue: fmt(before[k]), newValue: fmt(data[k]), ...auditUser(user) }));
+    if (logs.length) await tx.editLog.createMany({ data: logs });
+    return { id };
+  });
+}

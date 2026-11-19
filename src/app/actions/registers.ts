@@ -3,7 +3,7 @@
 import { read, write, cleanQuery, toId, UserError } from '@/lib/actionResult';
 import { ADMIN_ROLES } from '@/lib/auth/server';
 import { isRegisterKey, listRegister, listRegisterFacet, registerOptions } from '@/modules/registers/server/query';
-import { addRegisterEntry, deleteRegisterEntry } from '@/modules/registers/server/mutations';
+import { addRegisterEntry, deleteRegisterEntry, updateSecurityStatus } from '@/modules/registers/server/mutations';
 
 function keyOf(v: unknown) {
   if (!isRegisterKey(v)) throw new UserError('Unknown register.');
@@ -33,4 +33,9 @@ export async function addRegisterEntryAction(register: unknown, orderId: unknown
 
 export async function deleteRegisterEntryAction(register: unknown, id: unknown) {
   return write((user) => deleteRegisterEntry(keyOf(register), toId(id, 'entry'), user), { roles: ADMIN_ROLES });
+}
+
+/** Inline status change of a PBG / LC / retention entry (Editors). */
+export async function updateSecurityStatusAction(id: unknown, status: unknown) {
+  return write((user) => updateSecurityStatus(toId(id, 'entry'), status, user));
 }

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { autoDetectOurItemNot } from '@/lib/classifier';
+import { AppSidebar, PageHeader } from '@/components/AppSidebar';
 import {
   Search,
   Filter,
@@ -260,6 +261,14 @@ function CellInput({
     />
   );
 }
+
+const TAB_META: Record<'items' | 'dockets' | 'terms' | 'logs' | 'master', { title: string; description: string }> = {
+  dockets: { title: 'Dockets', description: 'Quotation dockets, parties and enquiry details' },
+  items: { title: 'Items', description: 'Line items across all quotation dockets' },
+  terms: { title: 'Terms & Conditions', description: 'Standard terms printed on quotations' },
+  logs: { title: 'Audit Log', description: 'Every change made to dockets, items and terms' },
+  master: { title: 'Master Dropdowns', description: 'Values offered in party, state, utility and address fields' },
+};
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<'items' | 'dockets' | 'terms' | 'logs' | 'master'>('dockets');
@@ -1236,7 +1245,9 @@ export default function Dashboard() {
     }
   };
 
-  // Any API call that comes back 401 (session expired / user disabled) sends the user to /login.
+  // A write (POST/PUT/PATCH/DELETE) that comes back 401 (not signed in, session expired, user disabled)
+  // sends the user to /login. A 401 on a read (e.g. the Logs tab for a guest) must NOT redirect:
+  // viewing is public, so guests stay on the page.
   useEffect(() => {
     const originalFetch = window.fetch;
     window.fetch = async (...args: Parameters<typeof fetch>) => {
@@ -1270,8 +1281,8 @@ export default function Dashboard() {
 
     // LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17):
     // fetch('/api/auth/me') ... and, with no user, window.location.href = '/login';
-    // NextAuth's session endpoint returns {} for visitors who are not signed in.
-    fetch('/api/auth/session')
+    // DB-checked session (same check as the Orders pages); { user: null } for guests or a stale cookie.
+    fetch('/api/session-user', { cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (data?.user) {
@@ -1304,7 +1315,17 @@ export default function Dashboard() {
     else if (activeTab === 'master') fetchMasterValues();
   }, [activeTab, search, startDate, endDate, itemFilters, docketFilters, logTableFilter, itemPage, itemLimit, docketPage, docketLimit]);
 
-  const readOnlyToast = () => showToast('Error: You have read-only access. Ask an Admin for edit rights.');
+  // Guests (not signed in) who try to edit are sent to the login page and brought back here afterwards.
+  // Signed-in Viewers are read-only by role, so they only get a message.
+  const readOnlyToast = () => {
+    if (!isLoggedIn) {
+      showToast('Please sign in to edit data.');
+      const next = window.location.pathname + window.location.search;
+      window.location.href = `/login?next=${encodeURIComponent(next)}`;
+      return;
+    }
+    showToast('Error: You have read-only access. Ask an Admin for edit rights.');
+  };
 
   // General field updater for ItemTable. Resolves false when the save was refused or failed.
   const handleItemFieldUpdate = async (
@@ -2244,10 +2265,10 @@ export default function Dashboard() {
   // IF AUTH IS LOADING -> SHOW CLEAN SPINNER TO PREVENT FLASHING SIGN IN SCREEN
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-900 font-sans p-4">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
         <div className="flex flex-col items-center space-y-3">
           <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs font-bold text-slate-300">Loading Dashboard...</span>
+          <span className="text-xs font-medium text-slate-500">Loading dashboard…</span>
         </div>
       </div>
     );
@@ -2261,7 +2282,7 @@ export default function Dashboard() {
     <div className="h-dvh flex flex-col overflow-hidden bg-slate-100 font-sans text-slate-900">
       {/* Toast Notification */}
       {notification && (
-        <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center space-x-3 text-sm font-semibold animate-bounce">
+        <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center space-x-3 text-sm font-semibold">
           <CheckCircle className="w-5 h-5 text-emerald-200" />
           <span>{notification}</span>
         </div>
@@ -2270,25 +2291,25 @@ export default function Dashboard() {
       {/* AI Processing Overlay Modal & Animation */}
       {aiProcessing && (
         <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-8 max-w-md w-full shadow-2xl border border-blue-100 text-center space-y-4 animate-in zoom-in-95 duration-200">
+          <div className="bg-white rounded-xl p-8 max-w-md w-full shadow-2xl border border-blue-100 text-center space-y-4 animate-in zoom-in-95 duration-200">
             <div className="relative w-20 h-20 mx-auto flex items-center justify-center">
               <div className="absolute inset-0 rounded-full border-4 border-blue-200 animate-ping opacity-40"></div>
               <div className="absolute inset-0 rounded-full border-4 border-blue-600 border-t-transparent animate-spin"></div>
-              <div className="bg-blue-600 text-white p-3.5 rounded-2xl shadow-lg">
-                <Sparkles className="w-8 h-8 animate-pulse" />
+              <div className="bg-blue-600 text-white p-3.5 rounded-xl shadow-lg">
+                <Sparkles className="w-8 h-8" />
               </div>
             </div>
             <div>
-              <h3 className="text-lg font-extrabold text-slate-900 flex items-center justify-center gap-2">
+              <h3 className="text-lg font-semibold text-slate-900 flex items-center justify-center gap-2">
                 <span>AI Categorization Active</span>
-                <span className="text-xs bg-blue-100 text-blue-800 font-extrabold px-2 py-0.5 rounded-full">Groq AI</span>
+                <span className="text-xs bg-blue-100 text-blue-800 font-semibold px-2 py-0.5 rounded-full">Groq AI</span>
               </h3>
               <p className="text-xs text-slate-600 font-semibold mt-1">
                 {aiProgressText || 'Analyzing raw item descriptions into standard categories...'}
               </p>
             </div>
             <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-              <div className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 h-full w-full animate-pulse"></div>
+              <div className="bg-blue-600 h-full w-full animate-pulse"></div>
             </div>
             <p className="text-[11px] text-slate-400 font-medium">
               Processing MANUFACTURING & TRADING items with blank predictions
@@ -2300,7 +2321,7 @@ export default function Dashboard() {
       {/* AI REASONING EXPLANATION MODAL */}
       {reasoningModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white rounded-3xl border border-blue-200 shadow-2xl max-w-lg w-full p-6 space-y-5 relative">
+          <div className="bg-white rounded-xl border border-blue-200 shadow-2xl max-w-lg w-full p-6 space-y-5 relative">
             <button
               onClick={() => setReasoningModalOpen(false)}
               className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-slate-100 transition-all"
@@ -2310,11 +2331,11 @@ export default function Dashboard() {
             </button>
 
             <div className="flex items-center space-x-3 border-b border-slate-100 pb-3">
-              <div className="bg-gradient-to-br from-blue-600 to-indigo-600 p-2.5 rounded-2xl text-white shadow-md">
+              <div className="bg-blue-600 p-2.5 rounded-xl text-white shadow-sm">
                 <Brain className="w-6 h-6 animate-pulse" />
               </div>
               <div>
-                <h3 className="text-base font-extrabold text-slate-900">
+                <h3 className="text-base font-semibold text-slate-900">
                   AI Categorization Reasoning
                 </h3>
                 <p className="text-xs text-slate-500 font-medium">
@@ -2323,9 +2344,9 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2 text-xs">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2 text-xs">
               <div>
-                <span className="font-extrabold text-slate-700 uppercase tracking-wider text-[10px]">
+                <span className="font-semibold text-slate-700 uppercase tracking-wider text-[10px]">
                   Raw Item Description:
                 </span>
                 <p className="font-semibold text-slate-900 mt-0.5">{reasoningItemText}</p>
@@ -2333,21 +2354,21 @@ export default function Dashboard() {
               <div className="flex items-center space-x-4 pt-1">
                 <div>
                   <span className="font-bold text-slate-500 text-[10px]">TYPE OF ITEM:</span>
-                  <span className="ml-1 font-extrabold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200">
+                  <span className="ml-1 font-semibold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-200">
                     {reasoningType}
                   </span>
                 </div>
                 <div>
                   <span className="font-bold text-slate-500 text-[10px]">ASSIGNED CATEGORY:</span>
-                  <span className="ml-1 font-extrabold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
+                  <span className="ml-1 font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-200">
                     {reasoningCategory}
                   </span>
                 </div>
               </div>
             </div>
 
-            <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-4 space-y-2">
-              <div className="flex items-center justify-between text-blue-900 font-extrabold text-xs">
+            <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-4 space-y-2">
+              <div className="flex items-center justify-between text-blue-900 font-semibold text-xs">
                 <div className="flex items-center space-x-1.5">
                   <Sparkles className="w-4 h-4 text-blue-600" />
                   <span>AI Auto-Suggested Reason & User Notes:</span>
@@ -2381,20 +2402,20 @@ export default function Dashboard() {
             <div className="flex items-center justify-end space-x-3 pt-2">
               <button
                 onClick={() => setReasoningModalOpen(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-extrabold text-xs rounded-xl transition-all"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs rounded-xl transition-all"
               >
                 Skip / Close
               </button>
               <button
                 onClick={handleSaveAiKnowledge}
                 disabled={savingKnowledge || reasoningLoading}
-                className="flex items-center space-x-1.5 px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all shadow-md"
+                className="flex items-center space-x-1.5 px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs rounded-xl transition-all shadow-sm"
               >
                 {savingKnowledge ? (
                   <span>Saving Rule...</span>
                 ) : (
                   <>
-                    <Brain className="w-3.5 h-3.5 text-yellow-300" />
+                    <Brain className="w-3.5 h-3.5 text-blue-100" />
                     <span>Save & Teach AI</span>
                   </>
                 )}
@@ -2407,7 +2428,7 @@ export default function Dashboard() {
       {/* AI STRUCTURAL SECTION CALCULATOR MODAL */}
       {showStructuralModal && structuralQueue.length > 0 && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in">
-          <div className="bg-white rounded-3xl border border-indigo-200 shadow-2xl max-w-2xl w-full p-6 space-y-5 relative max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl border border-indigo-200 shadow-2xl max-w-2xl w-full p-6 space-y-5 relative max-h-[90vh] overflow-y-auto">
             <button
               onClick={() => setShowStructuralModal(false)}
               className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-slate-100 transition-all"
@@ -2417,13 +2438,13 @@ export default function Dashboard() {
             </button>
 
             <div className="flex items-center space-x-3 border-b border-slate-100 pb-3">
-              <div className="bg-gradient-to-br from-indigo-600 to-purple-600 p-2.5 rounded-2xl text-white shadow-md">
+              <div className="bg-slate-900 p-2.5 rounded-xl text-white shadow-sm">
                 <Building className="w-6 h-6 animate-pulse" />
               </div>
               <div>
-                <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
                   <span>AI Structural Member Selection</span>
-                  <span className="text-xs bg-indigo-100 text-indigo-800 font-extrabold px-2 py-0.5 rounded-full">
+                  <span className="text-xs bg-indigo-100 text-indigo-800 font-semibold px-2 py-0.5 rounded-full">
                     BOM Item {currentStructuralIndex + 1} of {structuralQueue.length}
                   </span>
                 </h3>
@@ -2434,8 +2455,8 @@ export default function Dashboard() {
             </div>
 
             {/* Current Item Raw Description */}
-            <div className="bg-indigo-50/60 border border-indigo-200 rounded-2xl p-4 space-y-1">
-              <span className="font-extrabold text-indigo-700 uppercase tracking-wider text-[10px]">
+            <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-4 space-y-1">
+              <span className="font-semibold text-indigo-700 uppercase tracking-wider text-[10px]">
                 Target Item Description:
               </span>
               <p className="font-bold text-slate-900 text-xs">
@@ -2445,14 +2466,14 @@ export default function Dashboard() {
 
             {/* AI Suggested Options List */}
             {structuralLoading ? (
-              <div className="p-8 text-center space-y-3 bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+              <div className="p-8 text-center space-y-3 bg-slate-50 rounded-xl border border-dashed border-slate-200">
                 <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
                 <p className="text-xs font-bold text-slate-700">
                   Calculating IS 808 Sectional Weights & REC Cut Lengths for this item...
                 </p>
               </div>
             ) : structuralOptions.length === 0 ? (
-              <div className="p-5 bg-rose-50 border border-rose-200 rounded-2xl space-y-3 text-xs">
+              <div className="p-5 bg-rose-50 border border-rose-200 rounded-xl space-y-3 text-xs">
                 <div className="flex items-center space-x-2 text-rose-800 font-bold">
                   <AlertCircle className="w-5 h-5 text-rose-600 shrink-0" />
                   <span>
@@ -2469,7 +2490,7 @@ export default function Dashboard() {
                         fetchStructuralOptionsForItem(structuralQueue[currentStructuralIndex]);
                       }
                     }}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs rounded-xl shadow-md transition-all shrink-0"
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs rounded-xl shadow-sm transition-all shrink-0"
                   >
                     Retry AI
                   </button>
@@ -2477,7 +2498,7 @@ export default function Dashboard() {
               </div>
             ) : (
               <div className="space-y-2">
-                <label className="font-extrabold text-slate-700 text-xs block">
+                <label className="font-semibold text-slate-700 text-xs block">
                   Select an IS 808 Standard Member Profile:
                 </label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-60 overflow-y-auto p-1">
@@ -2495,14 +2516,14 @@ export default function Dashboard() {
                             unitWtOfMemberKg: opt.unitWtKg || '',
                           });
                         }}
-                        className={`cursor-pointer p-3.5 rounded-2xl border transition-all text-xs space-y-1.5 ${
+                        className={`cursor-pointer p-3.5 rounded-xl border transition-all text-xs space-y-1.5 ${
                           isSelected
-                            ? 'bg-indigo-50/90 border-indigo-600 shadow-md ring-2 ring-indigo-500/20'
+                            ? 'bg-indigo-50/90 border-indigo-600 shadow-sm ring-2 ring-indigo-500/20'
                             : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                         }`}
                       >
                         <div className="flex items-center justify-between">
-                          <span className="font-extrabold text-indigo-900 font-mono text-xs">
+                          <span className="font-semibold text-indigo-900 font-mono text-xs">
                             {opt.sectionCode}
                           </span>
                           <span
@@ -2535,8 +2556,8 @@ export default function Dashboard() {
             )}
 
             {/* Editable Form Inputs for Selected/Custom Values */}
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
-              <span className="font-extrabold text-slate-700 text-xs block">
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+              <span className="font-semibold text-slate-700 text-xs block">
                 Selected / Customized Values for Item:
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
@@ -2609,7 +2630,7 @@ export default function Dashboard() {
             <div className="flex items-center justify-between border-t border-slate-100 pt-3">
               <button
                 onClick={() => setShowStructuralModal(false)}
-                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs rounded-xl transition-all"
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs rounded-xl transition-all"
               >
                 Cancel Flow
               </button>
@@ -2617,14 +2638,14 @@ export default function Dashboard() {
               <div className="flex items-center space-x-2">
                 <button
                   onClick={handleSkipStructuralOption}
-                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-extrabold text-xs rounded-xl transition-all"
+                  className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold text-xs rounded-xl transition-all"
                 >
                   Skip Item
                 </button>
                 <button
                   onClick={handleApplyStructuralOption}
                   disabled={structuralLoading}
-                  className="flex items-center space-x-1.5 px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-xl transition-all shadow-md"
+                  className="flex items-center space-x-1.5 px-5 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-semibold text-xs rounded-xl transition-all shadow-sm"
                 >
                   {structuralLoading ? (
                     <span>Saving...</span>
@@ -2665,156 +2686,43 @@ export default function Dashboard() {
         ))}
       </datalist>
 
-      {/* Header Bar */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
-        <div className="w-full px-6 py-3.5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="flex items-center space-x-4">
-            <div className="bg-white p-1.5 rounded-xl border border-slate-200 shadow-xs flex items-center justify-center">
-              <img src="/ceebuild-logo.png" alt="CEEBUILD Logo" className="h-10 w-auto object-contain" />
-            </div>
-            <div>
-              <h1 className="text-xl font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
-                Ceebuild Items & Docket Dashboard
-              </h1>
-            </div>
-          </div>
+      <AppSidebar
+        user={isLoggedIn ? { name: currentUser.name, role: currentUser.role } : null}
+        activeTab={activeTab}
+        onTabSelect={handleTabSwitch}
+        counts={{
+          items: itemTotalCount,
+          dockets: docketTotalCount,
+          terms: terms.length,
+          logs: logs.length,
+          master: masterList.length,
+        }}
+      />
 
-          <div className="flex flex-wrap items-center gap-3">
-            {/* LOGGED IN USER BADGE & SWITCH USER / LOGOUT */}
-            <div className="flex items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200 space-x-2">
-              <div className="flex items-center space-x-1.5 pl-2 text-xs font-bold text-slate-700">
-                <UserCheck className="w-4 h-4 text-blue-600" />
-                <span>
-                  User: <strong className="text-slate-900">{currentUser.name}</strong>
-                  {isLoggedIn ? ` (${currentUser.id})` : ''}
-                </span>
-                <span className="ml-1 text-[10px] bg-blue-100 text-blue-800 font-extrabold px-2 py-0.5 rounded-full">
-                  {currentUser.role}
-                  {currentUser.role === 'Viewer' ? ' (read-only)' : ''}
-                </span>
-              </div>
-
-              {isLoggedIn ? (
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center space-x-1 bg-white hover:bg-rose-50 text-rose-600 hover:text-rose-700 border border-slate-200 hover:border-rose-300 font-bold text-xs px-2.5 py-1 rounded-xl transition-all shadow-xs"
-                  title="Logout / Switch Account"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Logout</span>
-                </button>
-              ) : (
-                <Link
-                  href="/login"
-                  className="flex items-center space-x-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-2.5 py-1 rounded-xl transition-all shadow-xs"
-                  title="Sign in to add or edit data"
-                >
-                  <UserCheck className="w-3.5 h-3.5" />
-                  <span>Sign in</span>
-                </Link>
-              )}
-            </div>
-
-            {/* Order-to-execution module (A15): orders from POs, BOM check, galvanising → dispatch */}
-            <Link
-              href="/orders"
-              className="flex items-center bg-white hover:bg-blue-50 text-blue-700 border border-slate-200 hover:border-blue-300 font-bold text-xs px-3 py-2 rounded-xl transition-all"
-            >
-              Orders &amp; execution
-            </Link>
-
-            {/* Navigation Tabs */}
-            <div className="flex flex-wrap items-center bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
-              <button
-                onClick={() => handleTabSwitch('items')}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'items'
-                    ? 'bg-white text-blue-600 shadow-md shadow-slate-200'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                }`}
-              >
-                <FileSpreadsheet className="w-4 h-4" />
-                <span>Items</span>
-                <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full text-xs font-extrabold">
-                  {itemTotalCount}
-                </span>
-              </button>
-
-              <button
-                onClick={() => handleTabSwitch('dockets')}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'dockets'
-                    ? 'bg-white text-blue-600 shadow-md shadow-slate-200'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                }`}
-              >
-                <Building className="w-4 h-4" />
-                <span>Dockets</span>
-                <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full text-xs font-extrabold">
-                  {docketTotalCount}
-                </span>
-              </button>
-
-              <button
-                onClick={() => handleTabSwitch('terms')}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'terms'
-                    ? 'bg-white text-blue-600 shadow-md shadow-slate-200'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                }`}
-              >
-                <FileText className="w-4 h-4" />
-                <span>Terms &amp; Conditions</span>
-                <span className="bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-full text-xs font-extrabold">
-                  {terms.length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => handleTabSwitch('logs')}
-                className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'logs'
-                    ? 'bg-white text-rose-600 shadow-md shadow-slate-200'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                }`}
-              >
-                <History className="w-4 h-4 text-rose-500" />
-                <span>Audit Log</span>
-                <span className="bg-rose-50 text-rose-700 px-2 py-0.5 rounded-full text-xs font-extrabold">
-                  {logs.length}
-                </span>
-              </button>
-
-              {/* ADMIN-ONLY MASTER DROPDOWNS CONTROL SECTION TAB */}
-              {currentUser.role === 'Admin' && (
-                <button
-                  onClick={() => handleTabSwitch('master')}
-                  className={`flex items-center space-x-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    activeTab === 'master'
-                      ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20'
-                      : 'text-amber-700 hover:text-amber-900 hover:bg-amber-100/60 font-extrabold'
-                  }`}
-                >
-                  <Sliders className="w-4 h-4" />
-                  <span>Master Dropdowns (Admin)</span>
-                  <span className="bg-amber-100 text-amber-900 px-2 py-0.5 rounded-full text-xs font-extrabold">
-                    {masterList.length}
-                  </span>
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </header>
-
+      <div className="min-w-0 flex-1 flex flex-col">
       {/* Main Content Container */}
-      <main className="w-full px-6 py-6 flex-1 min-h-0 overflow-y-auto flex flex-col gap-6">
+      <main className="w-full px-4 lg:px-8 py-6 flex-1 space-y-5">
+        {/* Page title + "Orders & execution" link removed from the dashboard on request (sidebar covers it).
+        <PageHeader
+        title={TAB_META[activeTab].title}
+        description={TAB_META[activeTab].description}
+        actions={
+        <Link
+        href="/orders"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+        >
+        Orders &amp; execution
+        <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+        </Link>
+        }
+        />
+        */}
         {/* Controls & Filter Bar */}
         {activeTab !== 'master' && (
-          <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
+          <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-4">
               {/* Global Search */}
-              <div className="relative flex-1 min-w-[280px]">
+              <div className="relative flex-1 min-w-0 basis-full sm:basis-auto sm:min-w-[280px]">
                 <Search className="w-4.5 h-4.5 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   type="text"
@@ -2839,7 +2747,7 @@ export default function Dashboard() {
 
               {/* Date Range Filter */}
               {activeTab !== 'logs' && (
-                <div className="flex items-center space-x-2 bg-slate-50 p-1 border border-slate-200 rounded-xl">
+                <div className="flex flex-wrap items-center gap-2 bg-slate-50 p-1 border border-slate-200 rounded-xl">
                   <div className="flex items-center space-x-1 pl-2 text-slate-500">
                     <Calendar className="w-3.5 h-3.5 text-blue-600" />
                     <span className="text-[11px] font-bold">Date:</span>
@@ -2884,7 +2792,7 @@ export default function Dashboard() {
 
             {/* Items Sub-Filter Chips */}
             {activeTab === 'items' && (
-              <div className="pt-2 border-t border-slate-100 flex items-center space-x-3 overflow-x-auto">
+              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                 <span className="text-xs font-bold text-slate-700 whitespace-nowrap flex items-center gap-1.5">
                   <Filter className="w-3.5 h-3.5 text-blue-600" />
                   Filter Item Name:
@@ -2932,14 +2840,14 @@ export default function Dashboard() {
                     handleAiAutofill(itemFilters.docketNoQtnNo.length === 1 ? itemFilters.docketNoQtnNo[0] : undefined)
                   }
                   disabled={aiProcessing || !canEdit || itemFilters.docketNoQtnNo.length !== 1}
-                  className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-xs px-3.5 py-1.5 rounded-xl shadow-md transition-all animate-in fade-in"
+                  className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs px-3.5 py-1.5 rounded-xl shadow-sm transition-all animate-in fade-in"
                   title={
                     itemFilters.docketNoQtnNo.length === 1
                       ? `Categorize MANUFACTURING/TRADING items of docket ${itemFilters.docketNoQtnNo[0]} using Groq AI`
                       : 'Autofill by AI works per docket - filter the Docket No column to exactly one docket first'
                   }
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                  <Sparkles className="w-3.5 h-3.5 text-blue-100" />
                   <span>Autofill by AI</span>
                 </button>
 
@@ -3016,26 +2924,26 @@ export default function Dashboard() {
 
             <div className="overflow-auto flex-1 min-h-[240px]">
               <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-30 border-b border-slate-200 text-[11px] uppercase tracking-wider">
+                <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 z-30 border-b border-slate-200 text-[11px] uppercase tracking-wider">
                   <tr>
                     {/* Sticky Column 1: ID (width 70px) */}
-                    <th className="p-3 whitespace-nowrap w-[70px] min-w-[70px] sticky left-0 z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    <th className="p-3 whitespace-nowrap w-[70px] min-w-[70px] sticky left-0 z-40 bg-slate-50 border-r border-slate-200">
                       ID
                     </th>
                     {/* Sticky Column 2: Docket / Qtn No (width 150px, offset left 70px) */}
-                    <th className="p-3 whitespace-nowrap w-[150px] min-w-[150px] sticky left-[70px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    <th className="p-3 whitespace-nowrap w-[150px] min-w-[150px] sticky left-[70px] z-40 bg-slate-50 border-r border-slate-200">
                       DOCKET / QTN NO
                     </th>
                     {/* Sticky Column 3: Item Name Party (width 260px, offset left 220px) */}
-                    <th className="p-3 whitespace-nowrap w-[260px] min-w-[260px] sticky left-[220px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    <th className="p-3 whitespace-nowrap w-[260px] min-w-[260px] sticky left-[220px] z-40 bg-slate-50 border-r border-slate-200">
                       ITEM NAME- PARTY
                     </th>
                     {/* Sticky Column 4: UOM (width 80px, offset left 480px) */}
-                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[480px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs">
+                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[480px] z-40 bg-slate-50 border-r border-slate-200">
                       UOM
                     </th>
                     {/* Sticky Column 5: QTY (width 80px, offset left 560px) */}
-                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[560px] z-40 bg-slate-100 border-r-2 border-slate-400 shadow-xs">
+                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[560px] z-40 bg-slate-50 border-r-2 border-slate-300">
                       QTY
                     </th>
 
@@ -3046,7 +2954,7 @@ export default function Dashboard() {
                     <th className="p-3 whitespace-nowrap min-w-[140px]">Section (mm)</th>
                     <th className="p-3 whitespace-nowrap min-w-[160px]">Sectional Wt. (Kg/Mtr.)</th>
                     <th className="p-3 whitespace-nowrap min-w-[130px]">Length (Mtr.)</th>
-                    <th className="p-3 whitespace-nowrap bg-blue-50/80 text-blue-900 font-extrabold min-w-[130px]">Unit Wt.</th>
+                    <th className="p-3 whitespace-nowrap bg-blue-50/80 text-blue-900 font-semibold min-w-[130px]">Unit Wt.</th>
                     <th className="p-3 whitespace-nowrap min-w-[180px]">Unit Wt. of Member (Kg)</th>
                     <th className="p-3 whitespace-nowrap min-w-[120px]">Price</th>
                     <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[160px]">Status</th>
@@ -3325,7 +3233,7 @@ export default function Dashboard() {
                             value={item.qty || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'qty', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'qty')}
-                            className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 font-extrabold focus:outline-none"
+                            className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 font-semibold focus:outline-none"
                           />
                         </td>
 
@@ -3334,7 +3242,7 @@ export default function Dashboard() {
                             disabled={!canEdit}
                             value={item.ourItemNot || ''}
                             onChange={(e) => handleItemFieldUpdate(item.id, 'ourItemNot', e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-extrabold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                            className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                           >
                             <option value="">Select</option>
                             <option value="MANUFACTURING">MANUFACTURING</option>
@@ -3363,7 +3271,7 @@ export default function Dashboard() {
                                   openReasoningModal(item.itemNameParty, item.typeOfItem, e.target.value);
                                 }
                               }}
-                              className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-extrabold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                              className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-semibold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                             >
                               <option value="">Select Item Name</option>
                               {ourItemNameOptions.map((opt) => (
@@ -3450,7 +3358,7 @@ export default function Dashboard() {
                             value={item.price || ''}
                             onSave={(val) => handleItemFieldUpdate(item.id, 'price', val)}
                             onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'price')}
-                            className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-extrabold text-slate-900 focus:outline-none"
+                            className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-semibold text-slate-900 focus:outline-none"
                           />
                         </td>
 
@@ -3459,7 +3367,7 @@ export default function Dashboard() {
                             disabled={!canEdit}
                             value={item.status || ''}
                             onChange={(e) => handleItemFieldUpdate(item.id, 'status', e.target.value)}
-                            className={`w-full border rounded-md px-2 py-1.5 text-xs font-extrabold focus:outline-none ${
+                            className={`w-full border rounded-md px-2 py-1.5 text-xs font-semibold focus:outline-none ${
                               item.status === 'Quoted'
                                 ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                                 : item.status === 'NOT Required'
@@ -3501,8 +3409,8 @@ export default function Dashboard() {
 
         {/* TAB 2: docket-party-name (WITH ACCORDION ARROW & ADD DOCKET/ITEM BUTTONS) */}
         {activeTab === 'dockets' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col flex-1 min-h-0 space-y-3">
-            <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col space-y-3">
+            <div className="px-4 py-3 bg-white border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
               <div>
                 <h2 className="text-sm font-bold text-slate-900">Dockets</h2>
                 <p className="text-[11px] text-slate-500 font-medium">
@@ -3514,7 +3422,7 @@ export default function Dashboard() {
                 {/* Add Docket Button */}
                 <button
                   onClick={handleOpenAddDocketModal}
-                  className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm shadow-blue-500/20"
+                  className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm shadow-blue-500/20"
                 >
                   <Plus className="w-4 h-4" />
                   <span>Add Docket</span>
@@ -3588,7 +3496,7 @@ export default function Dashboard() {
             </div>
 
             {/* Quick Item Filter Chips for Dockets */}
-            <div className="px-4 py-2 bg-slate-50/60 border-b border-slate-200 flex items-center space-x-3 overflow-x-auto shrink-0">
+            <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
               <span className="text-xs font-bold text-slate-700 whitespace-nowrap flex items-center gap-1.5">
                 <Filter className="w-3.5 h-3.5 text-blue-600" />
                 Filter Dockets by Item Name:
@@ -3632,27 +3540,27 @@ export default function Dashboard() {
 
             <div className="overflow-auto flex-1 min-h-[240px]">
               <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-30 border-b border-slate-200 text-[10px] uppercase tracking-wider">
+                <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 z-30 border-b border-slate-200 text-[10px] uppercase tracking-wider">
                   <tr>
                     {/* STICKY COLUMN 1: ACTIONS (width 120px) */}
-                    <th className="py-2 px-2 whitespace-nowrap bg-blue-600 text-white font-extrabold text-center w-[120px] min-w-[120px] sticky left-0 z-40 shadow-xs">
+                    <th className="py-2 px-2 whitespace-nowrap bg-slate-50 text-slate-500 font-semibold text-center w-[120px] min-w-[120px] sticky left-0 z-40 border-r border-slate-200">
                       ACTIONS
                     </th>
                     {/* STICKY COLUMN 2: ID (width 50px, offset left 120px) */}
-                    <th className="py-2 px-2 whitespace-nowrap w-[50px] min-w-[50px] sticky left-[120px] z-40 bg-slate-100 border-r border-slate-300 shadow-xs text-center">
+                    <th className="py-2 px-2 whitespace-nowrap w-[50px] min-w-[50px] sticky left-[120px] z-40 bg-slate-50 border-r border-slate-200 text-center">
                       ID
                     </th>
 
                     <th className="py-2 px-2.5 whitespace-nowrap w-[130px] min-w-[130px]">DOCKET / QTN NO</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-blue-50/80 text-blue-900 font-extrabold w-[210px] min-w-[210px]">
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-blue-50/80 text-blue-900 font-semibold w-[210px] min-w-[210px]">
                       FIRST ITEM NAME
                     </th>
                     <th className="py-2 px-2.5 whitespace-nowrap w-[200px] min-w-[200px]">PARTY NAME</th>
                     <th className="py-2 px-2.5 whitespace-nowrap w-[110px] min-w-[110px]">STATE</th>
                     <th className="py-2 px-2.5 whitespace-nowrap w-[100px] min-w-[100px]">UTILITY</th>
                     <th className="py-2 px-2.5 whitespace-nowrap w-[160px] min-w-[160px]">DELIVERY LOCATION</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-amber-50 text-amber-900 font-extrabold w-[130px] min-w-[130px]">TYPE</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-emerald-50 text-emerald-900 font-extrabold w-[180px] min-w-[180px]">ATTACHMENTS</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-amber-50 text-amber-900 font-semibold w-[130px] min-w-[130px]">TYPE</th>
+                    <th className="py-2 px-2.5 whitespace-nowrap bg-emerald-50 text-emerald-900 font-semibold w-[180px] min-w-[180px]">ATTACHMENTS</th>
                     <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Price Condition</th>
                     <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Payment Condition</th>
                     <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Delivery Condition</th>
@@ -3952,14 +3860,14 @@ export default function Dashboard() {
                                 <button
                                   onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
                                   disabled={aiProcessing || !canEdit || !doc.docketNoQtnNo?.trim()}
-                                  className="inline-flex items-center space-x-0.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-extrabold text-[10px] px-1.5 py-0.5 rounded-lg shadow-2xs transition-all"
+                                  className="inline-flex items-center space-x-0.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-lg shadow-2xs transition-all"
                                   title={
                                     doc.docketNoQtnNo?.trim()
                                       ? 'Autofill unclassified items for this docket using Groq AI'
                                       : 'Autofill by AI needs a Docket / Qtn No - set one first'
                                   }
                                 >
-                                  <Sparkles className="w-2.5 h-2.5 text-yellow-300" />
+                                  <Sparkles className="w-2.5 h-2.5 text-blue-100" />
                                   <span>AI</span>
                                 </button>
 
@@ -4100,7 +4008,7 @@ export default function Dashboard() {
                             <td className="p-1.5 w-[180px] min-w-[180px] bg-emerald-50/20">
                               <div className="space-y-1">
                                 <div className="flex items-center justify-between">
-                                  <label className="cursor-pointer inline-flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-[10px] px-1.5 py-0.5 rounded-md transition-all shadow-2xs">
+                                  <label className="cursor-pointer inline-flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-md transition-all shadow-2xs">
                                     <Paperclip className="w-2.5 h-2.5" />
                                     <span>{uploadingAttachment ? 'Uploading…' : '+ Attach Files'}</span>
                                     <input
@@ -4131,7 +4039,7 @@ export default function Dashboard() {
                                         type="button"
                                         onClick={() => setAttachmentListDocId(doc.id)}
                                         disabled={attCount === 0}
-                                        className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-1.5 py-0.5 text-[10px] font-extrabold text-emerald-700 shadow-2xs transition-all hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                        className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 shadow-2xs transition-all hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
                                         title={attCount === 0 ? 'No attachments' : `View ${attCount} attachment${attCount > 1 ? 's' : ''}`}
                                         aria-label="View attachments"
                                       >
@@ -4210,21 +4118,21 @@ export default function Dashboard() {
                           {isExpanded && (
                             <tr className="bg-blue-50/40 border-b-2 border-blue-200">
                               <td colSpan={16} className="p-4 sm:p-6">
-                                <div className="bg-white rounded-2xl border border-blue-200 shadow-md p-4 space-y-4">
+                                <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-4 space-y-4">
                                   <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
                                     <div className="flex items-center space-x-2">
                                       <div className="bg-blue-600 text-white p-2 rounded-xl">
                                         <Package className="w-4 h-4" />
                                       </div>
                                       <div>
-                                        <h4 className="text-sm font-extrabold text-blue-900">
+                                        <h4 className="text-sm font-semibold text-blue-900">
                                           Items belonging to Docket: {doc.docketNoQtnNo || 'CEE-000000'}
                                         </h4>
                                         <p className="text-xs text-slate-500">
                                           Party: <strong className="text-slate-800">{doc.partyName}</strong>
                                         </p>
                                       </div>
-                                      <span className="bg-blue-100 text-blue-800 font-extrabold px-3 py-1 rounded-full text-xs ml-2">
+                                      <span className="bg-blue-100 text-blue-800 font-semibold px-3 py-1 rounded-full text-xs ml-2">
                                         {docketItems.length} {activeFilterQuery || hasSubFilters ? `Filtered Items (of ${rawDocketItems.length} Total)` : 'Items Listed'}
                                       </span>
                                       {hasSubFilters && (
@@ -4238,7 +4146,7 @@ export default function Dashboard() {
                                               });
                                             }
                                           }}
-                                          className="text-[11px] text-rose-600 font-extrabold bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2 py-1 rounded-lg transition-all"
+                                          className="text-[11px] text-rose-600 font-semibold bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2 py-1 rounded-lg transition-all"
                                         >
                                           Clear Sub-Filters
                                         </button>
@@ -4249,14 +4157,14 @@ export default function Dashboard() {
                                       <button
                                         onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
                                         disabled={aiProcessing || !canEdit || !doc.docketNoQtnNo?.trim()}
-                                        className="flex items-center space-x-1.5 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
+                                        className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
                                         title={
                                           doc.docketNoQtnNo?.trim()
                                             ? 'Autofill items for this docket using Groq AI'
                                             : 'Autofill by AI needs a Docket / Qtn No - set one first'
                                         }
                                       >
-                                        <Sparkles className="w-3.5 h-3.5 text-yellow-300 animate-pulse" />
+                                        <Sparkles className="w-3.5 h-3.5 text-blue-100" />
                                         <span>Autofill by AI</span>
                                       </button>
 
@@ -4270,7 +4178,7 @@ export default function Dashboard() {
                                           }));
                                           setShowAddItemModal(true);
                                         }}
-                                        className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
+                                        className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
                                       >
                                         <Plus className="w-4 h-4" />
                                         <span>Create Item inside Docket</span>
@@ -4281,7 +4189,7 @@ export default function Dashboard() {
                                       {currentUser.role === 'Admin' && (
                                         <button
                                           onClick={() => handleDeleteDocket(doc.id, doc.docketNoQtnNo)}
-                                          className="flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
+                                          className="flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
                                           title="Delete Docket & All Associated Items"
                                         >
                                           <Trash2 className="w-3.5 h-3.5" />
@@ -4310,7 +4218,7 @@ export default function Dashboard() {
                                           }));
                                           setShowAddItemModal(true);
                                         }}
-                                        className="mt-2 inline-flex items-center space-x-1 text-xs font-extrabold text-blue-600 hover:underline"
+                                        className="mt-2 inline-flex items-center space-x-1 text-xs font-semibold text-blue-600 hover:underline"
                                       >
                                         <Plus className="w-3.5 h-3.5" />
                                         <span>Add First Item</span>
@@ -4320,16 +4228,16 @@ export default function Dashboard() {
                                   ) : (
                                     <div className="overflow-x-auto">
                                       <table className="w-full text-left border-separate border-spacing-0 text-xs border border-slate-200 rounded-lg table-fixed">
-                                        <thead className="bg-slate-100 text-slate-800 font-bold uppercase text-[10px]">
+                                        <thead className="bg-slate-50 text-slate-500 font-semibold uppercase text-[10px]">
                                           <tr>
                                             <th className="p-2.5 border-b border-slate-300 w-[75px] min-w-[75px] max-w-[75px] sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs">Item ID</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[240px] min-w-[240px] max-w-[240px] sticky left-[75px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">ITEM NAME- PARTY</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[80px] min-w-[80px] max-w-[80px] sticky left-[315px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">UOM</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-30 bg-slate-100 border-r-2 border-slate-400 shadow-md">QTY</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-30 bg-slate-100 border-r-2 border-slate-400 shadow-sm">QTY</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[150px] min-w-[150px]">OUR ITEM/NOT</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[200px] min-w-[200px]">Our item Name</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">SIZE</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[130px] min-w-[130px] bg-blue-50/80 text-blue-900 font-extrabold">Unit Wt.</th>
+                                            <th className="p-2.5 border-b border-slate-300 w-[130px] min-w-[130px] bg-blue-50/80 text-blue-900 font-semibold">Unit Wt.</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[160px] min-w-[160px]">Unit Wt. of Member (Kg)</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[120px] min-w-[120px] bg-blue-50/80">PRICE</th>
                                             <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">Section (mm)</th>
@@ -4607,7 +4515,7 @@ export default function Dashboard() {
                                                    className="w-16 p-1 border border-slate-200 rounded text-xs"
                                                  />
                                                </td>
-                                               <td className="p-2.5 font-bold w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-b border-slate-400 shadow-md">
+                                               <td className="p-2.5 font-bold w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-b border-slate-400 shadow-sm">
                                                  <CellInput
                                                    readOnly={!canEdit}
                                                    value={subItem.qty || ''}
@@ -4615,7 +4523,7 @@ export default function Dashboard() {
                                                    onPaste={(e) =>
                                                      handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'qty')
                                                    }
-                                                   className="w-16 p-1 border border-slate-200 rounded text-xs font-extrabold"
+                                                   className="w-16 p-1 border border-slate-200 rounded text-xs font-semibold"
                                                  />
                                                </td>
                                               <td className="p-2.5 border-b border-slate-200">
@@ -4644,7 +4552,7 @@ export default function Dashboard() {
                                                          openReasoningModal(subItem.itemNameParty, subItem.typeOfItem, e.target.value);
                                                        }
                                                      }}
-                                                     className="w-full p-1 border border-slate-200 rounded text-xs font-extrabold text-blue-700"
+                                                     className="w-full p-1 border border-slate-200 rounded text-xs font-semibold text-blue-700"
                                                    >
                                                      <option value="">Select Item Name</option>
                                                      <option value="OTHERS">OTHERS</option>
@@ -4704,7 +4612,7 @@ export default function Dashboard() {
                                                    placeholder="Kg"
                                                  />
                                                </td>
-                                               <td className="p-2.5 font-extrabold border-b border-slate-200 bg-blue-50/30">
+                                               <td className="p-2.5 font-semibold border-b border-slate-200 bg-blue-50/30">
                                                  <CellInput
                                                    readOnly={!canEdit}
                                                    value={subItem.price || ''}
@@ -4712,7 +4620,7 @@ export default function Dashboard() {
                                                    onPaste={(e) =>
                                                      handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'price')
                                                    }
-                                                   className="w-20 p-1 border border-slate-200 rounded text-xs font-extrabold"
+                                                   className="w-20 p-1 border border-slate-200 rounded text-xs font-semibold"
                                                  />
                                                </td>
                                                <td className="p-2.5 border-b border-slate-200">
@@ -4799,7 +4707,7 @@ export default function Dashboard() {
 
         {/* TAB 3: TREAM-AND-CONDITIONS */}
         {activeTab === 'terms' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col flex-1 min-h-0 space-y-4 p-5">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col space-y-4 p-5">
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-base font-bold text-slate-900">Terms &amp; Conditions Presets</h2>
@@ -4810,7 +4718,7 @@ export default function Dashboard() {
               {canEdit && (
               <button
                 onClick={() => setShowAddTerm(!showAddTerm)}
-                className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold px-4 py-2.5 rounded-xl transition-all shadow-sm"
+                className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-4 py-2.5 rounded-xl transition-all shadow-sm"
               >
                 <Plus className="w-4 h-4" />
                 <span>Add Terms Preset</span>
@@ -4820,7 +4728,7 @@ export default function Dashboard() {
 
             {/* Add Term Form */}
             {showAddTerm && (
-              <form onSubmit={handleAddTerm} className="bg-slate-50 p-5 border border-slate-200 rounded-2xl space-y-4">
+              <form onSubmit={handleAddTerm} className="bg-slate-50 p-5 border border-slate-200 rounded-xl space-y-4">
                 <h3 className="text-sm font-bold text-slate-800">Add New Terms Condition Option</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                   <div>
@@ -4894,7 +4802,7 @@ export default function Dashboard() {
                   </button>
                   <button
                     type="submit"
-                    className="px-5 py-2 text-xs bg-blue-600 text-white rounded-xl font-extrabold hover:bg-blue-700 shadow-sm"
+                    className="px-5 py-2 text-xs bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 shadow-sm"
                   >
                     Save Options to DB
                   </button>
@@ -4904,7 +4812,7 @@ export default function Dashboard() {
 
             <div className="overflow-auto flex-1 min-h-[240px]">
               <table className="w-full text-left border-collapse text-sm">
-                <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-10 border-b border-slate-200 text-xs uppercase tracking-wider">
+                <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 z-10 border-b border-slate-200 text-xs uppercase tracking-wider">
                   <tr>
                     <th className="p-3.5">ID</th>
                     <th className="p-3.5 min-w-[220px]">Price Condition</th>
@@ -5003,7 +4911,7 @@ export default function Dashboard() {
 
         {/* TAB 4: EDIT-LOGS */}
         {activeTab === 'logs' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col">
             <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
               <div>
                 <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -5033,7 +4941,7 @@ export default function Dashboard() {
 
             <div className="overflow-auto flex-1 min-h-[240px]">
               <table className="w-full text-left border-collapse text-sm">
-                <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-10 border-b border-slate-200 text-xs uppercase tracking-wider">
+                <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 z-10 border-b border-slate-200 text-xs uppercase tracking-wider">
                   <tr>
                     <th className="p-3.5">Log ID</th>
                     <th className="p-3.5">Table Name</th>
@@ -5047,7 +4955,16 @@ export default function Dashboard() {
                 </thead>
 
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {logsLoading ? (
+                  {!authLoading && !isLoggedIn ? (
+                    <tr>
+                      <td colSpan={8} className="p-10 text-center text-slate-500 font-semibold">
+                        The change history is only visible after signing in.{' '}
+                        <Link href="/login?next=%2F%3Ftab%3Dlogs" className="text-blue-600 hover:underline font-bold">
+                          Sign in
+                        </Link>
+                      </td>
+                    </tr>
+                  ) : logsLoading ? (
                     <tr>
                       <td colSpan={8} className="p-10 text-center text-slate-400 font-semibold">
                         Loading edit logs history...
@@ -5065,7 +4982,7 @@ export default function Dashboard() {
                         <td className="p-3.5 font-mono text-xs font-bold text-slate-500">#{log.id}</td>
                         <td className="p-3.5">
                           <span
-                            className={`px-2.5 py-1 rounded-lg text-xs font-extrabold border ${
+                            className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${
                               log.tableName === 'iteam-table'
                                 ? 'bg-blue-50 text-blue-700 border-blue-200'
                                 : log.tableName === 'docket-party-name'
@@ -5111,10 +5028,10 @@ export default function Dashboard() {
 
         {/* TAB 5: ADMIN-ONLY MASTER DROPDOWNS MANAGEMENT */}
         {activeTab === 'master' && currentUser.role === 'Admin' && (
-          <div className="bg-white rounded-2xl border border-amber-200 shadow-md overflow-hidden flex flex-col space-y-4 p-6">
+          <div className="bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden flex flex-col space-y-4 p-6">
             <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-100 pb-4">
               <div>
-                <h2 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
                   <Sliders className="w-5 h-5 text-amber-600" />
                   Master Dropdowns Option Manager (Admin Control)
                 </h2>
@@ -5135,7 +5052,7 @@ export default function Dashboard() {
                   <button
                     key={cat.key}
                     onClick={() => setMasterCategoryFilter(cat.key)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all border ${
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border ${
                       masterCategoryFilter === cat.key
                         ? 'bg-amber-600 border-amber-600 text-white shadow-xs'
                         : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
@@ -5148,14 +5065,14 @@ export default function Dashboard() {
             </div>
 
             {/* ADD NEW MASTER OPTION FORM */}
-            <form onSubmit={handleCreateMasterValue} className="bg-amber-50/50 border border-amber-200 p-4 rounded-2xl space-y-3">
-              <h3 className="text-xs font-extrabold text-amber-900 flex items-center gap-1.5">
+            <form onSubmit={handleCreateMasterValue} className="bg-amber-50/50 border border-amber-200 p-4 rounded-xl space-y-3">
+              <h3 className="text-xs font-semibold text-amber-900 flex items-center gap-1.5">
                 <PlusCircle className="w-4 h-4 text-amber-600" />
                 Add New Master Option to Database
               </h3>
               <div className="flex flex-wrap items-center gap-3 text-xs">
                 <div className="w-48">
-                  <label className="font-extrabold text-slate-700">Category:</label>
+                  <label className="font-semibold text-slate-700">Category:</label>
                   <select
                     value={newMasterForm.type}
                     onChange={(e) => setNewMasterForm((prev) => ({ ...prev, type: e.target.value }))}
@@ -5170,7 +5087,7 @@ export default function Dashboard() {
                 </div>
 
                 <div className="flex-1 min-w-[240px]">
-                  <label className="font-extrabold text-slate-700">New Option Value *:</label>
+                  <label className="font-semibold text-slate-700">New Option Value *:</label>
                   <input
                     type="text"
                     required
@@ -5184,7 +5101,7 @@ export default function Dashboard() {
                 <div className="pt-5">
                   <button
                     type="submit"
-                    className="bg-amber-600 hover:bg-amber-700 text-white font-extrabold px-5 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center space-x-1.5"
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-5 py-2 rounded-xl text-xs shadow-sm transition-all flex items-center space-x-1.5"
                   >
                     <Plus className="w-4 h-4" />
                     <span>Add Master Option</span>
@@ -5196,7 +5113,7 @@ export default function Dashboard() {
             {/* MASTER VALUES TABLE */}
             <div className="overflow-x-auto max-h-[600px] border border-slate-200 rounded-xl">
               <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-10 border-b border-slate-200 text-[11px] uppercase tracking-wider">
+                <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 z-10 border-b border-slate-200 text-[11px] uppercase tracking-wider">
                   <tr>
                     <th className="p-3 w-[70px]">ID</th>
                     <th className="p-3 w-[160px]">Category</th>
@@ -5238,7 +5155,7 @@ export default function Dashboard() {
                         <td className="p-3 text-center">
                           <button
                             onClick={() => handleToggleMasterActive(m.id, m.isActive)}
-                            className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold transition-all border ${
+                            className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-all border ${
                               m.isActive
                                 ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
                                 : 'bg-slate-100 text-slate-500 border-slate-300'
@@ -5275,18 +5192,19 @@ export default function Dashboard() {
           </div>
         )}
       </main>
+      </div>
 
       {/* MODAL 1: ADD NEW DOCKET RECORD (WITH EXCEL BULK COPY-PASTE ITEM BOXES & AUTO-INCREMENTAL DOCKET NO) */}
       {showAddDocketModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-3xl w-full p-6 space-y-5 animate-in fade-in zoom-in duration-150 max-h-[90vh] overflow-y-auto">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-3xl w-full p-6 space-y-5 animate-in fade-in zoom-in duration-150 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-3">
-                <div className="bg-blue-600 text-white p-2.5 rounded-2xl">
+                <div className="bg-blue-600 text-white p-2.5 rounded-xl">
                   <Building className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-900">Add New Docket Record</h3>
+                  <h3 className="text-base font-semibold text-slate-900">Add New Docket Record</h3>
                   <p className="text-xs text-slate-500">
                     Logged in user: <strong className="text-blue-700">{currentUser.name} ({currentUser.username})</strong>
                   </p>
@@ -5304,7 +5222,7 @@ export default function Dashboard() {
               {/* UPPER SECTION: DOCKET & PARTY DETAILS */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                 <div>
-                  <label className="font-extrabold text-slate-700 flex items-center justify-between">
+                  <label className="font-semibold text-slate-700 flex items-center justify-between">
                     <span>Docket / Qtn No:</span>
                     <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1">
                       {currentUser.role === 'Admin' ? (
@@ -5324,7 +5242,7 @@ export default function Dashboard() {
                     readOnly={currentUser.role !== 'Admin'}
                     value={newDocketForm.docketNoQtnNo}
                     onChange={(e) => setNewDocketForm((prev) => ({ ...prev, docketNoQtnNo: e.target.value }))}
-                    className={`w-full mt-1 p-2.5 border rounded-xl font-extrabold text-xs transition-all ${
+                    className={`w-full mt-1 p-2.5 border rounded-xl font-semibold text-xs transition-all ${
                       currentUser.role === 'Admin'
                         ? 'bg-white border-blue-400 text-blue-700 focus:ring-2 focus:ring-blue-500/20'
                         : 'bg-slate-100 border-slate-300 text-slate-600 cursor-not-allowed'
@@ -5333,7 +5251,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Party Name *:</label>
+                  <label className="font-semibold text-slate-700">Party Name *:</label>
                   <input
                     type="text"
                     required
@@ -5346,7 +5264,7 @@ export default function Dashboard() {
                 </div>
 
                 <div className="sm:col-span-2">
-                  <label className="font-extrabold text-slate-700">Address:</label>
+                  <label className="font-semibold text-slate-700">Address:</label>
                   <input
                     type="text"
                     list="master-addresses"
@@ -5358,7 +5276,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">State:</label>
+                  <label className="font-semibold text-slate-700">State:</label>
                   <input
                     type="text"
                     list="master-states"
@@ -5370,7 +5288,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Utility:</label>
+                  <label className="font-semibold text-slate-700">Utility:</label>
                   <input
                     type="text"
                     list="master-utilities"
@@ -5382,7 +5300,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Delivery Location:</label>
+                  <label className="font-semibold text-slate-700">Delivery Location:</label>
                   <input
                     type="text"
                     placeholder="e.g. Beldanga and Sitalpur, Bihar"
@@ -5393,7 +5311,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label htmlFor="new-docket-type" className="font-extrabold text-slate-700">
+                  <label htmlFor="new-docket-type" className="font-semibold text-slate-700">
                     Type: <span className="text-rose-600">*</span>
                   </label>
                   <select
@@ -5416,7 +5334,7 @@ export default function Dashboard() {
 
                 {/* Terms Conditions selections */}
                 <div>
-                  <label className="font-extrabold text-slate-700">Price Condition:</label>
+                  <label className="font-semibold text-slate-700">Price Condition:</label>
                   <select
                     value={newDocketForm.price}
                     title={newDocketForm.price || 'Select Option'}
@@ -5433,7 +5351,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Payment Condition:</label>
+                  <label className="font-semibold text-slate-700">Payment Condition:</label>
                   <select
                     value={newDocketForm.payment}
                     title={newDocketForm.payment || 'Select Option'}
@@ -5454,7 +5372,7 @@ export default function Dashboard() {
               <div className="border-t border-slate-200 pt-4 space-y-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h4 className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                    <h4 className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
                       <Package className="w-4 h-4 text-emerald-600" />
                       Add Line Items (Excel Drag & Drop + Copy-Paste + Smart Header Tracking)
                     </h4>
@@ -5469,7 +5387,7 @@ export default function Dashboard() {
                       <button
                         type="button"
                         onClick={() => setDocketItemViewMode('boxes')}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center space-x-1 transition-all ${
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center space-x-1 transition-all ${
                           docketItemViewMode === 'boxes'
                             ? 'bg-white text-blue-700 shadow-xs'
                             : 'text-slate-600 hover:text-slate-900'
@@ -5482,7 +5400,7 @@ export default function Dashboard() {
                       <button
                         type="button"
                         onClick={() => setDocketItemViewMode('table')}
-                        className={`px-2.5 py-1 rounded-lg text-[11px] font-extrabold flex items-center space-x-1 transition-all ${
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold flex items-center space-x-1 transition-all ${
                           docketItemViewMode === 'table'
                             ? 'bg-white text-blue-700 shadow-xs'
                             : 'text-slate-600 hover:text-slate-900'
@@ -5502,7 +5420,7 @@ export default function Dashboard() {
                           { itemNameParty: '', uom: '', qty: '', ourItemNot: '', ourItemName: '', size: '', unitWtOfMemberKg: '', price: '' },
                         ])
                       }
-                      className="inline-flex items-center space-x-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-extrabold text-xs px-3 py-1.5 rounded-xl transition-all"
+                      className="inline-flex items-center space-x-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 font-semibold text-xs px-3 py-1.5 rounded-xl transition-all"
                     >
                       <Plus className="w-3.5 h-3.5" />
                       <span>Add Row Box</span>
@@ -5542,7 +5460,7 @@ export default function Dashboard() {
                     }
                   }}
                   onClick={() => fileInputRef.current?.click()}
-                  className={`p-3.5 border-2 border-dashed rounded-2xl cursor-pointer transition-all text-center flex flex-col items-center justify-center space-y-1 ${
+                  className={`p-3.5 border-2 border-dashed rounded-xl cursor-pointer transition-all text-center flex flex-col items-center justify-center space-y-1 ${
                     isDraggingFile
                       ? 'border-blue-500 bg-blue-50/80 scale-[1.005]'
                       : 'border-blue-300 hover:border-blue-500 bg-blue-50/30 hover:bg-blue-50/60'
@@ -5559,8 +5477,8 @@ export default function Dashboard() {
                     accept=".xlsx, .xls, .csv, .tsv, .txt"
                     className="hidden"
                   />
-                  <div className="flex items-center space-x-2 text-blue-700 font-extrabold text-xs">
-                    <FileSpreadsheet className="w-5 h-5 text-emerald-600 animate-bounce" />
+                  <div className="flex items-center space-x-2 text-blue-700 font-semibold text-xs">
+                    <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
                     <span>Drag & Drop Excel (.xlsx, .xls, .csv) File or Click to Upload & Auto-Fill</span>
                   </div>
                   <p className="text-[10px] text-slate-500 font-medium">
@@ -5574,9 +5492,9 @@ export default function Dashboard() {
                     {docketItemsForm.map((row, index) => (
                       <div
                         key={index}
-                        className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200 relative group space-y-2.5 shadow-2xs hover:border-blue-300 transition-all"
+                        className="bg-slate-50/80 p-3.5 rounded-xl border border-slate-200 relative group space-y-2.5 shadow-2xs hover:border-blue-300 transition-all"
                       >
-                        <div className="flex items-center justify-between text-xs font-extrabold text-slate-700">
+                        <div className="flex items-center justify-between text-xs font-semibold text-slate-700">
                           <span className="flex items-center gap-1.5 text-blue-900">
                             <Package className="w-3.5 h-3.5 text-blue-600" />
                             Item Box #{index + 1}
@@ -5680,7 +5598,7 @@ export default function Dashboard() {
                                   prev.map((r, i) => (i === index ? { ...r, ourItemName: val } : r))
                                 );
                               }}
-                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-extrabold text-blue-700"
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white focus:ring-2 focus:ring-blue-500/20 text-xs font-semibold text-blue-700"
                             >
                               <option value="">Select Category</option>
                               <option value="OTHERS">OTHERS</option>
@@ -5756,7 +5674,7 @@ export default function Dashboard() {
                                   prev.map((r, i) => (i === index ? { ...r, price: val } : r))
                                 );
                               }}
-                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white text-xs font-extrabold text-blue-900"
+                              className="w-full mt-1 p-2 border border-slate-300 rounded-xl bg-white text-xs font-semibold text-blue-900"
                             />
                           </div>
                         </div>
@@ -5765,9 +5683,9 @@ export default function Dashboard() {
                   </div>
                 ) : (
                   /* VIEW MODE 2: TABLE PREVIEW VIEW */
-                  <div className="overflow-x-auto max-h-[360px] border border-slate-200 rounded-2xl bg-white shadow-xs">
+                  <div className="overflow-x-auto max-h-[360px] border border-slate-200 rounded-xl bg-white shadow-xs">
                     <table className="w-full text-left border-collapse text-xs">
-                      <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-10 border-b border-slate-200 text-[10px] uppercase">
+                      <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 z-10 border-b border-slate-200 text-[10px] uppercase">
                         <tr>
                           <th className="p-2 w-8 text-center">#</th>
                           <th className="p-2 min-w-[200px]">ITEM NAME - PARTY *</th>
@@ -5776,7 +5694,7 @@ export default function Dashboard() {
                           <th className="p-2 w-32">OUR ITEM / NOT</th>
                           <th className="p-2 w-40">Our item Name</th>
                           <th className="p-2 w-28">SIZE</th>
-                          <th className="p-2 w-28 bg-blue-50/80 text-blue-900 font-extrabold">Unit Wt.</th>
+                          <th className="p-2 w-28 bg-blue-50/80 text-blue-900 font-semibold">Unit Wt.</th>
                           <th className="p-2 w-32">Unit Wt. of Member (Kg)</th>
                           <th className="p-2 w-28">PRICE</th>
                           <th className="p-2 w-10 text-center">Action</th>
@@ -5945,7 +5863,7 @@ export default function Dashboard() {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-extrabold shadow-md shadow-blue-500/20"
+                  className="px-6 py-2.5 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold shadow-sm shadow-blue-500/20"
                 >
                   Save Docket to DB
                 </button>
@@ -5958,14 +5876,14 @@ export default function Dashboard() {
       {/* MODAL 2: ADD NEW ITEM TO DOCKET */}
       {showAddItemModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-2xl w-full p-6 space-y-5 animate-in fade-in zoom-in duration-150">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xl max-w-2xl w-full p-6 space-y-5 animate-in fade-in zoom-in duration-150">
             <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div className="flex items-center space-x-2">
                 <div className="bg-emerald-600 text-white p-2 rounded-xl">
                   <Package className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-extrabold text-slate-900">
+                  <h3 className="text-base font-semibold text-slate-900">
                     Create Item inside Docket #{newItemForm.docketNoQtnNo || 'N/A'}
                   </h3>
                   <p className="text-xs text-slate-500">Add a new quotation line item to PostgreSQL</p>
@@ -5982,7 +5900,7 @@ export default function Dashboard() {
             <form onSubmit={handleCreateItem} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                 <div>
-                  <label className="font-extrabold text-slate-700">Docket / Qtn No:</label>
+                  <label className="font-semibold text-slate-700">Docket / Qtn No:</label>
                   <input
                     type="text"
                     required
@@ -5993,7 +5911,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">ITEM NAME - PARTY *:</label>
+                  <label className="font-semibold text-slate-700">ITEM NAME - PARTY *:</label>
                   <input
                     type="text"
                     required
@@ -6005,7 +5923,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">UOM:</label>
+                  <label className="font-semibold text-slate-700">UOM:</label>
                   <input
                     type="text"
                     placeholder="e.g. NOS / kg / SET"
@@ -6016,7 +5934,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">QTY:</label>
+                  <label className="font-semibold text-slate-700">QTY:</label>
                   <input
                     type="text"
                     placeholder="e.g. 100"
@@ -6027,7 +5945,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">OUR ITEM / NOT:</label>
+                  <label className="font-semibold text-slate-700">OUR ITEM / NOT:</label>
                   <select
                     value={newItemForm.ourItemNot}
                     onChange={(e) => setNewItemForm((prev) => ({ ...prev, ourItemNot: e.target.value }))}
@@ -6041,7 +5959,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Our Item Name:</label>
+                  <label className="font-semibold text-slate-700">Our Item Name:</label>
                   <select
                     value={newItemForm.ourItemName}
                     onChange={(e) => setNewItemForm((prev) => ({ ...prev, ourItemName: e.target.value }))}
@@ -6057,7 +5975,7 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Size:</label>
+                  <label className="font-semibold text-slate-700">Size:</label>
                   <input
                     type="text"
                     placeholder="e.g. 100x50x6mm"
@@ -6068,18 +5986,18 @@ export default function Dashboard() {
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Price:</label>
+                  <label className="font-semibold text-slate-700">Price:</label>
                   <input
                     type="text"
                     placeholder="e.g. 1950"
                     value={newItemForm.price}
                     onChange={(e) => setNewItemForm((prev) => ({ ...prev, price: e.target.value }))}
-                    className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white font-extrabold text-slate-900"
+                    className="w-full mt-1 p-2.5 border border-slate-300 rounded-xl bg-slate-50 focus:bg-white font-semibold text-slate-900"
                   />
                 </div>
 
                 <div>
-                  <label className="font-extrabold text-slate-700">Status:</label>
+                  <label className="font-semibold text-slate-700">Status:</label>
                   <select
                     value={newItemForm.status}
                     onChange={(e) => setNewItemForm((prev) => ({ ...prev, status: e.target.value }))}
@@ -6104,7 +6022,7 @@ export default function Dashboard() {
                 </button>
                 <button
                   type="submit"
-                  className="px-6 py-2.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-extrabold shadow-md shadow-emerald-500/20"
+                  className="px-6 py-2.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-semibold shadow-sm shadow-emerald-500/20"
                 >
                   Save Item to Docket
                 </button>
@@ -6140,16 +6058,16 @@ export default function Dashboard() {
               role="dialog"
               aria-modal="true"
               aria-label="Attachments"
-              className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+              className="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5">
                 <div className="flex min-w-0 items-center gap-2">
                   <Paperclip className="h-4 w-4 shrink-0 text-emerald-600" />
-                  <h2 className="truncate text-sm font-extrabold text-slate-900">
+                  <h2 className="truncate text-sm font-semibold text-slate-900">
                     Attachments — {listDoc.docketNoQtnNo || '#' + listDoc.id}
                   </h2>
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-700">
+                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
                     {atts.length}
                   </span>
                 </div>
@@ -6246,13 +6164,13 @@ export default function Dashboard() {
             role="dialog"
             aria-modal="true"
             aria-label={`Preview ${previewAttachment.name}`}
-            className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"
+            className="flex h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5">
               <div className="flex min-w-0 items-center gap-2">
                 <File className="h-4 w-4 shrink-0 text-emerald-600" />
-                <h2 className="truncate text-sm font-extrabold text-slate-900" title={previewAttachment.name}>
+                <h2 className="truncate text-sm font-semibold text-slate-900" title={previewAttachment.name}>
                   {previewAttachment.name}
                 </h2>
               </div>
@@ -6260,7 +6178,7 @@ export default function Dashboard() {
                 <a
                   href={getAttachmentUrl(previewAttachment.key, true)}
                   download={previewAttachment.name}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-extrabold text-white hover:bg-emerald-700"
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700"
                 >
                   <Download className="h-3.5 w-3.5" />
                   Download

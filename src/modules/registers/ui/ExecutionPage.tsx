@@ -2,21 +2,22 @@
 
 import { opsActions } from '@/lib/opsSlice';
 import { useAppDispatch, useAppSelector } from '@/lib/store';
-import { REGISTER_KEYS, REGISTER_LABELS } from '../columns';
+import { EXECUTION_KEYS, REGISTER_LABELS, type RegisterKey } from '../columns';
 import { RegisterTable } from './RegisterTable';
 
 /** All orders' after-fabrication registers in one place; entries are added from each order's page. */
 export function ExecutionPage({ role }: { role: string }) {
   const dispatch = useAppDispatch();
-  const tab = useAppSelector((s) => s.ops.executionTab);
+  const stored = useAppSelector((s) => s.ops.executionTab);
+  const tab: RegisterKey = (EXECUTION_KEYS as readonly string[]).includes(stored) ? (stored as RegisterKey) : 'galv';
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-xl font-extrabold text-slate-900">Execution registers</h1>
-        <p className="text-xs text-slate-500">Galvanising, inspection/MC, DI and dispatch across all orders.</p>
+        <h1 className="text-xl font-semibold text-slate-900">Inspection &amp; dispatch</h1>
+        <p className="text-xs text-slate-500">Stage inspection, galvanising, inspection/MC, DI and dispatch across all orders.</p>
       </div>
       <div role="tablist" aria-label="Registers" className="flex flex-wrap gap-1 border-b border-slate-200">
-        {REGISTER_KEYS.map((k) => (
+        {EXECUTION_KEYS.map((k) => (
           <button
             key={k}
             role="tab"
