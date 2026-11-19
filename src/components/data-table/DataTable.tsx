@@ -153,7 +153,7 @@ export function DataTable<Row>({
                     data-key={c.key}
                     scope="col"
                     className={cn(
-                      "group/th relative h-10 border-r border-b border-primary-foreground/20 bg-primary p-0 text-left text-xs font-semibold text-primary-foreground whitespace-nowrap last:border-r-0",
+                      "group/th relative h-10 border-r border-b border-slate-200 bg-slate-50 p-0 text-left text-xs font-semibold text-slate-600 whitespace-nowrap last:border-r-0",
                       s?.className,
                     )}
                     style={{ width: widthOf(c), ...s?.style }}

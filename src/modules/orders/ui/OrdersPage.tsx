@@ -23,7 +23,7 @@ export function OrdersPage({ role }: { role: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-xl font-extrabold text-slate-900">Orders</h1>
+        <h1 className="text-xl font-semibold text-slate-900">Orders</h1>
         <p className="text-xs text-slate-500">An order starts when an offer becomes a PO. Open an order for its BOM and execution registers.</p>
       </div>
       <ServerTable<OrderRow, OrdersMeta>
@@ -39,6 +39,8 @@ export function OrdersPage({ role }: { role: string }) {
             <Kpi label="Quoted MT" value={fmtNum(meta?.quotedMt, 1)} />
             <Kpi label="BOM MT" value={fmtNum(meta?.bomMt, 1)} />
             <Kpi label="Dispatched MT" value={fmtNum(meta?.dispatchedMt, 1)} tone="green" />
+            <Kpi label="Billed (Rs)" value={fmtNum(meta?.billedRs, 0)} />
+            <Kpi label="Outstanding (Rs)" value={fmtNum(meta?.outstandingRs, 0)} tone="amber" />
           </div>
         )}
         toolbar={

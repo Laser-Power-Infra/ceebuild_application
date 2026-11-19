@@ -70,7 +70,7 @@ export function SectionsPage({ role }: { role: string }) {
   return (
     <div className="flex flex-col gap-4">
       <div>
-        <h1 className="text-xl font-extrabold text-slate-900">GTP sections</h1>
+        <h1 className="text-xl font-semibold text-slate-900">GTP sections</h1>
         <p className="text-xs text-slate-500">
           Approved sections and their standard kg/m (e.g. SBPDCL letter 2333 dt 28-07-2025: IS 2062 E250A, IS 2629 610 g/m², ±5%). BOM rows are
           checked against this list; any change re-checks every draft BOM.

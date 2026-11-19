@@ -5,9 +5,21 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Modal, FormError, fieldCls, labelCls } from '@/components/Modal';
 import { Button } from '@/components/ui/button';
 import { addRegisterEntryAction, registerOptionsAction } from '@/app/actions/registers';
-import { REGISTER_LABELS, type RegisterKey } from '../columns';
+import { COLLECTION_MODES, REGISTER_LABELS, SECURITY_KINDS, SECURITY_STATUSES, STAGE_NAMES, type RegisterKey } from '../columns';
 
-type Opts = { marks: { mark: string; qty: number }[]; dis: { id: number; diNo: string }[] };
+type Opts = {
+  marks: { mark: string; qty: number }[];
+  dis: { id: number; diNo: string }[];
+  dispatches: { id: number; label: string; wtKg: number | null }[];
+  invoices: { id: number; invoiceNo: string; outstanding: number }[];
+};
+
+const DEFAULTS: Partial<Record<RegisterKey, Record<string, string>>> = {
+  galv: { direction: 'OUT' },
+  stage: { stage: STAGE_NAMES[STAGE_NAMES.length - 1] },
+  collection: { mode: 'RTGS' },
+  security: { kind: 'PBG', status: 'ACTIVE' },
+};
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -22,9 +34,9 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 
 /** Add one entry to a register of an order. */
 export function RegisterForm({ register, orderId, onClose, onSaved }: { register: RegisterKey; orderId: number; onClose: () => void; onSaved: (warning: string | null) => void }) {
-  const [v, setV] = useState<Record<string, string>>({ date: today(), direction: 'OUT' });
+  const [v, setV] = useState<Record<string, string>>({ date: today(), ...DEFAULTS[register] });
   const [lines, setLines] = useState<{ markNo: string; pieces: string }[]>([{ markNo: '', pieces: '' }]);
-  const [opts, setOpts] = useState<Opts>({ marks: [], dis: [] });
+  const [opts, setOpts] = useState<Opts>({ marks: [], dis: [], dispatches: [], invoices: [] });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -35,6 +47,16 @@ export function RegisterForm({ register, orderId, onClose, onSaved }: { register
   const input = (key: string, props: React.InputHTMLAttributes<HTMLInputElement> = {}) => (
     <input id={`f-${key}`} className={fieldCls} value={v[key] ?? ''} onChange={(e) => setV((s) => ({ ...s, [key]: e.target.value }))} {...props} />
   );
+  const select = (key: string, options: readonly { value: string; label: string }[], blank?: string) => (
+    <select id={`f-${key}`} className={fieldCls} value={v[key] ?? ''} onChange={(e) => setV((s) => ({ ...s, [key]: e.target.value }))}>
+      {blank !== undefined && <option value="">{blank}</option>}
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+  );
+  const plain = (xs: readonly string[]) => xs.map((x) => ({ value: x, label: x }));
+  const money = (n: number) => `Rs ${n.toLocaleString('en-IN')}`;
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -95,13 +117,74 @@ export function RegisterForm({ register, orderId, onClose, onSaved }: { register
                 </select>
               </Field>
               <Field id="f-invoiceNo" label="Invoice no">{input('invoiceNo', { maxLength: 100 })}</Field>
+              <Field id="f-ewayBillNo" label="E-way bill no">{input('ewayBillNo', { maxLength: 50 })}</Field>
               <Field id="f-lrNo" label="LR no">{input('lrNo', { maxLength: 100 })}</Field>
               <Field id="f-vehicleNo" label="Vehicle no">{input('vehicleNo', { maxLength: 50 })}</Field>
               <Field id="f-pieces" label="Pieces">{input('pieces', { inputMode: 'numeric' })}</Field>
               <Field id="f-wtKg" label="Wt (kg)">{input('wtKg', { inputMode: 'decimal' })}</Field>
             </>
           )}
+          {register === 'stage' && (
+            <>
+              <Field id="f-date" label="Date">{input('date', { type: 'date', required: true })}</Field>
+              <Field id="f-stage" label="Stage">{select('stage', plain(STAGE_NAMES))}</Field>
+              <Field id="f-markNo" label="Mark no (optional)">{input('markNo', { list: 'bom-marks', maxLength: 100 })}</Field>
+              <Field id="f-piecesOffered" label="Pieces offered">{input('piecesOffered', { inputMode: 'numeric', required: true })}</Field>
+              <Field id="f-piecesAccepted" label="Pieces accepted">{input('piecesAccepted', { inputMode: 'numeric', required: true })}</Field>
+              <Field id="f-piecesRejected" label="Pieces rejected">{input('piecesRejected', { inputMode: 'numeric' })}</Field>
+              <Field id="f-inspector" label="Inspector">{input('inspector', { maxLength: 100 })}</Field>
+            </>
+          )}
+          {register === 'invoice' && (
+            <>
+              <Field id="f-invoiceNo" label="Invoice no">{input('invoiceNo', { required: true, maxLength: 100 })}</Field>
+              <Field id="f-date" label="Invoice date">{input('date', { type: 'date', required: true })}</Field>
+              <Field id="f-dispatchId" label="Against dispatch">
+                {select('dispatchId', opts.dispatches.map((d) => ({ value: String(d.id), label: d.label })), '— none —')}
+              </Field>
+              <Field id="f-wtKg" label="Wt (kg, blank = dispatch wt)">{input('wtKg', { inputMode: 'decimal' })}</Field>
+              <Field id="f-taxableAmount" label="Taxable value (Rs)">{input('taxableAmount', { inputMode: 'decimal' })}</Field>
+              <Field id="f-totalAmount" label="Invoice total incl. GST (Rs)">{input('totalAmount', { inputMode: 'decimal', required: true })}</Field>
+              <Field id="f-dueDate" label="Due date (blank = payment terms)">{input('dueDate', { type: 'date' })}</Field>
+            </>
+          )}
+          {register === 'collection' && (
+            <>
+              <Field id="f-date" label="Receipt date">{input('date', { type: 'date', required: true })}</Field>
+              <Field id="f-invoiceId" label="Against invoice">
+                {select(
+                  'invoiceId',
+                  opts.invoices.map((x) => ({ value: String(x.id), label: `${x.invoiceNo} (outstanding ${money(x.outstanding)})` })),
+                  '— on account / advance —',
+                )}
+              </Field>
+              <Field id="f-amount" label="Amount received (Rs)">{input('amount', { inputMode: 'decimal', required: true })}</Field>
+              <Field id="f-retention" label="Retention (Rs; minus = released)">{input('retention', { inputMode: 'decimal' })}</Field>
+              <Field id="f-mode" label="Mode">{select('mode', plain(COLLECTION_MODES))}</Field>
+              <Field id="f-reference" label="UTR / LC / cheque no">{input('reference', { maxLength: 100 })}</Field>
+            </>
+          )}
+          {register === 'security' && (
+            <>
+              <Field id="f-kind" label="Type">{select('kind', plain(SECURITY_KINDS))}</Field>
+              <Field id="f-refNo" label="Ref no">{input('refNo', { maxLength: 100 })}</Field>
+              <Field id="f-bank" label="Bank">{input('bank', { maxLength: 100 })}</Field>
+              <Field id="f-amount" label="Amount (Rs)">{input('amount', { inputMode: 'decimal', required: true })}</Field>
+              <Field id="f-issueDate" label="Issue date">{input('issueDate', { type: 'date' })}</Field>
+              <Field id="f-expiryDate" label="Expiry / claim date">{input('expiryDate', { type: 'date' })}</Field>
+              <Field id="f-status" label="Status">{select('status', plain(SECURITY_STATUSES))}</Field>
+              {v.status && v.status !== 'ACTIVE' && <Field id="f-releasedDate" label="Released date">{input('releasedDate', { type: 'date' })}</Field>}
+            </>
+          )}
         </div>
+
+        {register === 'stage' && (
+          <datalist id="bom-marks">
+            {opts.marks.map((m) => (
+              <option key={m.mark} value={m.mark}>{`BOM qty ${m.qty}`}</option>
+            ))}
+          </datalist>
+        )}
 
         {register === 'galv' && (
           <div>

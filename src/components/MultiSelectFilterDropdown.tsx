@@ -115,7 +115,7 @@ export const MultiSelectFilterDropdown: React.FC<MultiSelectFilterDropdownProps>
       );
     }
     return (
-      <span className="font-extrabold text-blue-700 flex items-center space-x-1">
+      <span className="font-semibold text-blue-700 flex items-center space-x-1">
         <span>{selected.length}</span>
         <span className="text-[10px] text-slate-500 font-medium">selected</span>
       </span>
@@ -170,7 +170,7 @@ export const MultiSelectFilterDropdown: React.FC<MultiSelectFilterDropdownProps>
           style={{ minWidth: '220px' }}
         >
           {/* Header title */}
-          <div className="flex items-center justify-between pb-1 border-b border-slate-100 text-[11px] font-extrabold text-slate-700 uppercase tracking-wider">
+          <div className="flex items-center justify-between pb-1 border-b border-slate-100 text-[11px] font-semibold text-slate-700 uppercase tracking-wider">
             <span>Filter by {title}</span>
             <span className="text-[10px] text-slate-400 font-normal">
               {cleanOptions.length} total

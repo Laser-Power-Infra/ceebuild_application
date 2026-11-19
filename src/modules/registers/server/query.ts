@@ -29,7 +29,92 @@ interface RegisterDef {
   agg: Prisma.Sql;
 }
 
+/** Collected / retention per invoice (retention = withheld by the client, receivable later). */
+const INVOICE_COLL = sql`LEFT JOIN LATERAL (SELECT coalesce(sum(c.amount), 0) AS amt, coalesce(sum(c.retention), 0) AS ret
+  FROM collections c WHERE c.invoice_id = r.id) ic ON TRUE`;
+/** Outstanding excludes retention: retention is tracked as a separate receivable. */
+export const INVOICE_OUTSTANDING = sql`(r.total_amount - ic.amt - ic.ret)`;
+const DAYS_OVERDUE = sql`(CASE WHEN ${INVOICE_OUTSTANDING} > 0 AND r.due_date < CURRENT_DATE THEN CURRENT_DATE - r.due_date ELSE 0 END)`;
+export const AGEING_SQL = sql`(CASE WHEN ${INVOICE_OUTSTANDING} <= 0 THEN 'Settled'
+  WHEN r.due_date IS NULL OR r.due_date >= CURRENT_DATE THEN 'Not due'
+  WHEN CURRENT_DATE - r.due_date <= 30 THEN '1-30 days'
+  WHEN CURRENT_DATE - r.due_date <= 60 THEN '31-60 days'
+  WHEN CURRENT_DATE - r.due_date <= 90 THEN '61-90 days'
+  ELSE '>90 days' END)`;
+
 const DEFS: Record<RegisterKey, RegisterDef> = {
+  stage: {
+    from: sql`stage_inspections r ${ORDER_JOIN}`,
+    order: sql`r.inspection_date DESC, r.id DESC`,
+    fields: {
+      inspectionDate: date('r.inspection_date'),
+      stage: txt(sql`r.stage`),
+      markNo: txt(sql`r.mark_no`),
+      piecesOffered: numf(sql`r.pieces_offered`),
+      piecesAccepted: numf(sql`r.pieces_accepted`),
+      piecesRejected: numf(sql`r.pieces_rejected`),
+      inspector: txt(sql`r.inspector`),
+      remarks: txt(sql`r.remarks`),
+    },
+    agg: sql`count(*)::int AS total, coalesce(sum(r.pieces_offered), 0)::float AS "piecesOffered",
+      coalesce(sum(r.pieces_accepted), 0)::float AS "piecesAccepted", coalesce(sum(r.pieces_rejected), 0)::float AS "piecesRejected"`,
+  },
+  invoice: {
+    from: sql`invoices r ${ORDER_JOIN} LEFT JOIN dispatches dp ON dp.id = r.dispatch_id ${INVOICE_COLL}`,
+    order: sql`r.invoice_date DESC, r.id DESC`,
+    fields: {
+      invoiceNo: txt(sql`r.invoice_no`),
+      invoiceDate: date('r.invoice_date'),
+      dispatchRef: txt(sql`(CASE WHEN dp.id IS NULL THEN NULL ELSE to_char(dp.dispatch_date, 'YYYY-MM-DD') || coalesce(' · ' || dp.vehicle_no, '') END)`),
+      wtKg: numf(sql`r.wt_kg`),
+      taxableAmount: numf(sql`r.taxable_amount`),
+      totalAmount: numf(sql`r.total_amount`),
+      dueDate: date('r.due_date'),
+      collected: numf(sql`ic.amt`),
+      retention: numf(sql`ic.ret`),
+      outstanding: numf(INVOICE_OUTSTANDING),
+      daysOverdue: numf(DAYS_OVERDUE),
+      ageing: txt(AGEING_SQL),
+      remarks: txt(sql`r.remarks`),
+    },
+    agg: sql`count(*)::int AS total, coalesce(sum(r.total_amount), 0)::float AS billed,
+      coalesce(sum(ic.amt), 0)::float AS collected, coalesce(sum(ic.ret), 0)::float AS retention,
+      coalesce(sum(${INVOICE_OUTSTANDING}), 0)::float AS outstanding,
+      coalesce(sum(${INVOICE_OUTSTANDING}) FILTER (WHERE ${DAYS_OVERDUE} > 0), 0)::float AS overdue`,
+  },
+  collection: {
+    from: sql`collections r ${ORDER_JOIN} LEFT JOIN invoices iv ON iv.id = r.invoice_id`,
+    order: sql`r.receipt_date DESC, r.id DESC`,
+    fields: {
+      receiptDate: date('r.receipt_date'),
+      invoiceNo: txt(sql`iv.invoice_no`),
+      mode: txt(sql`r.mode`),
+      reference: txt(sql`r.reference`),
+      amount: numf(sql`r.amount`),
+      retention: numf(sql`r.retention`),
+      remarks: txt(sql`r.remarks`),
+    },
+    agg: sql`count(*)::int AS total, coalesce(sum(r.amount), 0)::float AS collected, coalesce(sum(r.retention), 0)::float AS retention`,
+  },
+  security: {
+    from: sql`order_securities r ${ORDER_JOIN}`,
+    order: sql`r.expiry_date ASC NULLS LAST, r.id DESC`,
+    fields: {
+      kind: txt(sql`r.kind`),
+      refNo: txt(sql`r.ref_no`),
+      bank: txt(sql`r.bank`),
+      amount: numf(sql`r.amount`),
+      issueDate: date('r.issue_date'),
+      expiryDate: date('r.expiry_date'),
+      daysToExpiry: numf(sql`(CASE WHEN r.status = 'ACTIVE' AND r.expiry_date IS NOT NULL THEN r.expiry_date - CURRENT_DATE END)`),
+      status: txt(sql`r.status`),
+      releasedDate: date('r.released_date'),
+      remarks: txt(sql`r.remarks`),
+    },
+    agg: sql`count(*)::int AS total, coalesce(sum(r.amount) FILTER (WHERE r.status = 'ACTIVE'), 0)::float AS "activeAmount",
+      count(*) FILTER (WHERE r.status = 'ACTIVE' AND r.expiry_date >= CURRENT_DATE AND r.expiry_date <= CURRENT_DATE + 30)::float AS expiring30,
+      count(*) FILTER (WHERE r.status = 'ACTIVE' AND r.expiry_date < CURRENT_DATE)::float AS expired`,
+  },
   galv: {
     from: sql`galv_challans r ${ORDER_JOIN} ${GALV_LINES}`,
     order: sql`r.challan_date DESC, r.id DESC`,
@@ -87,6 +172,7 @@ const DEFS: Record<RegisterKey, RegisterDef> = {
       dispatchDate: date('r.dispatch_date'),
       diNo: txt(sql`di.di_no`),
       invoiceNo: txt(sql`r.invoice_no`),
+      ewayBillNo: txt(sql`r.eway_bill_no`),
       lrNo: txt(sql`r.lr_no`),
       vehicleNo: txt(sql`r.vehicle_no`),
       pieces: numf(sql`r.pieces`),
@@ -122,15 +208,22 @@ export async function listRegister(key: RegisterKey, orderId: number | null, que
 export const listRegisterFacet = (key: RegisterKey, orderId: number | null, field: string, query: TableQuery) =>
   fetchFacet(spec(key, orderId), field, query);
 
-/** Pick-lists for the entry forms: the order's BOM marks and its DIs. */
+/** Pick-lists for the entry forms: the order's BOM marks, DIs, dispatches and invoices. */
 export async function registerOptions(orderId: number) {
   const latest = await prisma.bomUpload.findFirst({ where: { orderId }, orderBy: { id: 'desc' }, select: { id: true } });
-  const [marks, dis] = await Promise.all([
+  const [marks, dis, dispatches, invoices] = await Promise.all([
     latest
       ? prisma.$queryRaw<{ mark: string; qty: number }[]>(sql`SELECT mark_no AS mark, coalesce(sum(total_qty), 0)::float AS qty
           FROM bom_pieces WHERE upload_id = ${latest.id} AND coalesce(mark_no, '') <> '' GROUP BY mark_no ORDER BY mark_no LIMIT 2000`)
       : Promise.resolve([]),
     prisma.dispatchInstruction.findMany({ where: { orderId }, orderBy: { diDate: 'desc' }, select: { id: true, diNo: true } }),
+    prisma.$queryRaw<{ id: number; label: string; wtKg: number | null }[]>(sql`SELECT d.id,
+        to_char(d.dispatch_date, 'YYYY-MM-DD') || coalesce(' · ' || d.vehicle_no, '') || coalesce(' · inv ' || d.invoice_no, '') AS label,
+        d.wt_kg::float AS "wtKg"
+      FROM dispatches d WHERE d.order_id = ${orderId} ORDER BY d.dispatch_date DESC, d.id DESC LIMIT 500`),
+    prisma.$queryRaw<{ id: number; invoiceNo: string; outstanding: number }[]>(sql`SELECT r.id, r.invoice_no AS "invoiceNo",
+        ${INVOICE_OUTSTANDING}::float AS outstanding
+      FROM invoices r ${INVOICE_COLL} WHERE r.order_id = ${orderId} ORDER BY r.invoice_date DESC, r.id DESC LIMIT 500`),
   ]);
-  return { marks, dis };
+  return { marks, dis, dispatches, invoices };
 }

@@ -80,7 +80,8 @@ function parseArgs(argv: string[]) {
 
 function normUsername(u: string | undefined): string {
   const v = (u || '').trim().toLowerCase();
-  if (!/^[a-z0-9._-]{2,64}$/.test(v)) usage(`invalid username "${u ?? ''}" (use 2-64 chars: a-z 0-9 . _ -)`);
+  // Self sign-ups use their email as the username (src/app/api/auth/signup/route.ts), so allow '@'.
+  if (!/^[a-z0-9._@+-]{2,254}$/.test(v)) usage(`invalid username "${u ?? ''}" (use 2-254 chars: a-z 0-9 . _ - @ +)`);
   return v;
 }
 
