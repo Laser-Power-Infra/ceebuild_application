@@ -1241,7 +1241,9 @@ export default function Dashboard() {
     const originalFetch = window.fetch;
     window.fetch = async (...args: Parameters<typeof fetch>) => {
       const res = await originalFetch(...args);
-      if (res.status === 401) {
+      // Logs are login-only by design; a visitor's 401 there must not bounce the public dashboard to /login.
+      const url = args[0] instanceof Request ? args[0].url : String(args[0]);
+      if (res.status === 401 && !url.includes('/api/logs')) {
         const next = window.location.pathname + window.location.search;
         window.location.href = `/login?next=${encodeURIComponent(next)}`;
       }
@@ -2256,7 +2258,7 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-100 font-sans text-slate-900">
+    <div className="h-dvh flex flex-col overflow-hidden bg-slate-100 font-sans text-slate-900">
       {/* Toast Notification */}
       {notification && (
         <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center space-x-3 text-sm font-semibold animate-bounce">
@@ -2806,7 +2808,7 @@ export default function Dashboard() {
       </header>
 
       {/* Main Content Container */}
-      <main className="w-full px-6 py-6 flex-1 space-y-6">
+      <main className="w-full px-6 py-6 flex-1 min-h-0 overflow-y-auto flex flex-col gap-6">
         {/* Controls & Filter Bar */}
         {activeTab !== 'master' && (
           <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm space-y-3">
@@ -2921,7 +2923,7 @@ export default function Dashboard() {
 
         {/* TAB 1: ITEAM-TABLE */}
         {activeTab === 'items' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col flex-1 min-h-0">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
               <div className="flex items-center space-x-3">
                 <h2 className="text-sm font-bold text-slate-900">Items</h2>
@@ -3012,7 +3014,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="overflow-x-auto max-h-[680px]">
+            <div className="overflow-auto flex-1 min-h-[240px]">
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-30 border-b border-slate-200 text-[11px] uppercase tracking-wider">
                   <tr>
@@ -3499,7 +3501,7 @@ export default function Dashboard() {
 
         {/* TAB 2: docket-party-name (WITH ACCORDION ARROW & ADD DOCKET/ITEM BUTTONS) */}
         {activeTab === 'dockets' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col space-y-3">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col flex-1 min-h-0 space-y-3">
             <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
               <div>
                 <h2 className="text-sm font-bold text-slate-900">Dockets</h2>
@@ -3586,7 +3588,7 @@ export default function Dashboard() {
             </div>
 
             {/* Quick Item Filter Chips for Dockets */}
-            <div className="px-4 py-2 bg-slate-50/60 border-b border-slate-200 flex items-center space-x-3 overflow-x-auto">
+            <div className="px-4 py-2 bg-slate-50/60 border-b border-slate-200 flex items-center space-x-3 overflow-x-auto shrink-0">
               <span className="text-xs font-bold text-slate-700 whitespace-nowrap flex items-center gap-1.5">
                 <Filter className="w-3.5 h-3.5 text-blue-600" />
                 Filter Dockets by Item Name:
@@ -3628,7 +3630,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="overflow-x-auto max-h-[680px]">
+            <div className="overflow-auto flex-1 min-h-[240px]">
               <table className="w-full text-left border-collapse text-xs">
                 <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-30 border-b border-slate-200 text-[10px] uppercase tracking-wider">
                   <tr>
@@ -4797,7 +4799,7 @@ export default function Dashboard() {
 
         {/* TAB 3: TREAM-AND-CONDITIONS */}
         {activeTab === 'terms' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col space-y-4 p-5">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col flex-1 min-h-0 space-y-4 p-5">
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-base font-bold text-slate-900">Terms &amp; Conditions Presets</h2>
@@ -4900,7 +4902,7 @@ export default function Dashboard() {
               </form>
             )}
 
-            <div className="overflow-x-auto max-h-[680px]">
+            <div className="overflow-auto flex-1 min-h-[240px]">
               <table className="w-full text-left border-collapse text-sm">
                 <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-10 border-b border-slate-200 text-xs uppercase tracking-wider">
                   <tr>
@@ -5001,7 +5003,7 @@ export default function Dashboard() {
 
         {/* TAB 4: EDIT-LOGS */}
         {activeTab === 'logs' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col flex-1 min-h-0">
             <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
               <div>
                 <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
@@ -5029,7 +5031,7 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="overflow-x-auto max-h-[680px]">
+            <div className="overflow-auto flex-1 min-h-[240px]">
               <table className="w-full text-left border-collapse text-sm">
                 <thead className="bg-slate-100 text-slate-800 font-extrabold sticky top-0 z-10 border-b border-slate-200 text-xs uppercase tracking-wider">
                   <tr>
