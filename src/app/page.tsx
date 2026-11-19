@@ -1236,12 +1236,16 @@ export default function Dashboard() {
     }
   };
 
-  // Any API call that comes back 401 (session expired / user disabled) sends the user to /login.
+  // A write (POST/PUT/PATCH/DELETE) that comes back 401 (not signed in, session expired, user disabled)
+  // sends the user to /login. A 401 on a read (e.g. the Logs tab for a guest) must NOT redirect:
+  // viewing is public, so guests stay on the page.
   useEffect(() => {
     const originalFetch = window.fetch;
     window.fetch = async (...args: Parameters<typeof fetch>) => {
       const res = await originalFetch(...args);
-      if (res.status === 401) {
+      const [input, init] = args;
+      const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      if (res.status === 401 && method !== 'GET' && method !== 'HEAD') {
         const next = window.location.pathname + window.location.search;
         window.location.href = `/login?next=${encodeURIComponent(next)}`;
       }
@@ -1302,7 +1306,17 @@ export default function Dashboard() {
     else if (activeTab === 'master') fetchMasterValues();
   }, [activeTab, search, startDate, endDate, itemFilters, docketFilters, logTableFilter, itemPage, itemLimit, docketPage, docketLimit]);
 
-  const readOnlyToast = () => showToast('Error: You have read-only access. Ask an Admin for edit rights.');
+  // Guests (not signed in) who try to edit are sent to the login page and brought back here afterwards.
+  // Signed-in Viewers are read-only by role, so they only get a message.
+  const readOnlyToast = () => {
+    if (!isLoggedIn) {
+      showToast('Please sign in to edit data.');
+      const next = window.location.pathname + window.location.search;
+      window.location.href = `/login?next=${encodeURIComponent(next)}`;
+      return;
+    }
+    showToast('Error: You have read-only access. Ask an Admin for edit rights.');
+  };
 
   // General field updater for ItemTable. Resolves false when the save was refused or failed.
   const handleItemFieldUpdate = async (
@@ -5045,7 +5059,16 @@ export default function Dashboard() {
                 </thead>
 
                 <tbody className="divide-y divide-slate-100 font-medium">
-                  {logsLoading ? (
+                  {!authLoading && !isLoggedIn ? (
+                    <tr>
+                      <td colSpan={8} className="p-10 text-center text-slate-500 font-semibold">
+                        The change history is only visible after signing in.{' '}
+                        <Link href="/login?next=%2F%3Ftab%3Dlogs" className="text-blue-600 hover:underline font-bold">
+                          Sign in
+                        </Link>
+                      </td>
+                    </tr>
+                  ) : logsLoading ? (
                     <tr>
                       <td colSpan={8} className="p-10 text-center text-slate-400 font-semibold">
                         Loading edit logs history...
