@@ -57,50 +57,21 @@ import MultiSelectFilterDropdown from '@/components/MultiSelectFilterDropdown';
 import ConfirmDialog, { type ConfirmDialogOptions } from '@/components/ConfirmDialog';
 import ConditionSelect from '@/components/ConditionSelect';
 import { DOCKET_TYPES, isDocketType } from '@/lib/dockets';
+import { DocketsTab } from '@/modules/dockets/ui/DocketsTab';
+import {
+  DOCKET_FILTER_KEYS,
+  emptyDocketFilters,
+  type Docket,
+  type DocketActions,
+  type DocketFilters,
+  type DocketItem,
+  type DocketSort,
+  type ItemUpdate,
+} from '@/modules/dockets/types';
 
-interface Item {
-  id: number;
-  uniqueNo: string | null;
-  docketNoQtnNo: string | null;
-  itemNameParty: string | null;
-  uom: string | null;
-  qty: string | null;
-  ourItemNot: string | null;
-  typeOfItem: string | null;
-  ourItemName: string | null;
-  size: string | null;
-  sectionMm: string | null;
-  sectionalWtKgMtr: string | null;
-  lengthInMtr: string | null;
-  unitWtOfMemberKg: string | null;
-  weightPerPiece: string | null;
-  price: string | null;
-  uomOfQtn: string | null;
-  a: string | null;
-  freightPerKg: string | null;
-  status: string | null;
-  createdAt: string;
-}
-
-interface DockerParty {
-  id: number;
-  docketNoQtnNo: string | null;
-  partyName: string | null;
-  address: string | null;
-  state: string | null;
-  utility: string | null;
-  deliveryLocation: string | null;
-  type?: string | null;
-  price: string | null;
-  payment: string | null;
-  delivery: string | null;
-  warranty: string | null;
-  approval: string | null;
-  inspection: string | null;
-  attachments?: string | null;
-  firstItemName?: string | null;
-  createdAt: string;
-}
+// Row shapes live with the Dockets screen (src/modules/dockets/types.ts).
+type Item = DocketItem;
+type DockerParty = Docket;
 
 interface TermCondition {
   id: number;
@@ -262,16 +233,17 @@ function CellInput({
   );
 }
 
-const TAB_META: Record<'items' | 'dockets' | 'terms' | 'logs' | 'master', { title: string; description: string }> = {
+const TAB_META: Record<'dockets' | 'terms' | 'logs' | 'master', { title: string; description: string }> = {
   dockets: { title: 'Dockets', description: 'Quotation dockets, parties and enquiry details' },
-  items: { title: 'Items', description: 'Line items across all quotation dockets' },
   terms: { title: 'Terms & Conditions', description: 'Standard terms printed on quotations' },
   logs: { title: 'Audit Log', description: 'Every change made to dockets, items and terms' },
   master: { title: 'Master Dropdowns', description: 'Values offered in party, state, utility and address fields' },
 };
 
+const STORE_DOCKET_PAGE_SIZE = 'ceebuild.dockets.pageSize';
+
 export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState<'items' | 'dockets' | 'terms' | 'logs' | 'master'>('dockets');
+  const [activeTab, setActiveTab] = useState<'dockets' | 'terms' | 'logs' | 'master'>('dockets');
 
   // Authentication & User State
   // Viewing is public: visitors without a NextAuth session browse as a read-only Guest.
@@ -322,52 +294,10 @@ export default function Dashboard() {
   const [endDate, setEndDate] = useState('');
 
   // Pagination states
-  const [itemPage, setItemPage] = useState(1);
-  const [itemLimit, setItemLimit] = useState(50);
-  const [itemTotalCount, setItemTotalCount] = useState(0);
-  const [itemTotalPages, setItemTotalPages] = useState(1);
-
   const [docketPage, setDocketPage] = useState(1);
   const [docketLimit, setDocketLimit] = useState(50);
   const [docketTotalCount, setDocketTotalCount] = useState(0);
   const [docketTotalPages, setDocketTotalPages] = useState(1);
-
-  // Items
-  const [items, setItems] = useState<Item[]>([]);
-  const [itemsLoading, setItemsLoading] = useState(false);
-  const [itemFilters, setItemFilters] = useState<{
-    docketNoQtnNo: string[];
-    itemNameParty: string[];
-    uom: string[];
-    qty: string[];
-    ourItemNot: string[];
-    typeOfItem: string[];
-    ourItemName: string[];
-    size: string[];
-    sectionMm: string[];
-    sectionalWtKgMtr: string[];
-    lengthInMtr: string[];
-    weightPerPiece: string[];
-    unitWtOfMemberKg: string[];
-    price: string[];
-    status: string[];
-  }>({
-    docketNoQtnNo: [],
-    itemNameParty: [],
-    uom: [],
-    qty: [],
-    ourItemNot: [],
-    typeOfItem: [],
-    ourItemName: [],
-    size: [],
-    sectionMm: [],
-    sectionalWtKgMtr: [],
-    lengthInMtr: [],
-    weightPerPiece: [],
-    unitWtOfMemberKg: [],
-    price: [],
-    status: [],
-  });
 
   const ourItemNameOptions = [
     'Fabricated Structures',
@@ -388,100 +318,21 @@ export default function Dashboard() {
     'GI Pipe',
   ];
 
-  const [itemOptionLists, setItemOptionLists] = useState<{
-    uom: string[];
-    ourItemNot: string[];
-    ourItemName: string[];
-    size: string[];
-    sectionMm: string[];
-    sectionalWtKgMtr: string[];
-    lengthInMtr: string[];
-    weightPerPiece: string[];
-    unitWtOfMemberKg: string[];
-    price: string[];
-    qty: string[];
-    status: string[];
-    itemNameParty: string[];
-    docketNoQtnNo: string[];
-    typeOfItem: string[];
-  }>({
-    uom: [],
-    ourItemNot: ['MANUFACTURING', 'NO', 'TRADING'],
-    ourItemName: ourItemNameOptions,
-    size: [],
-    sectionMm: [],
-    sectionalWtKgMtr: [],
-    lengthInMtr: [],
-    weightPerPiece: [],
-    unitWtOfMemberKg: [],
-    price: [],
-    qty: [],
-    status: ['Quoted', 'NOT Required'],
-    itemNameParty: [],
-    docketNoQtnNo: [],
-    typeOfItem: [],
-  });
-
   // Dockets
   const [dockets, setDockets] = useState<DockerParty[]>([]);
   const docketsRef = useRef<DockerParty[]>(dockets);
   docketsRef.current = dockets;
   const [docketsLoading, setDocketsLoading] = useState(false);
-  const [docketFilters, setDocketFilters] = useState<{
-    docketNoQtnNo: string[];
-    partyName: string[];
-    itemFilter: string;
-    state: string[];
-    utility: string[];
-    type: string[];
-    attachments: string;
-    price: string[];
-    payment: string[];
-    delivery: string[];
-    warranty: string[];
-    approval: string[];
-    inspection: string[];
-  }>({
-    docketNoQtnNo: [],
-    partyName: [],
-    itemFilter: '',
-    state: [],
-    utility: [],
-    type: [],
-    attachments: '',
-    price: [],
-    payment: [],
-    delivery: [],
-    warranty: [],
-    approval: [],
-    inspection: [],
-  });
+  const [docketFilters, setDocketFilters] = useState<DocketFilters>(emptyDocketFilters);
+  const [docketSort, setDocketSort] = useState<DocketSort | null>(null);
+  const [docketTotalItems, setDocketTotalItems] = useState(0);
+  const [docketsError, setDocketsError] = useState<string | null>(null);
   const [stateOptions, setStateOptions] = useState<string[]>([]);
   const [docketOptions, setDocketOptions] = useState<string[]>([]);
   const [partyOptions, setPartyOptions] = useState<string[]>([]);
   const [utilityOptions, setUtilityOptions] = useState<string[]>([]);
-  const [subTableFilters, setSubTableFilters] = useState<{
-    [docketNo: string]: {
-      itemNameParty?: string[];
-      uom?: string[];
-      qty?: string[];
-      ourItemNot?: string[];
-      ourItemName?: string[];
-      size?: string[];
-      weightPerPiece?: string[];
-      unitWtOfMemberKg?: string[];
-      price?: string[];
-      sectionMm?: string[];
-      sectionalWtKgMtr?: string[];
-      lengthInMtr?: string[];
-      status?: string[];
-    };
-  }>({});
-
-  // Expanded Docket IDs state & items cache map
-  const [expandedDocketIds, setExpandedDocketIds] = useState<number[]>([]);
+  // Items of the dockets on screen, by docket number
   const [docketItemsMap, setDocketItemsMap] = useState<{ [docketNo: string]: Item[] }>({});
-  const [loadingDocketItems, setLoadingDocketItems] = useState<{ [docketNo: string]: boolean }>({});
 
   // Modals state
   const [showAddDocketModal, setShowAddDocketModal] = useState(false);
@@ -627,7 +478,6 @@ export default function Dashboard() {
   // Guards against slow responses overwriting newer ones (search/filter changes, skipped AI items).
   const structuralRequestRef = useRef(0);
   const reasoningRequestRef = useRef(0);
-  const itemsAbortRef = useRef<AbortController | null>(null);
   const docketsAbortRef = useRef<AbortController | null>(null);
   const logsAbortRef = useRef<AbortController | null>(null);
   const docketItemsAbortRef = useRef<{ [docketNo: string]: AbortController }>({});
@@ -844,7 +694,6 @@ export default function Dashboard() {
       } else {
         showToast(`✨ AI Autofill Complete! Categorized ${data.updatedCount} items.`);
         // Refresh items table & docket map
-        await fetchItems();
         await fetchDockets();
         if (targetDocketNo) {
           freshDocketItems = await fetchItemsForDocket(targetDocketNo, true);
@@ -855,6 +704,8 @@ export default function Dashboard() {
           });
         }
       }
+
+      fetchDockets(); // docket rows carry their first item and item count
 
       // Collect candidate items for Structural Calculator (MANUFACTURING/TRADING items with blank sectionMm)
       let candidates: Item[] = [];
@@ -867,7 +718,7 @@ export default function Dashboard() {
             (!it.sectionMm || it.sectionMm.trim() === '')
         );
       } else {
-        candidates = items.filter(
+        candidates = Object.values(docketItemsMap).flat().filter(
           (it) =>
             (it.ourItemNot === 'MANUFACTURING' || it.ourItemNot === 'TRADING') &&
             (!it.sectionMm || it.sectionMm.trim() === '')
@@ -1049,109 +900,61 @@ export default function Dashboard() {
     }
   };
 
-  // Fetch Distinct Item Filter Options from Server
-  const fetchItemFilterOptions = async () => {
-    try {
-      const res = await fetch('/api/items/filter-options');
-      const data = await res.json();
-      if (data && !data.error) {
-        setItemOptionLists((prev) => ({
-          ...prev,
-          ...data,
-        }));
-      }
-    } catch (err) {
-      console.error('Error fetching filter options:', err);
-    }
-  };
-
-  // Fetch Items
-  const fetchItems = async () => {
-    itemsAbortRef.current?.abort();
-    const controller = new AbortController();
-    itemsAbortRef.current = controller;
-    setItemsLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.append('page', String(itemPage));
-      params.append('limit', String(itemLimit));
-      if (search) params.append('search', search);
-      itemFilters.docketNoQtnNo.forEach((v) => params.append('docketNoQtnNo', v));
-      itemFilters.itemNameParty.forEach((v) => params.append('itemNameParty', v));
-      itemFilters.uom.forEach((v) => params.append('uom', v));
-      itemFilters.qty.forEach((v) => params.append('qty', v));
-      itemFilters.ourItemNot.forEach((v) => params.append('ourItemNot', v));
-      itemFilters.typeOfItem.forEach((v) => params.append('typeOfItem', v));
-      itemFilters.ourItemName.forEach((v) => params.append('ourItemName', v));
-      itemFilters.size.forEach((v) => params.append('size', v));
-      itemFilters.sectionMm.forEach((v) => params.append('sectionMm', v));
-      itemFilters.sectionalWtKgMtr.forEach((v) => params.append('sectionalWtKgMtr', v));
-      itemFilters.lengthInMtr.forEach((v) => params.append('lengthInMtr', v));
-      itemFilters.weightPerPiece.forEach((v) => params.append('weightPerPiece', v));
-      itemFilters.unitWtOfMemberKg.forEach((v) => params.append('unitWtOfMemberKg', v));
-      itemFilters.price.forEach((v) => params.append('price', v));
-      itemFilters.status.forEach((v) => params.append('status', v));
-      if (startDate) params.append('startDate', startDate);
-      if (endDate) params.append('endDate', endDate);
-
-      const res = await fetch(`/api/items?${params.toString()}`, { signal: controller.signal });
-      const data = await res.json();
-      if (controller.signal.aborted) return;
-      if (data.items) {
-        setItems(data.items);
-        setItemTotalCount(data.totalCount || data.items.length);
-        setItemTotalPages(data.totalPages || 1);
-      }
-    } catch (err) {
-      if (controller.signal.aborted) return;
-      console.error(err);
-    } finally {
-      if (itemsAbortRef.current === controller) setItemsLoading(false);
-    }
-  };
-
   // Fetch Dockets
+  // Filter params of the Dockets screen (no page / sort) - also what its filter dropdowns are computed under.
+  const docketFilterParams = () => {
+    const params = new URLSearchParams();
+    if (search) params.append('search', search);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    for (const key of DOCKET_FILTER_KEYS) {
+      const vals = docketFilters[key];
+      // Attachments is yes/no: both boxes ticked means "no filter".
+      if (key === 'attachments') {
+        if (vals.length === 1) params.append(key, vals[0]);
+      } else vals.forEach((v) => params.append(key, v));
+    }
+    return params;
+  };
+
   const fetchDockets = async () => {
     docketsAbortRef.current?.abort();
     const controller = new AbortController();
     docketsAbortRef.current = controller;
     setDocketsLoading(true);
     try {
-      const params = new URLSearchParams();
+      const params = docketFilterParams();
       params.append('page', String(docketPage));
       params.append('limit', String(docketLimit));
-      if (search) params.append('search', search);
-      docketFilters.docketNoQtnNo.forEach((v) => params.append('docketNoQtnNo', v));
-      docketFilters.partyName.forEach((v) => params.append('partyName', v));
-      if (docketFilters.itemFilter) params.append('itemFilter', docketFilters.itemFilter);
-      docketFilters.state.forEach((v) => params.append('state', v));
-      docketFilters.utility.forEach((v) => params.append('utility', v));
-      docketFilters.type.forEach((v) => params.append('type', v));
-      if (docketFilters.attachments) params.append('attachments', docketFilters.attachments);
-      docketFilters.price.forEach((v) => params.append('price', v));
-      docketFilters.payment.forEach((v) => params.append('payment', v));
-      docketFilters.delivery.forEach((v) => params.append('delivery', v));
-      docketFilters.warranty.forEach((v) => params.append('warranty', v));
-      docketFilters.approval.forEach((v) => params.append('approval', v));
-      docketFilters.inspection.forEach((v) => params.append('inspection', v));
-      if (startDate) params.append('startDate', startDate);
-      if (endDate) params.append('endDate', endDate);
+      if (docketSort) {
+        params.append('sort', docketSort.key);
+        params.append('dir', docketSort.dir);
+      }
 
       const res = await fetch(`/api/dockets?${params.toString()}`, { signal: controller.signal });
       const data = await res.json();
       if (controller.signal.aborted) return;
-      if (data.dockets) {
-        setDockets(data.dockets);
-        setDocketTotalCount(data.totalCount || data.dockets.length);
-        setDocketTotalPages(data.totalPages || 1);
-        if (data.states) setStateOptions(data.states);
-        if (data.docketsList) setDocketOptions(data.docketsList);
-        if (data.parties) setPartyOptions(data.parties);
-        if (data.utilities) setUtilityOptions(data.utilities);
-      }
-    } catch (err) {
+      if (!res.ok || !data.dockets) throw new Error(data.error || 'Failed to load dockets');
+      setDocketsError(null);
+      setDockets(data.dockets);
+      // Items arrive with their dockets; the table reads them from this map (edits patch it in place).
+      setDocketItemsMap(
+        Object.fromEntries(
+          (data.dockets as DockerParty[]).filter((d) => d.docketNoQtnNo).map((d) => [d.docketNoQtnNo, d.items ?? []])
+        )
+      );
+      setDocketTotalCount(data.totalCount ?? data.dockets.length);
+      setDocketTotalItems(data.totalItems ?? 0);
+      setDocketTotalPages(data.totalPages || 1);
+      if (data.states) setStateOptions(data.states);
+      if (data.docketsList) setDocketOptions(data.docketsList);
+      if (data.parties) setPartyOptions(data.parties);
+      if (data.utilities) setUtilityOptions(data.utilities);
+    } catch (err: any) {
       if (controller.signal.aborted) return;
       console.error(err);
+      // The rows already on screen stay; the table shows a retry bar.
+      setDocketsError(err?.message || 'Failed to load dockets');
     } finally {
       if (docketsAbortRef.current === controller) setDocketsLoading(false);
     }
@@ -1164,7 +967,6 @@ export default function Dashboard() {
     docketItemsAbortRef.current[docketNo]?.abort();
     const controller = new AbortController();
     docketItemsAbortRef.current[docketNo] = controller;
-    setLoadingDocketItems((prev) => ({ ...prev, [docketNo]: true }));
     try {
       const res = await fetch(`/api/items?docketNoQtnNo=${encodeURIComponent(docketNo.trim())}&limit=1000`, {
         signal: controller.signal,
@@ -1182,18 +984,6 @@ export default function Dashboard() {
     } finally {
       if (docketItemsAbortRef.current[docketNo] === controller) {
         delete docketItemsAbortRef.current[docketNo];
-        setLoadingDocketItems((prev) => ({ ...prev, [docketNo]: false }));
-      }
-    }
-  };
-
-  const toggleDocketExpand = (id: number, docketNo: string | null) => {
-    if (expandedDocketIds.includes(id)) {
-      setExpandedDocketIds((prev) => prev.filter((i) => i !== id));
-    } else {
-      setExpandedDocketIds((prev) => [...prev, id]);
-      if (docketNo) {
-        fetchItemsForDocket(docketNo);
       }
     }
   };
@@ -1236,7 +1026,7 @@ export default function Dashboard() {
     }
   };
 
-  const handleTabSwitch = (tab: 'items' | 'dockets' | 'terms' | 'logs' | 'master') => {
+  const handleTabSwitch = (tab: 'dockets' | 'terms' | 'logs' | 'master') => {
     setActiveTab(tab);
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
@@ -1274,9 +1064,25 @@ export default function Dashboard() {
 
       const urlParams = new URLSearchParams(window.location.search);
       const tabParam = urlParams.get('tab') as any;
-      if (tabParam && ['items', 'dockets', 'terms', 'logs', 'master'].includes(tabParam)) {
+      if (tabParam && ['dockets', 'terms', 'logs', 'master'].includes(tabParam)) {
         setActiveTab(tabParam);
       }
+
+      const urlFilters = emptyDocketFilters();
+      for (const key of DOCKET_FILTER_KEYS) urlFilters[key] = urlParams.getAll(key);
+      setDocketFilters(urlFilters);
+      setSearch(urlParams.get('search') || '');
+      setStartDate(urlParams.get('startDate') || '');
+      setEndDate(urlParams.get('endDate') || '');
+      const [sortKey, sortDir] = (urlParams.get('sort') || '').split(':');
+      if (['docketNoQtnNo', 'createdAt', 'partyName', 'state', 'type'].includes(sortKey)) {
+        setDocketSort({ key: sortKey as DocketSort['key'], dir: sortDir === 'asc' ? 'asc' : 'desc' });
+      }
+      setDocketPage(Math.max(1, Number(urlParams.get('page')) || 1));
+      try {
+        const size = Number(localStorage.getItem(STORE_DOCKET_PAGE_SIZE));
+        if ([25, 50, 100, 200].includes(size)) setDocketLimit(size);
+      } catch {}
     }
 
     // LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17):
@@ -1300,20 +1106,17 @@ export default function Dashboard() {
     // Fetch counts and master values for all tabs on mount
     fetchMasterValues();
     fetchNextDocketNo();
-    fetchItems();
-    fetchItemFilterOptions();
     fetchDockets();
     fetchTerms();
     fetchLogs();
   }, []);
 
   useEffect(() => {
-    if (activeTab === 'items') fetchItems();
-    else if (activeTab === 'dockets') fetchDockets();
+    if (activeTab === 'dockets') fetchDockets();
     else if (activeTab === 'terms') fetchTerms();
     else if (activeTab === 'logs') fetchLogs();
     else if (activeTab === 'master') fetchMasterValues();
-  }, [activeTab, search, startDate, endDate, itemFilters, docketFilters, logTableFilter, itemPage, itemLimit, docketPage, docketLimit]);
+  }, [activeTab, search, startDate, endDate, docketFilters, docketSort, logTableFilter, docketPage, docketLimit]);
 
   // Guests (not signed in) who try to edit are sent to the login page and brought back here afterwards.
   // Signed-in Viewers are read-only by role, so they only get a message.
@@ -1332,14 +1135,14 @@ export default function Dashboard() {
     id: number,
     field: keyof Item,
     value: string,
-    docketNo?: string | null
+    docketNo?: string | null,
+    silent = false // the Dockets table shows its own "Saved - Undo" toast
   ): Promise<boolean> => {
     if (!canEdit) {
       readOnlyToast();
       return false;
     }
-    const currentItem =
-      items.find((i) => i.id === id) || (docketNo ? (docketItemsMap[docketNo] || []).find((i) => i.id === id) : undefined);
+    const currentItem = Object.values(docketItemsMap).flat().find((i) => i.id === id);
     if (currentItem && (currentItem[field] ?? '') === value) return true;
 
     try {
@@ -1349,7 +1152,6 @@ export default function Dashboard() {
         body: JSON.stringify({ id, [field]: value }),
       });
       if (res.ok) {
-        setItems((prev) => prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)));
         // Keep every cached docket sub-table in sync (the item may be cached even when edited from the Items tab).
         setDocketItemsMap((prev) => {
           const copy = { ...prev };
@@ -1360,7 +1162,7 @@ export default function Dashboard() {
           });
           return copy;
         });
-        showToast(`Item #${id} updated in DB by ${currentUser.name}`);
+        if (!silent) showToast(`Item #${id} updated in DB by ${currentUser.name}`);
         if (activeTab === 'logs') fetchLogs();
         return true;
       }
@@ -1396,199 +1198,26 @@ export default function Dashboard() {
     return { failed: errors.length, firstError: errors[0] || null };
   };
 
-  // Multi-Cell Excel / Sheets Grid Paste for Expanded Docket Sub-Items
-  // visibleItemIds = ids of the rows as currently shown (after sub-table filters), in display order.
-  const handleSubItemGridPaste = async (
-    e: React.ClipboardEvent,
-    docketNo: string,
-    visibleItemIds: number[],
-    startIdx: number,
-    startField: keyof Item
-  ) => {
-    const pasteText = e.clipboardData.getData('text');
-    if (!pasteText) return;
-    if (!pasteText.includes('\t') && !pasteText.includes('\n')) {
-      return; // Single cell normal paste
-    }
-
-    e.preventDefault();
+  // Saves several item rows of one docket at once (grid paste and its undo in the Dockets table).
+  // Shows the new values immediately; on failure reverts to what the database holds.
+  const applyItemUpdates = async (docketNo: string, updates: ItemUpdate[]): Promise<boolean> => {
     if (!canEdit) {
       readOnlyToast();
-      return;
+      return false;
     }
-    const rawLines = pasteText.split(/\r?\n/).filter((l) => l.trim() !== '');
-    if (rawLines.length === 0) return;
+    const patch = (it: Item) => {
+      const up = updates.find((u) => u.id === it.id);
+      return up ? { ...it, ...up.fields } : it;
+    };
+    setDocketItemsMap((prev) => (prev[docketNo] ? { ...prev, [docketNo]: prev[docketNo].map(patch) } : prev));
 
-    const matrix = rawLines.map((line) =>
-      line.split('\t').map((c) => c.replace(/^"+|"+$/g, '').trim())
-    );
-
-    const SUB_ITEM_COLUMNS: Array<keyof Item> = [
-      'itemNameParty',
-      'uom',
-      'qty',
-      'ourItemNot',
-      'ourItemName',
-      'size',
-      'weightPerPiece',
-      'unitWtOfMemberKg',
-      'price',
-      'sectionMm',
-      'sectionalWtKgMtr',
-      'lengthInMtr',
-      'status',
-    ];
-
-    const startColIdx = Math.max(0, SUB_ITEM_COLUMNS.indexOf(startField));
-    const docketItems = docketItemsMap[docketNo] || [];
-    if (docketItems.length === 0) return;
-
-    const updates: Array<{ id: number; fields: Partial<Item> }> = [];
-    // Target rows by id: the pasted block maps onto the visible rows, never onto hidden (filtered-out) ones.
-    const targetIds = visibleItemIds.slice(startIdx, startIdx + matrix.length);
-
-    // Optimistically update docketItemsMap
-    const updatedDocketItems = docketItems.map((item) => {
-      const rowIdx = targetIds.indexOf(item.id);
-      if (rowIdx !== -1) {
-        const rowData = matrix[rowIdx];
-        const updatedFields: any = {};
-        rowData.forEach((val, c) => {
-          const colIdx = startColIdx + c;
-          if (colIdx < SUB_ITEM_COLUMNS.length) {
-            const key = SUB_ITEM_COLUMNS[colIdx];
-            updatedFields[key] = val;
-          }
-        });
-        if (Object.keys(updatedFields).length > 0) {
-          updates.push({ id: item.id, fields: updatedFields });
-          return { ...item, ...updatedFields };
-        }
-      }
-      return item;
-    });
-
-    setDocketItemsMap((prev) => ({
-      ...prev,
-      [docketNo]: updatedDocketItems,
-    }));
-
-    // Also update items in main items list if present
-    setItems((prev) =>
-      prev.map((item) => {
-        const matching = updates.find((u) => u.id === item.id);
-        return matching ? { ...item, ...matching.fields } : item;
-      })
-    );
-
-    // Persist all updates to DB via /api/items in parallel; only report success once saved.
     const { failed, firstError } = await persistItemUpdates(updates);
-    if (failed === 0) {
-      showToast(`✨ Pasted ${updates.length} rows across ${matrix[0]?.length || 1} columns into Docket ${docketNo} items!`);
-    } else {
-      showToast(`Error: ${failed} of ${updates.length} pasted rows were not saved: ${firstError}`);
-      // Revert the optimistic update to what the database actually holds.
-      fetchItemsForDocket(docketNo, true);
-      fetchItems();
-    }
     if (activeTab === 'logs') fetchLogs();
-  };
-
-  // Multi-Cell Excel / Sheets Grid Paste for Main Item Table
-  const handleMainItemGridPaste = async (
-    e: React.ClipboardEvent,
-    startIdx: number,
-    startField: keyof Item
-  ) => {
-    const pasteText = e.clipboardData.getData('text');
-    if (!pasteText) return;
-    if (!pasteText.includes('\t') && !pasteText.includes('\n')) {
-      return; // Single cell normal paste
-    }
-
-    e.preventDefault();
-    if (!canEdit) {
-      readOnlyToast();
-      return;
-    }
-    const rawLines = pasteText.split(/\r?\n/).filter((l) => l.trim() !== '');
-    if (rawLines.length === 0) return;
-
-    const matrix = rawLines.map((line) =>
-      line.split('\t').map((c) => c.replace(/^"+|"+$/g, '').trim())
-    );
-
-    const MAIN_ITEM_COLUMNS: Array<keyof Item> = [
-      'docketNoQtnNo',
-      'itemNameParty',
-      'uom',
-      'qty',
-      'ourItemNot',
-      'typeOfItem',
-      'ourItemName',
-      'size',
-      'sectionMm',
-      'sectionalWtKgMtr',
-      'lengthInMtr',
-      'weightPerPiece',
-      'unitWtOfMemberKg',
-      'price',
-      'status',
-    ];
-
-    const startColIdx = Math.max(0, MAIN_ITEM_COLUMNS.indexOf(startField));
-    if (items.length === 0) return;
-
-    const updates: Array<{ id: number; fields: Partial<Item>; docketNo?: string | null }> = [];
-
-    // Optimistically update items
-    const updatedItems = items.map((item, idx) => {
-      if (idx >= startIdx && idx < startIdx + matrix.length) {
-        const rowData = matrix[idx - startIdx];
-        const updatedFields: any = {};
-        rowData.forEach((val, c) => {
-          const colIdx = startColIdx + c;
-          if (colIdx < MAIN_ITEM_COLUMNS.length) {
-            const key = MAIN_ITEM_COLUMNS[colIdx];
-            updatedFields[key] = val;
-          }
-        });
-        if (Object.keys(updatedFields).length > 0) {
-          updates.push({ id: item.id, fields: updatedFields, docketNo: item.docketNoQtnNo });
-          return { ...item, ...updatedFields };
-        }
-      }
-      return item;
-    });
-
-    setItems(updatedItems);
-
-    // Also update docketItemsMap if present
-    setDocketItemsMap((prev) => {
-      const copy = { ...prev };
-      updates.forEach((up) => {
-        if (up.docketNo && copy[up.docketNo]) {
-          copy[up.docketNo] = copy[up.docketNo].map((it) =>
-            it.id === up.id ? { ...it, ...up.fields } : it
-          );
-        }
-      });
-      return copy;
-    });
-
-    // Persist all updates to DB via /api/items in parallel; only report success once saved.
-    const { failed, firstError } = await persistItemUpdates(updates);
-    if (failed === 0) {
-      showToast(`✨ Pasted ${updates.length} rows across ${matrix[0]?.length || 1} columns into Items Table!`);
-    } else {
-      showToast(`Error: ${failed} of ${updates.length} pasted rows were not saved: ${firstError}`);
-      // Revert the optimistic update to what the database actually holds.
-      fetchItems();
-      Array.from(new Set(updates.map((u) => u.docketNo).filter((d): d is string => !!d))).forEach((dNo) => {
-        if (docketItemsMap[dNo]) fetchItemsForDocket(dNo, true);
-      });
-    }
-    if (activeTab === 'logs') fetchLogs();
+    if (failed === 0) return true;
+    showToast(`Error: ${failed} of ${updates.length} rows were not saved: ${firstError}`);
+    fetchItemsForDocket(docketNo, true);
+    fetchDockets();
+    return false;
   };
 
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
@@ -1650,7 +1279,7 @@ export default function Dashboard() {
   };
 
   // General field updater for DockerPartyName
-  const handleDocketFieldUpdate = async (id: number, field: keyof DockerParty, value: string): Promise<boolean> => {
+  const handleDocketFieldUpdate = async (id: number, field: keyof DockerParty, value: string, silent = false): Promise<boolean> => {
     if (!canEdit) {
       readOnlyToast();
       return false;
@@ -1678,9 +1307,8 @@ export default function Dashboard() {
             delete copy[oldNo];
             return copy;
           });
-          fetchItems();
         }
-        showToast(`Docket Party #${id} updated in DB by ${currentUser.name}`);
+        if (!silent) showToast(`Docket Party #${id} updated in DB by ${currentUser.name}`);
         if (activeTab === 'logs') fetchLogs();
         return true;
       }
@@ -1737,7 +1365,6 @@ export default function Dashboard() {
         showToast(
           `Docket ${docketNo || '#' + id} and ${data.deletedItemCount ?? 'all'} associated items deleted (logged in Audit Log).`
         );
-        fetchItems(); // Refresh items table
         if (activeTab === 'logs') fetchLogs();
       } else {
         const data = await res.json();
@@ -1756,7 +1383,6 @@ export default function Dashboard() {
       return;
     }
     const itemName =
-      items.find((it) => it.id === id)?.itemNameParty ||
       (docketNo ? (docketItemsMap[docketNo] || []).find((it) => it.id === id)?.itemNameParty : null);
     setConfirmState({
       title: `Delete item #${id}?`,
@@ -1779,8 +1405,6 @@ export default function Dashboard() {
       });
 
       if (res.ok) {
-        setItems((prev) => prev.filter((item) => item.id !== id));
-        setItemTotalCount((prev) => Math.max(0, prev - 1));
         if (docketNo) {
           setDocketItemsMap((prev) => ({
             ...prev,
@@ -2132,7 +1756,6 @@ export default function Dashboard() {
         });
         setDocketItemsForm([{ itemNameParty: '', uom: '', qty: '' }]);
         fetchDockets();
-        fetchItems();
         fetchNextDocketNo();
         showToast(
           data.renumbered
@@ -2176,9 +1799,9 @@ export default function Dashboard() {
           uomOfQtn: '',
           status: '',
         });
-        fetchItems();
         if (targetDocketNo) {
           fetchItemsForDocket(targetDocketNo, true);
+          fetchDockets();
         }
         showToast(`Created Item #${created.id} under Docket ${targetDocketNo || 'N/A'}!`);
       } else {
@@ -2215,49 +1838,93 @@ export default function Dashboard() {
     }
   };
 
+  // ---- Dockets screen glue (the table itself lives in src/modules/dockets) ----
+  // Every filter or sort change returns to page 1 in the same handler, so it costs one request.
+  const setDocketSearch = (value: string) => {
+    setSearch(value);
+    setDocketPage(1);
+  };
+  const setDocketDates = (start: string, end: string) => {
+    setStartDate(start);
+    setEndDate(end);
+    setDocketPage(1);
+  };
+  const setDocketFilterValues = (next: DocketFilters) => {
+    setDocketFilters(next);
+    setDocketPage(1);
+  };
+  const setDocketSortAndReset = (next: DocketSort | null) => {
+    setDocketSort(next);
+    setDocketPage(1);
+  };
+  const changeDocketLimit = (size: number) => {
+    setDocketLimit(size);
+    setDocketPage(1);
+    try {
+      localStorage.setItem(STORE_DOCKET_PAGE_SIZE, String(size));
+    } catch {}
+  };
+  const clearDocketFilters = () => {
+    setSearch('');
+    setStartDate('');
+    setEndDate('');
+    setDocketFilters(emptyDocketFilters());
+    setDocketPage(1);
+  };
+
+  // Rebuilt every render and read through a ref, so table rows keep stable callbacks.
+  const docketActionsRef = useRef<DocketActions>(null!);
+  docketActionsRef.current = {
+    refresh: () => void fetchDockets(),
+    updateItem: (id, field, value, docketNo) => handleItemFieldUpdate(id, field, value, docketNo, true),
+    applyItemUpdates,
+    updateDocket: (id, field, value) => handleDocketFieldUpdate(id, field, value, true),
+    addDocket: handleOpenAddDocketModal,
+    addItem: (docketNo) => {
+      setNewItemForm((prev) => ({ ...prev, docketNoQtnNo: docketNo }));
+      setShowAddItemModal(true);
+    },
+    aiAutofill: (docketNo) => void handleAiAutofill(docketNo),
+    deleteDocket: (doc) => void handleDeleteDocket(doc.id, doc.docketNoQtnNo),
+    deleteItem: (item, docketNo) => handleDeleteItem(item.id, docketNo),
+    openAttachments: setAttachmentListDocId,
+    uploadAttachments: async (docketId, files) => {
+      const uploaded = await handleUploadDocketAttachments(files);
+      if (uploaded.length === 0) return;
+      // Read the latest list (not this render's closure) so concurrent uploads aren't lost.
+      const latest = docketsRef.current.find((d) => d.id === docketId);
+      await handleDocketFieldUpdate(docketId, 'attachments', JSON.stringify([...parseAttachments(latest?.attachments), ...uploaded]));
+    },
+    openReasoning: (item, category) => void openReasoningModal(item.itemNameParty, item.typeOfItem, category),
+    confirm: setConfirmState,
+  };
+
+  // Dockets filters, sort and page live in the URL, so a view can be bookmarked and shared.
+  const docketUrlFirstRun = useRef(true);
+  useEffect(() => {
+    if (docketUrlFirstRun.current) {
+      docketUrlFirstRun.current = false; // the URL is being read by the mount effect; don't overwrite it yet
+      return;
+    }
+    if (activeTab !== 'dockets') return;
+    const url = new URL(window.location.href);
+    [...DOCKET_FILTER_KEYS, 'search', 'startDate', 'endDate', 'sort', 'page'].forEach((k) => url.searchParams.delete(k));
+    docketFilterParams().forEach((value, key) => url.searchParams.append(key, value));
+    if (docketSort) url.searchParams.set('sort', `${docketSort.key}:${docketSort.dir}`);
+    if (docketPage > 1) url.searchParams.set('page', String(docketPage));
+    window.history.replaceState(null, '', url.pathname + url.search);
+  }, [activeTab, search, startDate, endDate, docketFilters, docketSort, docketPage]);
+
   const clearAllFilters = () => {
     setSearch('');
     setStartDate('');
     setEndDate('');
-    setItemFilters({
-      docketNoQtnNo: [],
-      itemNameParty: [],
-      uom: [],
-      qty: [],
-      ourItemNot: [],
-      typeOfItem: [],
-      ourItemName: [],
-      size: [],
-      sectionMm: [],
-      sectionalWtKgMtr: [],
-      lengthInMtr: [],
-      weightPerPiece: [],
-      unitWtOfMemberKg: [],
-      price: [],
-      status: [],
-    });
-    setDocketFilters({
-      docketNoQtnNo: [],
-      partyName: [],
-      itemFilter: '',
-      state: [],
-      utility: [],
-      type: [],
-      attachments: '',
-      price: [],
-      payment: [],
-      delivery: [],
-      warranty: [],
-      approval: [],
-      inspection: [],
-    });
-    setSubTableFilters({});
+    setDocketFilters(emptyDocketFilters());
+    setDocketSort(null);
     setLogTableFilter('');
     setDocketItemsMap({});
-    setItemPage(1);
     setDocketPage(1);
     fetchDockets();
-    fetchItems();
     fetchMasterValues();
     showToast('Refetched fresh docket & item data from database!');
   };
@@ -2279,7 +1946,7 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="h-dvh flex flex-col overflow-hidden bg-slate-100 font-sans text-slate-900">
+    <div className="flex h-dvh flex-col overflow-hidden bg-slate-50 text-slate-900 lg:flex-row">
       {/* Toast Notification */}
       {notification && (
         <div className="fixed top-5 right-5 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center space-x-3 text-sm font-semibold">
@@ -2691,7 +2358,6 @@ export default function Dashboard() {
         activeTab={activeTab}
         onTabSelect={handleTabSwitch}
         counts={{
-          items: itemTotalCount,
           dockets: docketTotalCount,
           terms: terms.length,
           logs: logs.length,
@@ -2699,9 +2365,13 @@ export default function Dashboard() {
         }}
       />
 
-      <div className="min-w-0 flex-1 flex flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {/* Main Content Container */}
-      <main className="w-full px-4 lg:px-8 py-6 flex-1 space-y-5">
+      <main
+        className={`flex min-h-0 w-full flex-1 flex-col ${
+          activeTab === 'dockets' ? 'overflow-hidden p-3' : 'gap-5 overflow-y-auto px-4 py-6 lg:px-8'
+        }`}
+      >
         {/* Page title + "Orders & execution" link removed from the dashboard on request (sidebar covers it).
         <PageHeader
         title={TAB_META[activeTab].title}
@@ -2718,7 +2388,8 @@ export default function Dashboard() {
         />
         */}
         {/* Controls & Filter Bar */}
-        {activeTab !== 'master' && (
+        {/* The Dockets screen has its own search and date range inside its filter bar. */}
+        {activeTab !== 'master' && activeTab !== 'dockets' && (
           <div className="bg-white rounded-xl p-4 border border-slate-200 shadow-sm space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-4">
               {/* Global Search */}
@@ -2730,7 +2401,6 @@ export default function Dashboard() {
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
-                    setItemPage(1);
                     setDocketPage(1);
                   }}
                   className="w-full pl-10 pr-4 py-2 text-xs border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all font-medium"
@@ -2785,1924 +2455,46 @@ export default function Dashboard() {
                 className="flex items-center space-x-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-3.5 py-2 rounded-xl transition-all shadow-xs"
                 title="Refetch fresh docket and item records directly from PostgreSQL database"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${docketsLoading || itemsLoading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 ${docketsLoading ? 'animate-spin' : ''}`} />
                 <span>Refresh & Reset Data</span>
               </button>
             </div>
 
-            {/* Items Sub-Filter Chips */}
-            {activeTab === 'items' && (
-              <div className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                <span className="text-xs font-bold text-slate-700 whitespace-nowrap flex items-center gap-1.5">
-                  <Filter className="w-3.5 h-3.5 text-blue-600" />
-                  Filter Item Name:
-                </span>
-                <div className="flex flex-wrap gap-1.5 items-center">
-                  {ourItemNameOptions.map((opt) => {
-                    const isSelected = itemFilters.ourItemName.includes(opt);
-                    return (
-                      <button
-                        key={opt}
-                        onClick={() => {
-                          setItemPage(1);
-                          setItemFilters((prev) => {
-                            const exists = prev.ourItemName.includes(opt);
-                            const updated = exists
-                              ? prev.ourItemName.filter((o) => o !== opt)
-                              : [...prev.ourItemName, opt];
-                            return { ...prev, ourItemName: updated };
-                          });
-                        }}
-                        className={`text-[11px] px-2.5 py-1 rounded-lg border font-bold transition-all ${
-                          isSelected
-                            ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
-                            : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                        }`}
-                      >
-                        {opt} {isSelected && '✓'}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
         )}
 
-        {/* TAB 1: ITEAM-TABLE */}
-        {activeTab === 'items' && (
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden flex flex-col flex-1 min-h-0">
-            <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
-              <div className="flex items-center space-x-3">
-                <h2 className="text-sm font-bold text-slate-900">Items</h2>
-                <button
-                  onClick={() =>
-                    handleAiAutofill(itemFilters.docketNoQtnNo.length === 1 ? itemFilters.docketNoQtnNo[0] : undefined)
-                  }
-                  disabled={aiProcessing || !canEdit || itemFilters.docketNoQtnNo.length !== 1}
-                  className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs px-3.5 py-1.5 rounded-xl shadow-sm transition-all animate-in fade-in"
-                  title={
-                    itemFilters.docketNoQtnNo.length === 1
-                      ? `Categorize MANUFACTURING/TRADING items of docket ${itemFilters.docketNoQtnNo[0]} using Groq AI`
-                      : 'Autofill by AI works per docket - filter the Docket No column to exactly one docket first'
-                  }
-                >
-                  <Sparkles className="w-3.5 h-3.5 text-blue-100" />
-                  <span>Autofill by AI</span>
-                </button>
-
-                {Object.values(itemFilters).some((arr) => Array.isArray(arr) && arr.length > 0) && (
-                  <button
-                    onClick={() => {
-                      setItemFilters({
-                        docketNoQtnNo: [],
-                        itemNameParty: [],
-                        uom: [],
-                        qty: [],
-                        ourItemNot: [],
-                        typeOfItem: [],
-                        ourItemName: [],
-                        size: [],
-                        sectionMm: [],
-                        sectionalWtKgMtr: [],
-                        lengthInMtr: [],
-                        weightPerPiece: [],
-                        unitWtOfMemberKg: [],
-                        price: [],
-                        status: [],
-                      });
-                      setItemPage(1);
-                    }}
-                    className="flex items-center space-x-1 px-2.5 py-1 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>Clear All Filters</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Pagination Controls */}
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-1.5 text-xs text-slate-600 font-medium">
-                  <span>Rows per page:</span>
-                  <select
-                    value={itemLimit}
-                    onChange={(e) => {
-                      setItemLimit(Number(e.target.value));
-                      setItemPage(1);
-                    }}
-                    className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-bold text-slate-800"
-                  >
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                    <option value={200}>200</option>
-                  </select>
-                </div>
-
-                <span className="text-xs font-bold text-slate-700">
-                  Page {itemPage} of {itemTotalPages} ({itemTotalCount} Total Items)
-                </span>
-
-                <div className="flex items-center space-x-1">
-                  <button
-                    disabled={itemPage <= 1}
-                    onClick={() => setItemPage((p) => Math.max(1, p - 1))}
-                    className="p-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-lg text-slate-700 font-bold transition-all"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    disabled={itemPage >= itemTotalPages}
-                    onClick={() => setItemPage((p) => Math.min(itemTotalPages, p + 1))}
-                    className="p-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-lg text-slate-700 font-bold transition-all"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="overflow-auto flex-1 min-h-[240px]">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 z-30 border-b border-slate-200 text-[11px] uppercase tracking-wider">
-                  <tr>
-                    {/* Sticky Column 1: ID (width 70px) */}
-                    <th className="p-3 whitespace-nowrap w-[70px] min-w-[70px] sticky left-0 z-40 bg-slate-50 border-r border-slate-200">
-                      ID
-                    </th>
-                    {/* Sticky Column 2: Docket / Qtn No (width 150px, offset left 70px) */}
-                    <th className="p-3 whitespace-nowrap w-[150px] min-w-[150px] sticky left-[70px] z-40 bg-slate-50 border-r border-slate-200">
-                      DOCKET / QTN NO
-                    </th>
-                    {/* Sticky Column 3: Item Name Party (width 260px, offset left 220px) */}
-                    <th className="p-3 whitespace-nowrap w-[260px] min-w-[260px] sticky left-[220px] z-40 bg-slate-50 border-r border-slate-200">
-                      ITEM NAME- PARTY
-                    </th>
-                    {/* Sticky Column 4: UOM (width 80px, offset left 480px) */}
-                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[480px] z-40 bg-slate-50 border-r border-slate-200">
-                      UOM
-                    </th>
-                    {/* Sticky Column 5: QTY (width 80px, offset left 560px) */}
-                    <th className="p-3 whitespace-nowrap w-[80px] min-w-[80px] sticky left-[560px] z-40 bg-slate-50 border-r-2 border-slate-300">
-                      QTY
-                    </th>
-
-                    <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[180px]">OUR ITEM/NOT</th>
-                    <th className="p-3 whitespace-nowrap min-w-[160px]">TYPE OF ITEM</th>
-                    <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[220px]">Our item Name</th>
-                    <th className="p-3 whitespace-nowrap min-w-[140px]">SIZE</th>
-                    <th className="p-3 whitespace-nowrap min-w-[140px]">Section (mm)</th>
-                    <th className="p-3 whitespace-nowrap min-w-[160px]">Sectional Wt. (Kg/Mtr.)</th>
-                    <th className="p-3 whitespace-nowrap min-w-[130px]">Length (Mtr.)</th>
-                    <th className="p-3 whitespace-nowrap bg-blue-50/80 text-blue-900 font-semibold min-w-[130px]">Unit Wt.</th>
-                    <th className="p-3 whitespace-nowrap min-w-[180px]">Unit Wt. of Member (Kg)</th>
-                    <th className="p-3 whitespace-nowrap min-w-[120px]">Price</th>
-                    <th className="p-3 whitespace-nowrap bg-blue-50/80 min-w-[160px]">Status</th>
-                    <th className="p-3 whitespace-nowrap text-center min-w-[80px]">Action</th>
-                  </tr>
-
-                  {/* Filter Header Row */}
-                  <tr className="bg-slate-50 border-t border-slate-200">
-                    <td className="p-2 w-[70px] min-w-[70px] sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs text-center font-bold text-slate-400 text-[10px]">
-                      ID
-                    </td>
-                    <td className="p-1.5 w-[150px] min-w-[150px] sticky left-[70px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      <MultiSelectFilterDropdown
-                        title="Docket"
-                        placeholder="Search docket..."
-                        allLabel="All Dockets"
-                        options={itemOptionLists.docketNoQtnNo?.length ? itemOptionLists.docketNoQtnNo : docketOptions}
-                        selected={itemFilters.docketNoQtnNo}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, docketNoQtnNo: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[260px] min-w-[260px] sticky left-[220px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      <MultiSelectFilterDropdown
-                        title="Item Name"
-                        placeholder="Search item..."
-                        allLabel="All Items"
-                        options={itemOptionLists.itemNameParty}
-                        selected={itemFilters.itemNameParty}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, itemNameParty: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[80px] min-w-[80px] sticky left-[480px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      <MultiSelectFilterDropdown
-                        title="UOM"
-                        placeholder="Search UOM..."
-                        allLabel="All UOMs"
-                        options={itemOptionLists.uom}
-                        selected={itemFilters.uom}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, uom: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[80px] min-w-[80px] sticky left-[560px] z-30 bg-slate-100 border-r-2 border-slate-400 shadow-xs">
-                      <MultiSelectFilterDropdown
-                        title="Qty"
-                        placeholder="Search Qty..."
-                        allLabel="All Qtys"
-                        options={itemOptionLists.qty}
-                        selected={itemFilters.qty}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, qty: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[180px]">
-                      <MultiSelectFilterDropdown
-                        title="Our Item/Not"
-                        placeholder="Search status..."
-                        allLabel="All Options"
-                        options={itemOptionLists.ourItemNot}
-                        selected={itemFilters.ourItemNot}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, ourItemNot: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Type of Item"
-                        placeholder="Search type..."
-                        allLabel="All Types"
-                        options={itemOptionLists.typeOfItem}
-                        selected={itemFilters.typeOfItem}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, typeOfItem: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[220px]">
-                      <MultiSelectFilterDropdown
-                        title="Our Item Name"
-                        placeholder="Search item name..."
-                        allLabel="All Item Names"
-                        options={itemOptionLists.ourItemName}
-                        selected={itemFilters.ourItemName}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, ourItemName: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[140px]">
-                      <MultiSelectFilterDropdown
-                        title="Size"
-                        placeholder="Search size..."
-                        allLabel="All Sizes"
-                        options={itemOptionLists.size}
-                        selected={itemFilters.size}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, size: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[140px]">
-                      <MultiSelectFilterDropdown
-                        title="Section"
-                        placeholder="Search section..."
-                        allLabel="All Sections"
-                        options={itemOptionLists.sectionMm}
-                        selected={itemFilters.sectionMm}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, sectionMm: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Sec. Wt"
-                        placeholder="Search wt..."
-                        allLabel="All Sec. Wts"
-                        options={itemOptionLists.sectionalWtKgMtr}
-                        selected={itemFilters.sectionalWtKgMtr}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, sectionalWtKgMtr: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[130px]">
-                      <MultiSelectFilterDropdown
-                        title="Length"
-                        placeholder="Search length..."
-                        allLabel="All Lengths"
-                        options={itemOptionLists.lengthInMtr}
-                        selected={itemFilters.lengthInMtr}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, lengthInMtr: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[130px] bg-blue-50/50">
-                      <MultiSelectFilterDropdown
-                        title="Unit Wt"
-                        placeholder="Search unit wt..."
-                        allLabel="All Unit Wts"
-                        options={itemOptionLists.weightPerPiece}
-                        selected={itemFilters.weightPerPiece}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, weightPerPiece: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[180px]">
-                      <MultiSelectFilterDropdown
-                        title="Member Wt"
-                        placeholder="Search member wt..."
-                        allLabel="All Member Wts"
-                        options={itemOptionLists.unitWtOfMemberKg}
-                        selected={itemFilters.unitWtOfMemberKg}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, unitWtOfMemberKg: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[120px]">
-                      <MultiSelectFilterDropdown
-                        title="Price"
-                        placeholder="Search price..."
-                        allLabel="All Prices"
-                        options={itemOptionLists.price}
-                        selected={itemFilters.price}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, price: vals }));
-                          setItemPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Status"
-                        placeholder="Search status..."
-                        allLabel="All Statuses"
-                        options={itemOptionLists.status}
-                        selected={itemFilters.status}
-                        onChange={(vals) => {
-                          setItemFilters((prev) => ({ ...prev, status: vals }));
-                          setItemPage(1);
-                        }}
-                        align="right"
-                      />
-                    </td>
-                    <td className="p-2 min-w-[80px]"></td>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-200">
-                  {itemsLoading ? (
-                    <tr>
-                      <td colSpan={17} className="p-8 text-center text-slate-500 font-medium">
-                        Loading items...
-                      </td>
-                    </tr>
-                  ) : items.length === 0 ? (
-                    <tr>
-                      <td colSpan={17} className="p-8 text-center text-slate-500 font-medium">
-                        No items found matching your filters.
-                      </td>
-                    </tr>
-                  ) : (
-                    items.map((item, mIdx) => (
-                      <tr key={item.id} className="hover:bg-slate-50 transition-colors align-top min-h-[44px] group">
-                        {/* Sticky Body Cell 1: ID */}
-                        <td className="p-3 text-slate-500 font-mono text-xs font-bold w-[70px] min-w-[70px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
-                          #{item.id}
-                        </td>
-
-                        {/* Sticky Body Cell 2: Docket No */}
-                        <td className="p-3 w-[150px] min-w-[150px] sticky left-[70px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs font-bold text-blue-600">
-                          {currentUser.role === 'Admin' ? (
-                            <AutoResizeTextarea
-                              readOnly={!canEdit}
-                              defaultValue={item.docketNoQtnNo || ''}
-                              onSave={(val) => handleItemFieldUpdate(item.id, 'docketNoQtnNo', val)}
-                              onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'docketNoQtnNo')}
-                              className="font-bold text-blue-600"
-                            />
-                          ) : (
-                            <span className="font-bold text-blue-600 px-2 py-1 block text-xs">
-                              {item.docketNoQtnNo || '-'}
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Sticky Body Cell 3: Item Name */}
-                        <td className="p-3 w-[260px] min-w-[260px] sticky left-[220px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
-                          <AutoResizeTextarea
-                            readOnly={!canEdit}
-                            defaultValue={item.itemNameParty || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'itemNameParty', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'itemNameParty')}
-                            placeholder="Enter item name..."
-                          />
-                        </td>
-
-                        {/* Sticky Body Cell 4: UOM */}
-                        <td className="p-3 w-[80px] min-w-[80px] sticky left-[480px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
-                          <CellInput
-                            readOnly={!canEdit}
-                            value={item.uom || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'uom', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'uom')}
-                            className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 focus:outline-none"
-                          />
-                        </td>
-
-                        {/* Sticky Body Cell 5: QTY */}
-                        <td className="p-3 w-[80px] min-w-[80px] sticky left-[560px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-slate-400 shadow-xs">
-                          <CellInput
-                            readOnly={!canEdit}
-                            value={item.qty || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'qty', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'qty')}
-                            className="w-16 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-1.5 py-1 text-xs text-slate-700 font-semibold focus:outline-none"
-                          />
-                        </td>
-
-                        <td className="p-3 bg-blue-50/20 min-w-[180px]">
-                          <select
-                            disabled={!canEdit}
-                            value={item.ourItemNot || ''}
-                            onChange={(e) => handleItemFieldUpdate(item.id, 'ourItemNot', e.target.value)}
-                            className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                          >
-                            <option value="">Select</option>
-                            <option value="MANUFACTURING">MANUFACTURING</option>
-                            <option value="NO">NO</option>
-                            <option value="TRADING">TRADING</option>
-                          </select>
-                        </td>
-
-                        <td className="p-3 min-w-[160px]">
-                          <AutoResizeTextarea
-                            readOnly={!canEdit}
-                            defaultValue={item.typeOfItem || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'typeOfItem', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'typeOfItem')}
-                          />
-                        </td>
-
-                        <td className="p-3 bg-blue-50/20 min-w-[240px]">
-                          <div className="flex items-center space-x-1.5">
-                            <select
-                              disabled={!canEdit}
-                              value={item.ourItemName || ''}
-                              onChange={(e) => {
-                                handleItemFieldUpdate(item.id, 'ourItemName', e.target.value);
-                                if (e.target.value === 'OTHERS') {
-                                  openReasoningModal(item.itemNameParty, item.typeOfItem, e.target.value);
-                                }
-                              }}
-                              className="w-full bg-white border border-slate-300 rounded-md px-2 py-1.5 text-xs font-semibold text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                            >
-                              <option value="">Select Item Name</option>
-                              {ourItemNameOptions.map((opt) => (
-                                <option key={opt} value={opt}>
-                                  {opt}
-                                </option>
-                              ))}
-                            </select>
-
-                            {item.ourItemName && (
-                              <button
-                                onClick={() => openReasoningModal(item.itemNameParty, item.typeOfItem, item.ourItemName)}
-                                className="p-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg transition-all border border-blue-200 shrink-0"
-                                title="View AI Factual Reasoning & Explanation for this Category"
-                              >
-                                <Brain className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-                        </td>
-
-                        <td className="p-3 min-w-[140px]">
-                          <AutoResizeTextarea
-                            readOnly={!canEdit}
-                            defaultValue={item.size || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'size', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'size')}
-                          />
-                        </td>
-
-                        <td className="p-3 min-w-[140px]">
-                          <AutoResizeTextarea
-                            readOnly={!canEdit}
-                            defaultValue={item.sectionMm || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'sectionMm', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'sectionMm')}
-                            placeholder="e.g. 125x65x6mm"
-                          />
-                        </td>
-
-                        <td className="p-3 min-w-[160px]">
-                          <AutoResizeTextarea
-                            readOnly={!canEdit}
-                            defaultValue={item.sectionalWtKgMtr || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'sectionalWtKgMtr', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'sectionalWtKgMtr')}
-                            placeholder="Kg/Mtr."
-                          />
-                        </td>
-
-                        <td className="p-3 min-w-[130px]">
-                          <AutoResizeTextarea
-                            readOnly={!canEdit}
-                            defaultValue={item.lengthInMtr || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'lengthInMtr', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'lengthInMtr')}
-                            placeholder="Mtr."
-                          />
-                        </td>
-
-                        <td className="p-3 bg-blue-50/20 min-w-[130px]">
-                          <AutoResizeTextarea
-                            readOnly={!canEdit}
-                            defaultValue={item.weightPerPiece || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'weightPerPiece', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'weightPerPiece')}
-                            placeholder="Unit Wt."
-                          />
-                        </td>
-
-                        <td className="p-3 min-w-[180px]">
-                          <AutoResizeTextarea
-                            readOnly={!canEdit}
-                            defaultValue={item.unitWtOfMemberKg || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'unitWtOfMemberKg', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'unitWtOfMemberKg')}
-                            placeholder="Kg"
-                          />
-                        </td>
-
-                        <td className="p-3 min-w-[120px]">
-                          <CellInput
-                            readOnly={!canEdit}
-                            value={item.price || ''}
-                            onSave={(val) => handleItemFieldUpdate(item.id, 'price', val)}
-                            onPaste={(e) => handleMainItemGridPaste(e, mIdx, 'price')}
-                            className="w-24 bg-transparent hover:bg-white focus:bg-white border border-transparent hover:border-slate-300 focus:border-blue-500 rounded px-2 py-1 text-xs font-semibold text-slate-900 focus:outline-none"
-                          />
-                        </td>
-
-                        <td className="p-3 bg-blue-50/20 min-w-[160px]">
-                          <select
-                            disabled={!canEdit}
-                            value={item.status || ''}
-                            onChange={(e) => handleItemFieldUpdate(item.id, 'status', e.target.value)}
-                            className={`w-full border rounded-md px-2 py-1.5 text-xs font-semibold focus:outline-none ${
-                              item.status === 'Quoted'
-                                ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                                : item.status === 'NOT Required'
-                                ? 'bg-rose-50 text-rose-800 border-rose-300'
-                                : 'bg-white border-slate-300'
-                            }`}
-                          >
-                            <option value="">Select Status</option>
-                            {masterSuggestions.STATUS.map((st) => (
-                              <option key={st} value={st}>
-                                {st}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-
-                        <td className="p-3 text-center min-w-[80px]">
-                          {currentUser.role === 'Admin' ? (
-                            <button
-                              onClick={() => handleDeleteItem(item.id, item.docketNoQtnNo)}
-                              className="p-1.5 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white rounded-lg border border-rose-200 hover:border-rose-600 transition-all shadow-xs"
-                              title="Delete this Item (Admin only)"
-                              aria-label={`Delete item #${item.id}`}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          ) : (
-                            <span className="text-slate-300 text-[10px]">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: docket-party-name (WITH ACCORDION ARROW & ADD DOCKET/ITEM BUTTONS) */}
+        {/* Dockets with their items */}
         {activeTab === 'dockets' && (
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden flex flex-col space-y-3">
-            <div className="px-4 py-3 bg-white border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
-              <div>
-                <h2 className="text-sm font-bold text-slate-900">Dockets</h2>
-                <p className="text-[11px] text-slate-500 font-medium">
-                  Click the arrow on any docket row to expand & view/manage all belonging items.
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-4">
-                {/* Add Docket Button */}
-                <button
-                  onClick={handleOpenAddDocketModal}
-                  className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm shadow-blue-500/20"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Add Docket</span>
-                </button>
-
-                {Object.entries(docketFilters).some(([key, val]) => (Array.isArray(val) ? val.length > 0 : Boolean(val))) && (
-                  <button
-                    onClick={() => {
-                      setDocketFilters({
-                        docketNoQtnNo: [],
-                        partyName: [],
-                        itemFilter: '',
-                        state: [],
-                        utility: [],
-                        type: [],
-                        attachments: '',
-                        price: [],
-                        payment: [],
-                        delivery: [],
-                        warranty: [],
-                        approval: [],
-                        inspection: [],
-                      });
-                      setDocketPage(1);
-                    }}
-                    className="flex items-center space-x-1 px-2.5 py-1 text-xs font-bold text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-all"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                    <span>Clear All Filters</span>
-                  </button>
-                )}
-
-                {/* Pagination Controls */}
-                <div className="flex items-center space-x-1.5 text-xs text-slate-600 font-medium border-l border-slate-200 pl-4">
-                  <span>Rows:</span>
-                  <select
-                    value={docketLimit}
-                    onChange={(e) => {
-                      setDocketLimit(Number(e.target.value));
-                      setDocketPage(1);
-                    }}
-                    className="bg-white border border-slate-300 rounded-md px-2 py-1 text-xs font-bold text-slate-800"
-                  >
-                    <option value={50}>50</option>
-                    <option value={100}>100</option>
-                    <option value={200}>200</option>
-                  </select>
-                </div>
-
-                <span className="text-xs font-bold text-slate-700">
-                  Page {docketPage} of {docketTotalPages} ({docketTotalCount} Party Records)
-                </span>
-
-                <div className="flex items-center space-x-1">
-                  <button
-                    disabled={docketPage <= 1}
-                    onClick={() => setDocketPage((p) => Math.max(1, p - 1))}
-                    className="p-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-lg text-slate-700 font-bold transition-all"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                  </button>
-                  <button
-                    disabled={docketPage >= docketTotalPages}
-                    onClick={() => setDocketPage((p) => Math.min(docketTotalPages, p + 1))}
-                    className="p-1.5 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 rounded-lg text-slate-700 font-bold transition-all"
-                  >
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* Quick Item Filter Chips for Dockets */}
-            <div className="px-4 py-2.5 bg-white border-b border-slate-200 flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-              <span className="text-xs font-bold text-slate-700 whitespace-nowrap flex items-center gap-1.5">
-                <Filter className="w-3.5 h-3.5 text-blue-600" />
-                Filter Dockets by Item Name:
-              </span>
-              <div className="flex flex-wrap gap-1.5 items-center">
-                {ourItemNameOptions.map((opt) => {
-                  const isSelected = docketFilters.itemFilter === opt;
-                  return (
-                    <button
-                      key={opt}
-                      onClick={() => {
-                        setDocketPage(1);
-                        setDocketFilters((prev) => ({
-                          ...prev,
-                          itemFilter: isSelected ? '' : opt,
-                        }));
-                      }}
-                      className={`text-[11px] px-2.5 py-1 rounded-lg border font-bold transition-all ${
-                        isSelected
-                          ? 'bg-blue-600 border-blue-600 text-white shadow-xs'
-                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
-                      }`}
-                    >
-                      {opt} {isSelected && '✓'}
-                    </button>
-                  );
-                })}
-                {docketFilters.itemFilter && (
-                  <button
-                    onClick={() => {
-                      setDocketFilters((prev) => ({ ...prev, itemFilter: '' }));
-                      setDocketPage(1);
-                    }}
-                    className="text-[11px] text-rose-600 font-bold px-2 py-1 hover:underline"
-                  >
-                    Clear Filter
-                  </button>
-                )}
-              </div>
-            </div>
-
-            <div className="overflow-auto flex-1 min-h-[240px]">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead className="bg-slate-50 text-slate-500 font-semibold sticky top-0 z-30 border-b border-slate-200 text-[10px] uppercase tracking-wider">
-                  <tr>
-                    {/* STICKY COLUMN 1: ACTIONS (width 120px) */}
-                    <th className="py-2 px-2 whitespace-nowrap bg-slate-50 text-slate-500 font-semibold text-center w-[120px] min-w-[120px] sticky left-0 z-40 border-r border-slate-200">
-                      ACTIONS
-                    </th>
-                    {/* STICKY COLUMN 2: ID (width 50px, offset left 120px) */}
-                    <th className="py-2 px-2 whitespace-nowrap w-[50px] min-w-[50px] sticky left-[120px] z-40 bg-slate-50 border-r border-slate-200 text-center">
-                      ID
-                    </th>
-
-                    <th className="py-2 px-2.5 whitespace-nowrap w-[130px] min-w-[130px]">DOCKET / QTN NO</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-blue-50/80 text-blue-900 font-semibold w-[210px] min-w-[210px]">
-                      FIRST ITEM NAME
-                    </th>
-                    <th className="py-2 px-2.5 whitespace-nowrap w-[200px] min-w-[200px]">PARTY NAME</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap w-[110px] min-w-[110px]">STATE</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap w-[100px] min-w-[100px]">UTILITY</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap w-[160px] min-w-[160px]">DELIVERY LOCATION</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-amber-50 text-amber-900 font-semibold w-[130px] min-w-[130px]">TYPE</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-emerald-50 text-emerald-900 font-semibold w-[180px] min-w-[180px]">ATTACHMENTS</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Price Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Payment Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Delivery Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Warranty Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Approval Condition</th>
-                    <th className="py-2 px-2.5 whitespace-nowrap bg-purple-50 w-[300px] min-w-[300px]">Inspection Condition</th>
-                  </tr>
-
-                  {/* Filter Header Row */}
-                  <tr className="bg-slate-50 border-t border-slate-200">
-                    <td className="p-1.5 w-[120px] min-w-[120px] text-center text-[10px] font-bold text-slate-400 sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      PDF / AI / Delete
-                    </td>
-                    <td className="p-1.5 w-[50px] min-w-[50px] text-center text-[10px] font-bold text-slate-400 sticky left-[120px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">
-                      ID
-                    </td>
-
-                    <td className="p-1.5 w-[130px] min-w-[130px]">
-                      <MultiSelectFilterDropdown
-                        title="Docket"
-                        placeholder="Search docket..."
-                        allLabel="All Dockets"
-                        options={docketOptions}
-                        selected={docketFilters.docketNoQtnNo}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, docketNoQtnNo: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[210px] min-w-[210px] bg-blue-50/50">
-                      <input
-                        type="text"
-                        placeholder="Filter Item Name..."
-                        value={docketFilters.itemFilter}
-                        onChange={(e) => {
-                          setDocketFilters((prev) => ({ ...prev, itemFilter: e.target.value }));
-                          setDocketPage(1);
-                        }}
-                        className="w-full px-1.5 py-0.5 text-xs border border-blue-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-blue-500"
-                      />
-                    </td>
-                    <td className="p-1.5 w-[200px] min-w-[200px]">
-                      <MultiSelectFilterDropdown
-                        title="Party"
-                        placeholder="Search party..."
-                        allLabel="All Parties"
-                        options={partyOptions}
-                        selected={docketFilters.partyName}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, partyName: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[110px] min-w-[110px]">
-                      <MultiSelectFilterDropdown
-                        title="State"
-                        placeholder="Search state..."
-                        allLabel="All States"
-                        options={stateOptions}
-                        selected={docketFilters.state}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, state: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[100px] min-w-[100px]">
-                      <MultiSelectFilterDropdown
-                        title="Utility"
-                        placeholder="Search utility..."
-                        allLabel="All Utilities"
-                        options={utilityOptions}
-                        selected={docketFilters.utility}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, utility: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]"></td>
-                    <td className="p-1.5 w-[130px] min-w-[130px] bg-amber-50/50">
-                      <MultiSelectFilterDropdown
-                        title="Type"
-                        placeholder="Search type..."
-                        allLabel="All Types"
-                        options={['Tender', 'Purchase']}
-                        selected={docketFilters.type}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, type: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[180px] min-w-[180px] bg-emerald-50/50">
-                      <select
-                        value={docketFilters.attachments}
-                        onChange={(e) => {
-                          setDocketFilters((prev) => ({ ...prev, attachments: e.target.value }));
-                          setDocketPage(1);
-                        }}
-                        className="w-full px-1 py-0.5 text-[11px] border border-emerald-300 rounded-md bg-white font-medium focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                      >
-                        <option value="">All Attachments</option>
-                        <option value="has">With Attachments</option>
-                        <option value="empty">Without Attachments</option>
-                      </select>
-                    </td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Price Condition"
-                        placeholder="Search condition..."
-                        allLabel="All Prices"
-                        options={termsDropdowns.price}
-                        selected={docketFilters.price}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, price: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Payment Condition"
-                        placeholder="Search condition..."
-                        allLabel="All Payments"
-                        options={termsDropdowns.payment}
-                        selected={docketFilters.payment}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, payment: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Delivery Condition"
-                        placeholder="Search condition..."
-                        allLabel="All Deliveries"
-                        options={termsDropdowns.delivery}
-                        selected={docketFilters.delivery}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, delivery: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Warranty Condition"
-                        placeholder="Search condition..."
-                        allLabel="All Warranties"
-                        options={termsDropdowns.warranty}
-                        selected={docketFilters.warranty}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, warranty: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Approval Condition"
-                        placeholder="Search condition..."
-                        allLabel="All Approvals"
-                        options={termsDropdowns.approval}
-                        selected={docketFilters.approval}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, approval: vals }));
-                          setDocketPage(1);
-                        }}
-                      />
-                    </td>
-                    <td className="p-1.5 w-[160px] min-w-[160px]">
-                      <MultiSelectFilterDropdown
-                        title="Inspection Condition"
-                        placeholder="Search condition..."
-                        allLabel="All Inspections"
-                        options={termsDropdowns.inspection}
-                        selected={docketFilters.inspection}
-                        onChange={(vals) => {
-                          setDocketFilters((prev) => ({ ...prev, inspection: vals }));
-                          setDocketPage(1);
-                        }}
-                        align="right"
-                      />
-                    </td>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-slate-100 font-medium">
-                  {docketsLoading ? (
-                    <tr>
-                      <td colSpan={16} className="p-8 text-center text-slate-400 font-semibold">
-                        Loading docket party records...
-                      </td>
-                    </tr>
-                  ) : dockets.length === 0 ? (
-                    <tr>
-                      <td colSpan={16} className="p-8 text-center text-slate-400 font-semibold">
-                        No docket party records found matching filters.
-                      </td>
-                    </tr>
-                  ) : (
-                    dockets.map((doc) => {
-                      const isExpanded = expandedDocketIds.includes(doc.id);
-                      const rawDocketItems = doc.docketNoQtnNo ? docketItemsMap[doc.docketNoQtnNo] || [] : [];
-                      const isItemLoading = doc.docketNoQtnNo ? loadingDocketItems[doc.docketNoQtnNo] : false;
-
-                      const activeFilterQuery = (docketFilters.itemFilter || search || '').trim().toLowerCase();
-                      const subFilter = doc.docketNoQtnNo ? subTableFilters[doc.docketNoQtnNo] || {} : {};
-                      const hasSubFilters = Object.values(subFilter).some((v) => Boolean(v && Array.isArray(v) && v.length > 0));
-
-                      const docketItems = rawDocketItems.filter((item) => {
-                        if (activeFilterQuery) {
-                          const name = (item.itemNameParty || '').toLowerCase();
-                          const ourName = (item.ourItemName || '').toLowerCase();
-                          const type = (item.typeOfItem || '').toLowerCase();
-                          if (!name.includes(activeFilterQuery) && !ourName.includes(activeFilterQuery) && !type.includes(activeFilterQuery)) {
-                            return false;
-                          }
-                        }
-                        if (subFilter.itemNameParty && subFilter.itemNameParty.length > 0 && !subFilter.itemNameParty.includes(item.itemNameParty || '')) {
-                          return false;
-                        }
-                        if (subFilter.uom && subFilter.uom.length > 0 && !subFilter.uom.includes(item.uom || '')) {
-                          return false;
-                        }
-                        if (subFilter.qty && subFilter.qty.length > 0 && !subFilter.qty.includes(item.qty || '')) {
-                          return false;
-                        }
-                        if (subFilter.ourItemNot && subFilter.ourItemNot.length > 0 && !subFilter.ourItemNot.includes(item.ourItemNot || '')) {
-                          return false;
-                        }
-                        if (subFilter.ourItemName && subFilter.ourItemName.length > 0 && !subFilter.ourItemName.includes(item.ourItemName || '')) {
-                          return false;
-                        }
-                        if (subFilter.size && subFilter.size.length > 0 && !subFilter.size.includes(item.size || '')) {
-                          return false;
-                        }
-                        if (subFilter.weightPerPiece && subFilter.weightPerPiece.length > 0 && !subFilter.weightPerPiece.includes(item.weightPerPiece || '')) {
-                          return false;
-                        }
-                        if (subFilter.unitWtOfMemberKg && subFilter.unitWtOfMemberKg.length > 0 && !subFilter.unitWtOfMemberKg.includes(item.unitWtOfMemberKg || '')) {
-                          return false;
-                        }
-                        if (subFilter.price && subFilter.price.length > 0 && !subFilter.price.includes(item.price || '')) {
-                          return false;
-                        }
-                        if (subFilter.sectionMm && subFilter.sectionMm.length > 0 && !subFilter.sectionMm.includes(item.sectionMm || '')) {
-                          return false;
-                        }
-                        if (subFilter.sectionalWtKgMtr && subFilter.sectionalWtKgMtr.length > 0 && !subFilter.sectionalWtKgMtr.includes(item.sectionalWtKgMtr || '')) {
-                          return false;
-                        }
-                        if (subFilter.lengthInMtr && subFilter.lengthInMtr.length > 0 && !subFilter.lengthInMtr.includes(item.lengthInMtr || '')) {
-                          return false;
-                        }
-                        if (subFilter.status && subFilter.status.length > 0 && !subFilter.status.includes(item.status || '')) {
-                          return false;
-                        }
-                        return true;
-                      });
-
-                      // Unique options extracted directly from docket's items
-                      const subItemNames = Array.from(new Set(rawDocketItems.map((i) => i.itemNameParty).filter(Boolean) as string[]));
-                      const subUoms = Array.from(new Set(rawDocketItems.map((i) => i.uom).filter(Boolean) as string[]));
-                      const subQtys = Array.from(new Set(rawDocketItems.map((i) => i.qty).filter(Boolean) as string[]));
-                      const subOurItemNots = Array.from(new Set([...['MANUFACTURING', 'NO', 'TRADING'], ...rawDocketItems.map((i) => i.ourItemNot).filter(Boolean) as string[]]));
-                      const subOurItemNames = Array.from(new Set([...ourItemNameOptions, ...rawDocketItems.map((i) => i.ourItemName).filter(Boolean) as string[]]));
-                      const subSizes = Array.from(new Set(rawDocketItems.map((i) => i.size).filter(Boolean) as string[]));
-                      const subUnitWts = Array.from(new Set(rawDocketItems.map((i) => i.weightPerPiece).filter(Boolean) as string[]));
-                      const subMemberWts = Array.from(new Set(rawDocketItems.map((i) => i.unitWtOfMemberKg).filter(Boolean) as string[]));
-                      const subPrices = Array.from(new Set(rawDocketItems.map((i) => i.price).filter(Boolean) as string[]));
-                      const subSections = Array.from(new Set(rawDocketItems.map((i) => i.sectionMm).filter(Boolean) as string[]));
-                      const subSecWts = Array.from(new Set(rawDocketItems.map((i) => i.sectionalWtKgMtr).filter(Boolean) as string[]));
-                      const subLengths = Array.from(new Set(rawDocketItems.map((i) => i.lengthInMtr).filter(Boolean) as string[]));
-                      const subStatuses = Array.from(new Set([...['Quoted', 'NOT Required'], ...rawDocketItems.map((i) => i.status).filter(Boolean) as string[]]));
-
-                      return (
-                        <React.Fragment key={doc.id}>
-                          <tr className="group hover:bg-slate-50/90 transition-colors align-top">
-                            {/* STICKY BODY CELL 1: ACTIONS (width 120px) */}
-                            <td className="p-1.5 text-center w-[120px] min-w-[120px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
-                              <div className="flex items-center justify-center space-x-1">
-                                <Link
-                                  href={`/quotation/${doc.id}`}
-                                  target="_blank"
-                                  className="inline-flex items-center space-x-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] px-1.5 py-0.5 rounded-lg transition-all shadow-2xs"
-                                  title="Generate PDF Quotation"
-                                >
-                                  <FileText className="w-3 h-3" />
-                                  <span>PDF</span>
-                                </Link>
-
-                                <button
-                                  onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
-                                  disabled={aiProcessing || !canEdit || !doc.docketNoQtnNo?.trim()}
-                                  className="inline-flex items-center space-x-0.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-lg shadow-2xs transition-all"
-                                  title={
-                                    doc.docketNoQtnNo?.trim()
-                                      ? 'Autofill unclassified items for this docket using Groq AI'
-                                      : 'Autofill by AI needs a Docket / Qtn No - set one first'
-                                  }
-                                >
-                                  <Sparkles className="w-2.5 h-2.5 text-blue-100" />
-                                  <span>AI</span>
-                                </button>
-
-                                {currentUser.role === 'Admin' && (
-                                  <button
-                                    onClick={() => handleDeleteDocket(doc.id, doc.docketNoQtnNo)}
-                                    className="inline-flex items-center justify-center p-1 bg-rose-50 hover:bg-rose-600 text-rose-600 hover:text-white border border-rose-200 rounded-lg transition-all"
-                                    title="Delete Docket (Admin Only)"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-
-                            {/* STICKY BODY CELL 2: ID (width 50px, offset left 120px) */}
-                            <td className="p-1.5 text-slate-500 font-mono text-[11px] font-bold text-center w-[50px] min-w-[50px] sticky left-[120px] z-20 bg-white group-hover:bg-slate-50 border-r border-slate-300 shadow-xs">
-                              #{doc.id}
-                            </td>
-
-                            {/* DOCKET NO WITH TOGGLE */}
-                            <td className="p-1.5 w-[130px] min-w-[130px]">
-                              <div className="flex items-center space-x-1">
-                                <button
-                                  onClick={() => toggleDocketExpand(doc.id, doc.docketNoQtnNo)}
-                                  className={`p-1 rounded-md border transition-all ${
-                                    isExpanded
-                                      ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
-                                      : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200'
-                                  }`}
-                                  title={isExpanded ? 'Collapse Items' : 'Expand Items'}
-                                >
-                                  {isExpanded ? (
-                                    <ChevronDown className="w-3.5 h-3.5" />
-                                  ) : (
-                                    <ChevronRight className="w-3.5 h-3.5" />
-                                  )}
-                                </button>
-                                <div className="flex-1 min-w-0">
-                                  {currentUser.role === 'Admin' ? (
-                                    <AutoResizeTextarea
-                                      readOnly={!canEdit}
-                                      defaultValue={doc.docketNoQtnNo || ''}
-                                      onSave={(val) => handleDocketFieldUpdate(doc.id, 'docketNoQtnNo', val)}
-                                      className="font-bold text-blue-600 text-xs"
-                                    />
-                                  ) : (
-                                    <span className="font-bold text-blue-600 px-1 py-0.5 block text-xs truncate">
-                                      {doc.docketNoQtnNo || '-'}
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-
-                            {/* FIRST ITEM NAME PREVIEW CELL */}
-                            <td className="p-1.5 w-[210px] min-w-[210px] bg-blue-50/20">
-                              {doc.firstItemName ? (
-                                <div
-                                  className="inline-flex items-center space-x-1 bg-white border border-blue-200 text-blue-900 rounded-md px-2 py-0.5 text-xs font-bold shadow-2xs max-w-[200px] truncate"
-                                  title={doc.firstItemName}
-                                >
-                                  <Package className="w-3 h-3 text-blue-600 shrink-0" />
-                                  <span className="truncate text-[11px]">{doc.firstItemName}</span>
-                                </div>
-                              ) : (
-                                <span className="text-slate-400 italic text-[10px]">No items listed</span>
-                              )}
-                            </td>
-
-                            <td className="p-1.5 w-[200px] min-w-[200px]">
-                              <AutoResizeTextarea
-                                readOnly={!canEdit}
-                                defaultValue={doc.partyName || ''}
-                                onSave={(val) => handleDocketFieldUpdate(doc.id, 'partyName', val)}
-                                placeholder="Party Name..."
-                                className="font-bold text-slate-900 text-xs"
-                              />
-                            </td>
-
-                            <td className="p-1.5 w-[110px] min-w-[110px]">
-                              <AutoResizeTextarea
-                                readOnly={!canEdit}
-                                defaultValue={doc.state || ''}
-                                onSave={(val) => handleDocketFieldUpdate(doc.id, 'state', val)}
-                                className="text-xs"
-                              />
-                            </td>
-
-                            <td className="p-1.5 w-[100px] min-w-[100px]">
-                              <AutoResizeTextarea
-                                readOnly={!canEdit}
-                                defaultValue={doc.utility || ''}
-                                onSave={(val) => handleDocketFieldUpdate(doc.id, 'utility', val)}
-                                className="text-xs"
-                              />
-                            </td>
-
-                            <td className="p-1.5 w-[160px] min-w-[160px]">
-                              <AutoResizeTextarea
-                                readOnly={!canEdit}
-                                defaultValue={doc.deliveryLocation || ''}
-                                onSave={(val) => handleDocketFieldUpdate(doc.id, 'deliveryLocation', val)}
-                                className="text-xs"
-                              />
-                            </td>
-
-                            <td className="p-1.5 w-[130px] min-w-[130px] bg-amber-50/20">
-                              <select
-                                value={doc.type || ''}
-                                required
-                                disabled={!canEdit}
-                                aria-invalid={!isDocketType(doc.type)}
-                                title={isDocketType(doc.type) ? doc.type : 'Type is required - choose Tender or Purchase'}
-                                onChange={(e) => handleDocketFieldUpdate(doc.id, 'type', e.target.value)}
-                                className={`w-full px-2 py-1 text-xs border rounded-md font-bold transition-all shadow-2xs focus:outline-none focus:ring-1 ${
-                                  doc.type === 'Tender'
-                                    ? 'bg-blue-50 border-blue-300 text-blue-800'
-                                    : doc.type === 'Purchase'
-                                    ? 'bg-purple-50 border-purple-300 text-purple-800'
-                                    : 'bg-rose-50 border-rose-400 text-rose-700'
-                                }`}
-                              >
-                                {!isDocketType(doc.type) && (
-                                  <option value="" disabled>
-                                    Type required
-                                  </option>
-                                )}
-                                {DOCKET_TYPES.map((t) => (
-                                  <option key={t} value={t}>
-                                    {t}
-                                  </option>
-                                ))}
-                              </select>
-                            </td>
-
-                            {/* COMPACT ATTACHMENTS CELL */}
-                            <td className="p-1.5 w-[180px] min-w-[180px] bg-emerald-50/20">
-                              <div className="space-y-1">
-                                <div className="flex items-center justify-between">
-                                  <label className="cursor-pointer inline-flex items-center space-x-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-[10px] px-1.5 py-0.5 rounded-md transition-all shadow-2xs">
-                                    <Paperclip className="w-2.5 h-2.5" />
-                                    <span>{uploadingAttachment ? 'Uploading…' : '+ Attach Files'}</span>
-                                    <input
-                                      type="file"
-                                      multiple
-                                      className="hidden"
-                                      disabled={uploadingAttachment || !canEdit}
-                                      onChange={async (e) => {
-                                        const input = e.target;
-                                        const files = input.files ? Array.from(input.files) : [];
-                                        input.value = ''; // allow re-selecting the same file(s) later
-                                        if (files.length === 0) return;
-                                        const uploadedNames = await handleUploadDocketAttachments(files);
-                                        if (uploadedNames.length > 0) {
-                                          // Read the latest list (not this render's closure) so concurrent uploads aren't lost.
-                                          const latestDoc = docketsRef.current.find((d) => d.id === doc.id) || doc;
-                                          const currentAtts = parseAttachments(latestDoc.attachments);
-                                          const updatedAtts = [...currentAtts, ...uploadedNames];
-                                          handleDocketFieldUpdate(doc.id, 'attachments' as any, JSON.stringify(updatedAtts));
-                                        }
-                                      }}
-                                    />
-                                  </label>
-                                  {(() => {
-                                    const attCount = parseAttachments(doc.attachments).length;
-                                    return (
-                                      <button
-                                        type="button"
-                                        onClick={() => setAttachmentListDocId(doc.id)}
-                                        disabled={attCount === 0}
-                                        className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700 shadow-2xs transition-all hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40"
-                                        title={attCount === 0 ? 'No attachments' : `View ${attCount} attachment${attCount > 1 ? 's' : ''}`}
-                                        aria-label="View attachments"
-                                      >
-                                        <Eye className="w-3 h-3" />
-                                        <span>{attCount}</span>
-                                      </button>
-                                    );
-                                  })()}
-                                </div>
-                              </div>
-                            </td>
-
-                            {/* Terms Condition Dropdowns */}
-                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
-                              <ConditionSelect
-                                value={doc.price}
-                                options={termsDropdowns.price}
-                                placeholder="Select Price Condition"
-                                disabled={!canEdit}
-                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'price', v)}
-                              />
-                            </td>
-
-                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
-                              <ConditionSelect
-                                value={doc.payment}
-                                options={termsDropdowns.payment}
-                                placeholder="Select Payment Condition"
-                                disabled={!canEdit}
-                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'payment', v)}
-                              />
-                            </td>
-
-                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
-                              <ConditionSelect
-                                value={doc.delivery}
-                                options={termsDropdowns.delivery}
-                                placeholder="Select Delivery Condition"
-                                disabled={!canEdit}
-                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'delivery', v)}
-                              />
-                            </td>
-
-                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
-                              <ConditionSelect
-                                value={doc.warranty}
-                                options={termsDropdowns.warranty}
-                                placeholder="Select Warranty Condition"
-                                disabled={!canEdit}
-                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'warranty', v)}
-                              />
-                            </td>
-
-                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
-                              <ConditionSelect
-                                value={doc.approval}
-                                options={termsDropdowns.approval}
-                                placeholder="Select Approval Condition"
-                                disabled={!canEdit}
-                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'approval', v)}
-                              />
-                            </td>
-
-                            <td className="p-1.5 bg-purple-50/30 w-[300px] min-w-[300px] max-w-[300px] align-top">
-                              <ConditionSelect
-                                value={doc.inspection}
-                                options={termsDropdowns.inspection}
-                                placeholder="Select Inspection Condition"
-                                disabled={!canEdit}
-                                onChange={(v) => handleDocketFieldUpdate(doc.id, 'inspection', v)}
-                              />
-                            </td>
-                          </tr>
-
-                          {/* EXPANDED ACCORDION SUB-TABLE FOR DOCKET ITEMS */}
-                          {isExpanded && (
-                            <tr className="bg-blue-50/40 border-b-2 border-blue-200">
-                              <td colSpan={16} className="p-4 sm:p-6">
-                                <div className="bg-white rounded-xl border border-blue-200 shadow-sm p-4 space-y-4">
-                                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
-                                    <div className="flex items-center space-x-2">
-                                      <div className="bg-blue-600 text-white p-2 rounded-xl">
-                                        <Package className="w-4 h-4" />
-                                      </div>
-                                      <div>
-                                        <h4 className="text-sm font-semibold text-blue-900">
-                                          Items belonging to Docket: {doc.docketNoQtnNo || 'CEE-000000'}
-                                        </h4>
-                                        <p className="text-xs text-slate-500">
-                                          Party: <strong className="text-slate-800">{doc.partyName}</strong>
-                                        </p>
-                                      </div>
-                                      <span className="bg-blue-100 text-blue-800 font-semibold px-3 py-1 rounded-full text-xs ml-2">
-                                        {docketItems.length} {activeFilterQuery || hasSubFilters ? `Filtered Items (of ${rawDocketItems.length} Total)` : 'Items Listed'}
-                                      </span>
-                                      {hasSubFilters && (
-                                        <button
-                                          onClick={() => {
-                                            if (doc.docketNoQtnNo) {
-                                              setSubTableFilters((prev) => {
-                                                const updated = { ...prev };
-                                                delete updated[doc.docketNoQtnNo!];
-                                                return updated;
-                                              });
-                                            }
-                                          }}
-                                          className="text-[11px] text-rose-600 font-semibold bg-rose-50 hover:bg-rose-100 border border-rose-200 px-2 py-1 rounded-lg transition-all"
-                                        >
-                                          Clear Sub-Filters
-                                        </button>
-                                      )}
-                                    </div>
-
-                                    <div className="flex items-center space-x-2">
-                                      <button
-                                        onClick={() => handleAiAutofill(doc.docketNoQtnNo || undefined)}
-                                        disabled={aiProcessing || !canEdit || !doc.docketNoQtnNo?.trim()}
-                                        className="flex items-center space-x-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
-                                        title={
-                                          doc.docketNoQtnNo?.trim()
-                                            ? 'Autofill items for this docket using Groq AI'
-                                            : 'Autofill by AI needs a Docket / Qtn No - set one first'
-                                        }
-                                      >
-                                        <Sparkles className="w-3.5 h-3.5 text-blue-100" />
-                                        <span>Autofill by AI</span>
-                                      </button>
-
-                                      {/* Add Item to Docket Button (editors only) */}
-                                      {canEdit && (
-                                      <button
-                                        onClick={() => {
-                                          setNewItemForm((prev) => ({
-                                            ...prev,
-                                            docketNoQtnNo: doc.docketNoQtnNo || '',
-                                          }));
-                                          setShowAddItemModal(true);
-                                        }}
-                                        className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
-                                      >
-                                        <Plus className="w-4 h-4" />
-                                        <span>Create Item inside Docket</span>
-                                      </button>
-                                      )}
-
-                                      {/* Delete Docket Button (Admin Only) */}
-                                      {currentUser.role === 'Admin' && (
-                                        <button
-                                          onClick={() => handleDeleteDocket(doc.id, doc.docketNoQtnNo)}
-                                          className="flex items-center space-x-1.5 bg-rose-600 hover:bg-rose-700 text-white font-semibold text-xs px-3.5 py-2 rounded-xl transition-all shadow-sm"
-                                          title="Delete Docket & All Associated Items"
-                                        >
-                                          <Trash2 className="w-3.5 h-3.5" />
-                                          <span>Delete Docket</span>
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  {/* Sub-table items list */}
-                                  {isItemLoading ? (
-                                    <div className="p-6 text-center text-slate-500 font-medium">
-                                      Loading items for docket {doc.docketNoQtnNo}...
-                                    </div>
-                                  ) : docketItems.length === 0 ? (
-                                    <div className="p-6 text-center bg-slate-50 rounded-xl border border-dashed border-slate-300">
-                                      <p className="text-xs font-bold text-slate-600">
-                                        No items currently added under docket {doc.docketNoQtnNo || 'N/A'}.
-                                      </p>
-                                      {canEdit && (
-                                      <button
-                                        onClick={() => {
-                                          setNewItemForm((prev) => ({
-                                            ...prev,
-                                            docketNoQtnNo: doc.docketNoQtnNo || '',
-                                          }));
-                                          setShowAddItemModal(true);
-                                        }}
-                                        className="mt-2 inline-flex items-center space-x-1 text-xs font-semibold text-blue-600 hover:underline"
-                                      >
-                                        <Plus className="w-3.5 h-3.5" />
-                                        <span>Add First Item</span>
-                                      </button>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <div className="overflow-x-auto">
-                                      <table className="w-full text-left border-separate border-spacing-0 text-xs border border-slate-200 rounded-lg table-fixed">
-                                        <thead className="bg-slate-50 text-slate-500 font-semibold uppercase text-[10px]">
-                                          <tr>
-                                            <th className="p-2.5 border-b border-slate-300 w-[75px] min-w-[75px] max-w-[75px] sticky left-0 z-30 bg-slate-100 border-r border-slate-300 shadow-xs">Item ID</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[240px] min-w-[240px] max-w-[240px] sticky left-[75px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">ITEM NAME- PARTY</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[80px] min-w-[80px] max-w-[80px] sticky left-[315px] z-30 bg-slate-100 border-r border-slate-300 shadow-xs">UOM</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-30 bg-slate-100 border-r-2 border-slate-400 shadow-sm">QTY</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[150px] min-w-[150px]">OUR ITEM/NOT</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[200px] min-w-[200px]">Our item Name</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">SIZE</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[130px] min-w-[130px] bg-blue-50/80 text-blue-900 font-semibold">Unit Wt.</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[160px] min-w-[160px]">Unit Wt. of Member (Kg)</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[120px] min-w-[120px] bg-blue-50/80">PRICE</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">Section (mm)</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[160px] min-w-[160px]">Sectional Wt. (Kg/Mtr.)</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[120px] min-w-[120px]">Length (Mtr.)</th>
-                                            <th className="p-2.5 border-b border-slate-300 w-[140px] min-w-[140px]">STATUS</th>
-                                          </tr>
-
-                                          {/* Sub-table column filters */}
-                                          <tr className="bg-slate-50 border-b border-slate-200">
-                                            <td className="p-1 text-center text-[10px] font-bold text-slate-400 sticky left-0 z-30 bg-slate-100 border-r border-slate-300">
-                                              Filter
-                                            </td>
-                                            <td className="p-1 sticky left-[75px] z-30 bg-slate-100 border-r border-slate-300">
-                                              <MultiSelectFilterDropdown
-                                                title="Item"
-                                                placeholder="Search item..."
-                                                allLabel="All Items"
-                                                options={subItemNames}
-                                                selected={subFilter.itemNameParty || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      itemNameParty: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1 sticky left-[315px] z-30 bg-slate-100 border-r border-slate-300">
-                                              <MultiSelectFilterDropdown
-                                                title="UOM"
-                                                placeholder="Search..."
-                                                allLabel="All"
-                                                options={subUoms}
-                                                selected={subFilter.uom || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      uom: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1 sticky left-[395px] z-30 bg-slate-100 border-r-2 border-slate-400">
-                                              <MultiSelectFilterDropdown
-                                                title="Qty"
-                                                placeholder="Search..."
-                                                allLabel="All"
-                                                options={subQtys}
-                                                selected={subFilter.qty || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      qty: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1">
-                                              <MultiSelectFilterDropdown
-                                                title="Our Item/Not"
-                                                placeholder="Search..."
-                                                allLabel="All"
-                                                options={subOurItemNots}
-                                                selected={subFilter.ourItemNot || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      ourItemNot: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1">
-                                              <MultiSelectFilterDropdown
-                                                title="Our Item Name"
-                                                placeholder="Search item name..."
-                                                allLabel="All Names"
-                                                options={subOurItemNames}
-                                                selected={subFilter.ourItemName || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      ourItemName: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1">
-                                              <MultiSelectFilterDropdown
-                                                title="Size"
-                                                placeholder="Search size..."
-                                                allLabel="All Sizes"
-                                                options={subSizes}
-                                                selected={subFilter.size || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      size: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1 bg-blue-50/50">
-                                              <MultiSelectFilterDropdown
-                                                title="Unit Wt"
-                                                placeholder="Search wt..."
-                                                allLabel="All Wts"
-                                                options={subUnitWts}
-                                                selected={subFilter.weightPerPiece || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      weightPerPiece: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1">
-                                              <MultiSelectFilterDropdown
-                                                title="Member Wt"
-                                                placeholder="Search wt..."
-                                                allLabel="All Wts"
-                                                options={subMemberWts}
-                                                selected={subFilter.unitWtOfMemberKg || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      unitWtOfMemberKg: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1 bg-blue-50/50">
-                                              <MultiSelectFilterDropdown
-                                                title="Price"
-                                                placeholder="Search price..."
-                                                allLabel="All Prices"
-                                                options={subPrices}
-                                                selected={subFilter.price || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      price: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1">
-                                              <MultiSelectFilterDropdown
-                                                title="Section"
-                                                placeholder="Search section..."
-                                                allLabel="All Sections"
-                                                options={subSections}
-                                                selected={subFilter.sectionMm || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      sectionMm: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1">
-                                              <MultiSelectFilterDropdown
-                                                title="Sec. Wt"
-                                                placeholder="Search sec wt..."
-                                                allLabel="All Sec Wts"
-                                                options={subSecWts}
-                                                selected={subFilter.sectionalWtKgMtr || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      sectionalWtKgMtr: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1">
-                                              <MultiSelectFilterDropdown
-                                                title="Length"
-                                                placeholder="Search length..."
-                                                allLabel="All Lengths"
-                                                options={subLengths}
-                                                selected={subFilter.lengthInMtr || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      lengthInMtr: vals,
-                                                    },
-                                                  }))
-                                                }
-                                              />
-                                            </td>
-                                            <td className="p-1">
-                                              <MultiSelectFilterDropdown
-                                                title="Status"
-                                                placeholder="Search status..."
-                                                allLabel="All Statuses"
-                                                options={subStatuses}
-                                                selected={subFilter.status || []}
-                                                onChange={(vals) =>
-                                                  setSubTableFilters((prev) => ({
-                                                    ...prev,
-                                                    [doc.docketNoQtnNo!]: {
-                                                      ...prev[doc.docketNoQtnNo!],
-                                                      status: vals,
-                                                    },
-                                                  }))
-                                                }
-                                                align="right"
-                                              />
-                                            </td>
-                                          </tr>
-                                        </thead>
-                                         <tbody className="divide-y divide-slate-100 font-medium">
-                                           {docketItems.map((subItem, sIdx) => (
-                                             <tr key={subItem.id} className="hover:bg-slate-50 group">
-                                               <td className="p-2.5 font-mono text-slate-500 font-bold w-[75px] min-w-[75px] max-w-[75px] sticky left-0 z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">#{subItem.id}</td>
-                                               <td className="p-2.5 w-[240px] min-w-[240px] max-w-[240px] sticky left-[75px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
-                                                 <AutoResizeTextarea
-                                                   readOnly={!canEdit}
-                                                   defaultValue={subItem.itemNameParty || ''}
-                                                   onSave={(val) =>
-                                                     handleItemFieldUpdate(subItem.id, 'itemNameParty', val, doc.docketNoQtnNo)
-                                                   }
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'itemNameParty')
-                                                   }
-                                                 />
-                                               </td>
-                                               <td className="p-2.5 w-[80px] min-w-[80px] max-w-[80px] sticky left-[315px] z-20 bg-white group-hover:bg-slate-50 border-r border-b border-slate-200 shadow-xs">
-                                                 <CellInput
-                                                   readOnly={!canEdit}
-                                                   value={subItem.uom || ''}
-                                                   onSave={(val) => handleItemFieldUpdate(subItem.id, 'uom', val, doc.docketNoQtnNo)}
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'uom')
-                                                   }
-                                                   className="w-16 p-1 border border-slate-200 rounded text-xs"
-                                                 />
-                                               </td>
-                                               <td className="p-2.5 font-bold w-[80px] min-w-[80px] max-w-[80px] sticky left-[395px] z-20 bg-white group-hover:bg-slate-50 border-r-2 border-b border-slate-400 shadow-sm">
-                                                 <CellInput
-                                                   readOnly={!canEdit}
-                                                   value={subItem.qty || ''}
-                                                   onSave={(val) => handleItemFieldUpdate(subItem.id, 'qty', val, doc.docketNoQtnNo)}
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'qty')
-                                                   }
-                                                   className="w-16 p-1 border border-slate-200 rounded text-xs font-semibold"
-                                                 />
-                                               </td>
-                                              <td className="p-2.5 border-b border-slate-200">
-                                                <select
-                                                  disabled={!canEdit}
-                                                  value={subItem.ourItemNot || ''}
-                                                  onChange={(e) =>
-                                                    handleItemFieldUpdate(subItem.id, 'ourItemNot', e.target.value, doc.docketNoQtnNo)
-                                                  }
-                                                  className="p-1 border border-slate-200 rounded text-xs font-bold"
-                                                >
-                                                  <option value="">Select</option>
-                                                  <option value="MANUFACTURING">MANUFACTURING</option>
-                                                  <option value="NO">NO</option>
-                                                  <option value="TRADING">TRADING</option>
-                                                </select>
-                                              </td>
-                                              <td className="p-2.5 font-bold text-blue-700 w-[200px] min-w-[200px] border-b border-slate-200">
-                                                 <div className="flex items-center space-x-1.5">
-                                                   <select
-                                                     disabled={!canEdit}
-                                                     value={subItem.ourItemName || ''}
-                                                     onChange={(e) => {
-                                                       handleItemFieldUpdate(subItem.id, 'ourItemName', e.target.value, doc.docketNoQtnNo);
-                                                       if (e.target.value === 'OTHERS') {
-                                                         openReasoningModal(subItem.itemNameParty, subItem.typeOfItem, e.target.value);
-                                                       }
-                                                     }}
-                                                     className="w-full p-1 border border-slate-200 rounded text-xs font-semibold text-blue-700"
-                                                   >
-                                                     <option value="">Select Item Name</option>
-                                                     <option value="OTHERS">OTHERS</option>
-                                                     {ourItemNameOptions.map((opt) => (
-                                                       <option key={opt} value={opt}>
-                                                         {opt}
-                                                       </option>
-                                                     ))}
-                                                   </select>
-
-                                                   {subItem.ourItemName && (
-                                                     <button
-                                                       onClick={() => openReasoningModal(subItem.itemNameParty, subItem.typeOfItem, subItem.ourItemName)}
-                                                       className="p-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded border border-blue-200 shrink-0"
-                                                       title="View AI Factual Reasoning & Explanation for this Category"
-                                                     >
-                                                       <Brain className="w-3.5 h-3.5" />
-                                                     </button>
-                                                   )}
-                                                 </div>
-                                              </td>
-                                               <td className="p-2.5 border-b border-slate-200">
-                                                 <AutoResizeTextarea
-                                                   readOnly={!canEdit}
-                                                   defaultValue={subItem.size || ''}
-                                                   onSave={(val) =>
-                                                     handleItemFieldUpdate(subItem.id, 'size', val, doc.docketNoQtnNo)
-                                                   }
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'size')
-                                                   }
-                                                 />
-                                               </td>
-                                               <td className="p-2.5 border-b border-slate-200 bg-blue-50/20">
-                                                 <AutoResizeTextarea
-                                                   readOnly={!canEdit}
-                                                   defaultValue={subItem.weightPerPiece || ''}
-                                                   onSave={(val) =>
-                                                     handleItemFieldUpdate(subItem.id, 'weightPerPiece', val, doc.docketNoQtnNo)
-                                                   }
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'weightPerPiece')
-                                                   }
-                                                   placeholder="Unit Wt."
-                                                 />
-                                               </td>
-                                               <td className="p-2.5 border-b border-slate-200">
-                                                 <AutoResizeTextarea
-                                                   readOnly={!canEdit}
-                                                   defaultValue={subItem.unitWtOfMemberKg || ''}
-                                                   onSave={(val) =>
-                                                     handleItemFieldUpdate(subItem.id, 'unitWtOfMemberKg', val, doc.docketNoQtnNo)
-                                                   }
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'unitWtOfMemberKg')
-                                                   }
-                                                   placeholder="Kg"
-                                                 />
-                                               </td>
-                                               <td className="p-2.5 font-semibold border-b border-slate-200 bg-blue-50/30">
-                                                 <CellInput
-                                                   readOnly={!canEdit}
-                                                   value={subItem.price || ''}
-                                                   onSave={(val) => handleItemFieldUpdate(subItem.id, 'price', val, doc.docketNoQtnNo)}
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'price')
-                                                   }
-                                                   className="w-20 p-1 border border-slate-200 rounded text-xs font-semibold"
-                                                 />
-                                               </td>
-                                               <td className="p-2.5 border-b border-slate-200">
-                                                 <AutoResizeTextarea
-                                                   readOnly={!canEdit}
-                                                   defaultValue={subItem.sectionMm || ''}
-                                                   onSave={(val) =>
-                                                     handleItemFieldUpdate(subItem.id, 'sectionMm', val, doc.docketNoQtnNo)
-                                                   }
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'sectionMm')
-                                                   }
-                                                   placeholder="e.g. 125x65x6mm"
-                                                 />
-                                               </td>
-                                               <td className="p-2.5 border-b border-slate-200">
-                                                 <AutoResizeTextarea
-                                                   readOnly={!canEdit}
-                                                   defaultValue={subItem.sectionalWtKgMtr || ''}
-                                                   onSave={(val) =>
-                                                     handleItemFieldUpdate(subItem.id, 'sectionalWtKgMtr', val, doc.docketNoQtnNo)
-                                                   }
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'sectionalWtKgMtr')
-                                                   }
-                                                   placeholder="Kg/Mtr."
-                                                 />
-                                               </td>
-                                               <td className="p-2.5 border-b border-slate-200">
-                                                 <AutoResizeTextarea
-                                                   readOnly={!canEdit}
-                                                   defaultValue={subItem.lengthInMtr || ''}
-                                                   onSave={(val) =>
-                                                     handleItemFieldUpdate(subItem.id, 'lengthInMtr', val, doc.docketNoQtnNo)
-                                                   }
-                                                   onPaste={(e) =>
-                                                     handleSubItemGridPaste(e, doc.docketNoQtnNo || '', docketItems.map((it) => it.id), sIdx, 'lengthInMtr')
-                                                   }
-                                                   placeholder="Mtr."
-                                                 />
-                                               </td>
-                                              <td className="p-2.5 border-b border-slate-200">
-                                                <select
-                                                  disabled={!canEdit}
-                                                  value={subItem.status || ''}
-                                                  onChange={(e) =>
-                                                    handleItemFieldUpdate(subItem.id, 'status', e.target.value, doc.docketNoQtnNo)
-                                                  }
-                                                  className={`p-1 border rounded text-xs font-bold ${
-                                                    subItem.status === 'Quoted'
-                                                      ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                                                      : subItem.status === 'NOT Required'
-                                                      ? 'bg-rose-50 text-rose-800 border-rose-300'
-                                                      : 'bg-white border-slate-200'
-                                                  }`}
-                                                >
-                                                  <option value="">Select Status</option>
-                                                  {masterSuggestions.STATUS.map((st) => (
-                                                    <option key={st} value={st}>
-                                                      {st}
-                                                    </option>
-                                                  ))}
-                                                </select>
-                                              </td>
-                                            </tr>
-                                          ))}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <DocketsTab
+            dockets={dockets}
+            total={docketTotalCount}
+            totalItems={docketTotalItems}
+            loading={docketsLoading}
+            error={docketsError}
+            page={docketPage}
+            pageSize={docketLimit}
+            onPage={setDocketPage}
+            onPageSize={changeDocketLimit}
+            search={search}
+            onSearch={setDocketSearch}
+            startDate={startDate}
+            endDate={endDate}
+            onDates={setDocketDates}
+            filters={docketFilters}
+            onFilters={setDocketFilterValues}
+            filterQuery={docketFilterParams().toString()}
+            onClearFilters={clearDocketFilters}
+            sort={docketSort}
+            onSort={setDocketSortAndReset}
+            itemsByDocket={docketItemsMap}
+            canEdit={canEdit}
+            isAdmin={currentUser.role === 'Admin'}
+            ourItemNames={ourItemNameOptions}
+            statuses={masterSuggestions.STATUS}
+            termOptions={termsDropdowns}
+            uploading={uploadingAttachment}
+            actionsRef={docketActionsRef}
+          />
         )}
 
         {/* TAB 3: TREAM-AND-CONDITIONS */}

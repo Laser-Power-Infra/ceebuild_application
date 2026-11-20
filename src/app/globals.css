@@ -53,3 +53,28 @@
   scrollbar-width: auto;
   scrollbar-color: #64748b #e2e8f0;
 }
+
+/* Dockets screen ("control room" console): neutral surfaces, hairline borders, one signal blue.
+   Scoped so the slate tokens above keep serving the rest of the app. */
+.console {
+  --foreground-rgb: 10 10 10;          --foreground: rgb(var(--foreground-rgb));
+  --muted-rgb: 245 245 245;            --muted: rgb(var(--muted-rgb));
+  --muted-foreground-rgb: 115 115 115;
+  --secondary-rgb: 245 245 245;        --secondary: rgb(var(--secondary-rgb));
+  --accent-rgb: 245 245 245;           --accent: rgb(var(--accent-rgb));
+  --border-rgb: 229 229 229;           --border: rgb(var(--border-rgb));
+  --input-rgb: 229 229 229;
+  --ring-rgb: 161 161 161;
+  /* shortcut: Inter is used when installed, else the system UI font; bundle it with next/font to guarantee it. */
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* "Saved" confirmation: a pale green wash that fades out. */
+@keyframes cell-saved {
+  from { background-color: #d1fae5; }
+  to { background-color: transparent; }
+}
+.cell-saved { animation: cell-saved 600ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .cell-saved { animation-duration: 150ms; }
+}

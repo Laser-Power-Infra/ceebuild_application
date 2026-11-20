@@ -2,13 +2,8 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, auditUser, pickFields, EDITOR_ROLES, ADMIN_ROLES } from '@/lib/auth/server';
 import { DOCKET_TYPES, isDocketType, normalizeDocketNo } from '@/lib/dockets';
-import { createdAtRange } from '@/lib/dateRange';
+import { buildDocketWhere, buildItemWhere, docketNoIn } from '@/lib/docketWhere';
 import { AUTO_DOCKET_NO, nextDocketNumber, isUniqueViolation } from '@/lib/docketNumber';
-
-/** Exact (trimmed, case-insensitive) docket-number match for any of `nos`. */
-const docketNoIn = (nos: string[]) => ({
-  OR: nos.map((dn) => ({ docketNoQtnNo: { equals: normalizeDocketNo(dn), mode: 'insensitive' as const } })),
-});
 
 // Fields a client may change through PUT /api/dockets (id, timestamps etc. are never writable).
 const EDITABLE_DOCKET_FIELDS = [
@@ -28,218 +23,68 @@ const EDITABLE_DOCKET_FIELDS = [
   'attachments',
 ] as const;
 
-function getFilterList(searchParams: URLSearchParams, key: string): string[] {
-  const all = searchParams.getAll(key);
-  if (all.length === 0) return [];
-  const results: string[] = [];
-  for (const item of all) {
-    if (!item) continue;
-    if (item.startsWith('[') && item.endsWith(']')) {
-      try {
-        const parsed = JSON.parse(item);
-        if (Array.isArray(parsed)) {
-          results.push(...parsed.filter(Boolean));
-          continue;
-        }
-      } catch (e) {}
-    }
-    if (item.includes(',')) {
-      results.push(...item.split(',').map((s) => s.trim()).filter(Boolean));
-    } else {
-      results.push(item.trim());
-    }
-  }
-  return Array.from(new Set(results));
-}
+// Columns the Dockets table may sort by (anything else falls back to newest first).
+const SORTABLE = ['docketNoQtnNo', 'createdAt', 'partyName', 'state', 'type'] as const;
 
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const search = searchParams.get('search') || '';
-    const stateFilters = getFilterList(searchParams, 'state');
-    const utilityFilters = getFilterList(searchParams, 'utility');
-    const typeFilters = getFilterList(searchParams, 'type');
-    const attachmentsFilter = searchParams.get('attachments') || '';
-    const priceFilters = getFilterList(searchParams, 'price');
-    const paymentFilters = getFilterList(searchParams, 'payment');
-    const deliveryFilters = getFilterList(searchParams, 'delivery');
-    const warrantyFilters = getFilterList(searchParams, 'warranty');
-    const approvalFilters = getFilterList(searchParams, 'approval');
-    const inspectionFilters = getFilterList(searchParams, 'inspection');
-    const docketFilters = getFilterList(searchParams, 'docketNoQtnNo');
-    const partyFilters = getFilterList(searchParams, 'partyName');
-    const itemFilter = searchParams.get('itemFilter') || ''; // Filter dockets by item name
-    const startDate = searchParams.get('startDate');
-    const endDate = searchParams.get('endDate');
-
     const page = Math.max(1, parseInt(searchParams.get('page') || '1') || 1);
     const limit = Math.min(Math.max(1, parseInt(searchParams.get('limit') || '100') || 100), 1000);
     const skip = (page - 1) * limit;
 
-    const where: any = {};
-    // Every condition goes into AND so filters combine instead of overwriting each other
-    // (the item filter used to be silently replaced when a docket filter was also set).
-    const and: any[] = [];
+    // Filters are built in src/lib/docketWhere.ts, shared with the filter-options route.
+    const where = await buildDocketWhere(searchParams);
+    const itemWhere = buildItemWhere(searchParams);
 
-    // If itemFilter is provided, find all matching docket numbers from itemTable
-    if (itemFilter) {
-      const matchingItems = await prisma.itemTable.findMany({
-        where: {
-          OR: [
-            { itemNameParty: { contains: itemFilter, mode: 'insensitive' } },
-            { ourItemName: { contains: itemFilter, mode: 'insensitive' } },
-            { typeOfItem: { contains: itemFilter, mode: 'insensitive' } },
-          ],
-        },
-        select: { docketNoQtnNo: true },
-        distinct: ['docketNoQtnNo'],
-      });
-
-      const matchingDocketNos = matchingItems.map((i) => i.docketNoQtnNo).filter(Boolean) as string[];
-      // No matching items => no dockets (an empty OR would match nothing as well, but be explicit).
-      and.push(matchingDocketNos.length ? docketNoIn(matchingDocketNos) : { id: -1 });
-    }
-
-    if (search) {
-      and.push(
-        {
-          OR: [
-            { docketNoQtnNo: { contains: search, mode: 'insensitive' } },
-            { partyName: { contains: search, mode: 'insensitive' } },
-            { address: { contains: search, mode: 'insensitive' } },
-            { state: { contains: search, mode: 'insensitive' } },
-            { utility: { contains: search, mode: 'insensitive' } },
-            { deliveryLocation: { contains: search, mode: 'insensitive' } },
-            { type: { contains: search, mode: 'insensitive' } },
-          ],
-        },
-      );
-    }
-
-    if (docketFilters.length > 0) {
-      and.push(docketNoIn(docketFilters));
-    }
-
-    if (partyFilters.length === 1) {
-      where.partyName = { contains: partyFilters[0], mode: 'insensitive' };
-    } else if (partyFilters.length > 1) {
-      where.partyName = { in: partyFilters };
-    }
-
-    if (stateFilters.length === 1) {
-      where.state = { equals: stateFilters[0], mode: 'insensitive' };
-    } else if (stateFilters.length > 1) {
-      where.state = { in: stateFilters };
-    }
-
-    if (utilityFilters.length === 1) {
-      where.utility = { contains: utilityFilters[0], mode: 'insensitive' };
-    } else if (utilityFilters.length > 1) {
-      where.utility = { in: utilityFilters };
-    }
-
-    if (typeFilters.length === 1) {
-      where.type = { equals: typeFilters[0], mode: 'insensitive' };
-    } else if (typeFilters.length > 1) {
-      where.type = { in: typeFilters };
-    }
-
-    if (attachmentsFilter === 'has') {
-      and.push({ attachments: { not: null } });
-      and.push({ NOT: { attachments: { in: ['', '[]'] } } });
-    } else if (attachmentsFilter === 'empty') {
-      and.push({
-        OR: [
-          { attachments: null },
-          { attachments: '' },
-          { attachments: '[]' },
-        ],
-      });
-    }
-
-    if (priceFilters.length === 1) {
-      where.price = { contains: priceFilters[0].trim(), mode: 'insensitive' };
-    } else if (priceFilters.length > 1) {
-      where.price = { in: priceFilters };
-    }
-
-    if (paymentFilters.length === 1) {
-      where.payment = { contains: paymentFilters[0].trim(), mode: 'insensitive' };
-    } else if (paymentFilters.length > 1) {
-      where.payment = { in: paymentFilters };
-    }
-
-    if (deliveryFilters.length === 1) {
-      where.delivery = { contains: deliveryFilters[0].trim(), mode: 'insensitive' };
-    } else if (deliveryFilters.length > 1) {
-      where.delivery = { in: deliveryFilters };
-    }
-
-    if (warrantyFilters.length === 1) {
-      where.warranty = { contains: warrantyFilters[0].trim(), mode: 'insensitive' };
-    } else if (warrantyFilters.length > 1) {
-      where.warranty = { in: warrantyFilters };
-    }
-
-    if (approvalFilters.length === 1) {
-      where.approval = { contains: approvalFilters[0].trim(), mode: 'insensitive' };
-    } else if (approvalFilters.length > 1) {
-      where.approval = { in: approvalFilters };
-    }
-
-    if (inspectionFilters.length === 1) {
-      where.inspection = { contains: inspectionFilters[0].trim(), mode: 'insensitive' };
-    } else if (inspectionFilters.length > 1) {
-      where.inspection = { in: inspectionFilters };
-    }
-
-    const createdAt = createdAtRange(startDate, endDate);
-    if (createdAt) where.createdAt = createdAt;
-    if (and.length) where.AND = and;
+    const sortKey = SORTABLE.find((k) => k === searchParams.get('sort'));
+    const dir = searchParams.get('dir') === 'asc' ? 'asc' : 'desc';
+    const orderBy: any[] = sortKey ? [{ [sortKey]: dir }, { id: 'desc' }] : [{ id: 'desc' }];
 
     const [dockets, totalCount] = await Promise.all([
-      prisma.dockerPartyName.findMany({
-        where,
-        orderBy: { id: 'desc' },
-        skip,
-        take: limit,
-      }),
+      prisma.dockerPartyName.findMany({ where, orderBy, skip, take: limit }),
       prisma.dockerPartyName.count({ where }),
     ]);
 
-    // Fetch first item name for each docket in the current page, matched by the one shared rule
-    // (trimmed, case-insensitive, exact) - "contains" would mix in revisions like CEE-000518-R1.
-    const firstItemMap: { [key: string]: string } = {};
+    // Every item of each docket on this page, matched by the one shared rule (trimmed,
+    // case-insensitive, exact) - "contains" would mix in revisions like CEE-000518-R1.
+    // With item filters on, only the matching items are sent.
+    const itemsByNo = new Map<string, any[]>();
+    let totalItems = 0;
     try {
-      const docketNos = Array.from(
-        new Set(dockets.map((d) => (d.docketNoQtnNo || '').trim()).filter(Boolean))
-      );
+      const docketNos = Array.from(new Set(dockets.map((d) => (d.docketNoQtnNo || '').trim()).filter(Boolean)));
       if (docketNos.length > 0) {
-        const firstItems = await prisma.itemTable.findMany({
-          where: docketNoIn(docketNos),
-          select: {
-            docketNoQtnNo: true,
-            itemNameParty: true,
-            ourItemName: true,
-          },
+        const rows = await prisma.itemTable.findMany({
+          where: { AND: [docketNoIn(docketNos), itemWhere ?? {}] },
           orderBy: { id: 'asc' },
         });
-
-        for (const item of firstItems) {
-          const key = normalizeDocketNo(item.docketNoQtnNo);
-          if (key && !firstItemMap[key]) {
-            firstItemMap[key] = item.itemNameParty || item.ourItemName || '';
-          }
+        for (const row of rows) {
+          const key = normalizeDocketNo(row.docketNoQtnNo);
+          const list = itemsByNo.get(key);
+          if (list) list.push(row);
+          else itemsByNo.set(key, [row]);
         }
       }
+
+      // Item total for the whole filtered set (not just this page).
+      // shortcut: unfiltered = every item row, including any whose docket no longer exists; join on docket number if that matters.
+      if (Object.keys(where).length === 0) {
+        totalItems = await prisma.itemTable.count();
+      } else {
+        const all = await prisma.dockerPartyName.findMany({ where, select: { docketNoQtnNo: true } });
+        const nos = all.map((d) => d.docketNoQtnNo).filter(Boolean) as string[];
+        totalItems = nos.length
+          ? await prisma.itemTable.count({ where: { AND: [docketNoIn(nos), itemWhere ?? {}] } })
+          : 0;
+      }
     } catch (itemErr) {
-      console.error('Error fetching first items for dockets:', itemErr);
+      console.error('Error fetching items for dockets:', itemErr);
     }
 
-    const docketsWithFirstItem = dockets.map((d) => ({
-      ...d,
-      firstItemName: d.docketNoQtnNo ? firstItemMap[normalizeDocketNo(d.docketNoQtnNo)] || '' : '',
-    }));
+    const docketsWithItems = dockets.map((d) => {
+      const items = (d.docketNoQtnNo && itemsByNo.get(normalizeDocketNo(d.docketNoQtnNo))) || [];
+      return { ...d, items, itemCount: items.length };
+    });
 
     let stateOptionsList: string[] = [];
     let docketOptionsList: string[] = [];
@@ -277,8 +122,9 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json({
-      dockets: docketsWithFirstItem,
+      dockets: docketsWithItems,
       totalCount,
+      totalItems,
       page,
       totalPages: Math.ceil(totalCount / limit) || 1,
       states: stateOptionsList,

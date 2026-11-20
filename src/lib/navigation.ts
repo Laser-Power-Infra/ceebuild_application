@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 /** Tabs of the quotation dashboard at `/` (switched in place, `?tab=`). */
-export type QuotationTab = 'items' | 'dockets' | 'terms' | 'logs' | 'master';
+export type QuotationTab = 'dockets' | 'terms' | 'logs' | 'master';
 
 export type NavItem = {
   key: string;
@@ -57,7 +57,6 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Quotation',
     items: [
       { key: 'dockets', label: 'Dockets', icon: Building, href: '/?tab=dockets', tab: 'dockets' },
-      { key: 'items', label: 'Items', icon: FileSpreadsheet, href: '/?tab=items', tab: 'items' },
       { key: 'terms', label: 'Terms & Conditions', icon: FileText, href: '/?tab=terms', tab: 'terms' },
     ],
   },
