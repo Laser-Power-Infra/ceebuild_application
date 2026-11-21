@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
 import { normalizeDocketNo } from '@/lib/dockets';
+import { copyQuotationBomToOrder } from '@/modules/costing/server/orderLink';
 
 export interface NewOrderInput {
   docketId: number;
@@ -63,7 +64,9 @@ export async function createOrder(input: NewOrderInput, user: AuthUser) {
         ...auditUser(user),
       },
     });
-    return { id: order.id };
+    // M14: the BOM the quotation was costed on becomes the order's first BOM (draft, re-checked).
+    const bom = await copyQuotationBomToOrder(tx, order.id, items.map((i) => i.id), user);
+    return { id: order.id, quotationBom: bom };
   });
 }
 

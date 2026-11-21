@@ -38,6 +38,38 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         const nameVal = (item.ourItemName || '').trim().toUpperCase();
         return notVal !== 'NO' && nameVal !== 'NO';
       });
+
+      // M14: nuts & bolts and bought-out items in the client's purchase scope are quoted as their own
+      // lines (from the applied BOM costing), right after the structure item they belong to.
+      const costings = await prisma.itemCosting.findMany({
+        where: { itemId: { in: items.map((i) => i.id) }, applied: true },
+        orderBy: { id: 'desc' },
+      });
+      const withExtras: any[] = [];
+      for (const item of items) {
+        withExtras.push(item);
+        const c = costings.find((x) => x.itemId === item.id);
+        if (!c) continue;
+        const sets = c.sets.toNumber();
+        const setsShown = Math.ceil(sets - 1e-9);
+        const extra = (key: string, label: string, total: number) => {
+          if (!(total > 0) || !(setsShown > 0)) return;
+          withExtras.push({
+            id: `${item.id}-${key}`,
+            itemNameParty: `${label} for ${item.itemNameParty || item.ourItemName || 'above item'}`,
+            ourItemName: label,
+            qty: String(setsShown),
+            uom: 'SET',
+            price: (Math.round((total / setsShown) * 100) / 100).toFixed(2),
+            uomOfQtn: 'SET',
+            unitWtOfMemberKg: 'SET',
+            separateLine: true,
+          });
+        };
+        extra('nb', 'Nuts & Bolts (separate item)', c.nbSellTotal.toNumber());
+        extra('bo', 'Bought-out items', c.boSellTotal.toNumber());
+      }
+      items = withExtras;
     }
 
     return NextResponse.json({ docket, items });

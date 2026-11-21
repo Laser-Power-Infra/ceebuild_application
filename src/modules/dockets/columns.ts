@@ -46,7 +46,7 @@ export const DOCKET_COLUMNS: DocketColumn[] = [
   { key: 'terms', label: 'Price / Payment', width: 190, kind: 'stack', lines: ['price', ['payment']] },
   { key: 'delivery', label: 'Delivery / Warranty', width: 190, kind: 'stack', lines: ['delivery', ['warranty']], hidden: true },
   { key: 'approval', label: 'Approval / Inspection', width: 190, kind: 'stack', lines: ['approval', ['inspection']], hidden: true },
-  { key: 'actions', label: 'Actions', width: 88, min: 88, kind: 'fixed' },
+  { key: 'actions', label: 'Actions', width: 116, min: 116, kind: 'fixed' },
 ];
 
 /** Item fields in display order (grid paste maps pasted columns onto the visible ones). */

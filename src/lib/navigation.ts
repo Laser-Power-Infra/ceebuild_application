@@ -1,7 +1,9 @@
 import type { LucideIcon } from 'lucide-react';
 import {
   Building,
+  Calculator,
   Cog,
+  Library,
   Factory,
   FileSpreadsheet,
   FileText,
@@ -87,6 +89,8 @@ export const NAV_GROUPS: NavGroup[] = [
     key: 'admin',
     label: 'Administration',
     items: [
+      { key: 'costing-master', label: 'Costing Master', icon: Calculator, href: '/admin/costing' },
+      { key: 'drawings', label: 'Approved Drawings', icon: Library, href: '/admin/drawings' },
       { key: 'sections', label: 'GTP Sections', icon: Layers, href: '/admin/sections' },
       { key: 'machines', label: 'Machines', icon: Wrench, href: '/admin/machines' },
       { key: 'plan-settings', label: 'Planning Settings', icon: Settings2, href: '/admin/planning' },

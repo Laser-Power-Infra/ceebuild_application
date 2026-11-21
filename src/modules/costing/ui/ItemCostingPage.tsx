@@ -1,0 +1,743 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { AlertTriangle, ArrowLeft, BookPlus, CheckCircle2, FileSpreadsheet, Library, Lock, Pencil, Plus, RefreshCw, Trash2, Unlock } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { FormError, Modal, fieldCls, labelCls } from '@/components/Modal';
+import {
+  addBomLineAction,
+  addBomToLibraryAction,
+  archiveDrawingAction,
+  confirmItemBomAction,
+  createBomFromDrawingAction,
+  createBomFromLinesAction,
+  deleteBomLineAction,
+  itemCostingAction,
+  previewCostingAction,
+  reopenItemBomAction,
+  saveCostingAction,
+  suggestDrawingsAction,
+  updateBomLineAction,
+  updateBomMetaAction,
+} from '@/app/actions/costing';
+import { CATEGORIES, CATEGORY_LABELS, FAB_LABELS, FAB_TYPES, SCOPES, SCOPE_LABELS, type Category, type Scope } from '@/lib/costing/calc';
+import { MATCH_LABELS, type BomLineDraft, type MatchLevel } from '@/lib/costing/drawings';
+import type { BomLineRow, DocketInfo, DrawingSuggestion, ItemBomInfo, ItemInfo } from '../server/itemBom';
+import type { CostingPreview, SavedCosting } from '../server/compute';
+import { Badge, DraftLinesEditor, DrawingExtractor, card, cellInput, inr, td, th } from './shared';
+
+type Data = { item: ItemInfo; docket: DocketInfo | null; bom: ItemBomInfo | null; suggestions: DrawingSuggestion[]; costings: SavedCosting[] };
+
+const SOURCE_LABELS: Record<string, string> = { ENQUIRY_DRAWING: 'Drawing received with the enquiry', APPROVED_DRAWING: 'Our approved drawing', MANUAL: 'Entered manually' };
+const levelTone = (l: string | null) => (l === 'UTILITY_ITEM' ? 'green' : l === 'STATE_ITEM' ? 'blue' : 'amber');
+const today = () => new Date().toISOString().slice(0, 10);
+
+export function ItemCostingPage({ itemId, role }: { itemId: number; role: string }) {
+  const canEdit = role === 'Admin' || role === 'User';
+  const [data, setData] = useState<Data | null>(null);
+  const [error, setError] = useState('');
+  const [creating, setCreating] = useState<null | 'ENQUIRY' | 'APPROVED'>(null);
+
+  const load = useCallback(async () => {
+    const r = await itemCostingAction(itemId);
+    if (!r.success) return setError(r.error);
+    setData(r.data);
+    setError('');
+  }, [itemId]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (!data) return <div className="p-6 text-sm text-slate-500">{error || 'Loading…'}</div>;
+  const { item, docket, bom } = data;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <Link href="/?tab=dockets" className="inline-flex items-center gap-1 hover:text-slate-800">
+              <ArrowLeft className="h-3.5 w-3.5" /> Dockets
+            </Link>
+            {docket && (
+              <>
+                <span>/</span>
+                <Link href={`/costing/docket/${docket.id}`} className="hover:text-slate-800">{docket.docketNo} costing</Link>
+              </>
+            )}
+          </div>
+          <h1 className="mt-1 text-xl font-semibold text-slate-900">BOM &amp; costing – {item.itemNameParty || item.ourItemName || `item #${item.id}`}</h1>
+          <p className="text-xs text-slate-500">
+            {docket ? `${docket.docketNo} · ${docket.partyName ?? ''} · ${docket.utility ?? 'no utility'} · ${docket.state ?? ''}${docket.deliveryLocation ? ` → ${docket.deliveryLocation}` : ''}` : 'No docket found for this item'} · Qty{' '}
+            <b>{item.qty ?? '–'} {item.uom ?? ''}</b> · Our item: {item.ourItemName ?? '–'} · Current price: <b>{item.price ? `Rs ${item.price}/${item.uomOfQtn ?? item.uom ?? ''}` : 'blank'}</b>
+          </p>
+        </div>
+      </div>
+      <FormError error={error} />
+
+      {!bom || creating ? (
+        <CreateBom data={data} canEdit={canEdit} mode={creating} setMode={setCreating} onDone={() => { setCreating(null); void load(); }} onError={setError} />
+      ) : (
+        <>
+          <BomCard data={data} bom={bom} canEdit={canEdit} reload={load} onError={setError} onNew={(m) => setCreating(m)} />
+          <CostingCard data={data} bom={bom} canEdit={canEdit} role={role} reload={load} onError={setError} />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Create BOM: (a) drawing received with the enquiry, (b) our approved drawing, or manual.
+// ---------------------------------------------------------------------------
+
+function CreateBom({
+  data,
+  canEdit,
+  mode,
+  setMode,
+  onDone,
+  onError,
+}: {
+  data: Data;
+  canEdit: boolean;
+  mode: null | 'ENQUIRY' | 'APPROVED';
+  setMode: (m: null | 'ENQUIRY' | 'APPROVED') => void;
+  onDone: () => void;
+  onError: (e: string) => void;
+}) {
+  const { item, docket } = data;
+  const [draft, setDraft] = useState<BomLineDraft[]>([]);
+  const [note, setNote] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [drawingRef, setDrawingRef] = useState('');
+  const [structureType, setStructureType] = useState(data.bom?.structureType ?? item.ourItemName ?? '');
+  const [suggestions, setSuggestions] = useState<DrawingSuggestion[]>(data.suggestions);
+  const [busy, setBusy] = useState(false);
+  const tab = mode ?? (data.suggestions.length && !docket ? 'APPROVED' : 'ENQUIRY');
+
+  const search = async () => {
+    const r = await suggestDrawingsAction(item.id, structureType);
+    if (!r.success) return onError(r.error);
+    setSuggestions(r.data);
+  };
+
+  const saveDraft = async (source: 'ENQUIRY_DRAWING' | 'MANUAL') => {
+    setBusy(true);
+    let s3Key: string | null = null;
+    if (file) {
+      const fd = new FormData();
+      fd.set('file', file);
+      fd.set('itemId', String(item.id));
+      const a = await archiveDrawingAction(fd);
+      if (a.success) s3Key = a.data;
+    }
+    const r = await createBomFromLinesAction(item.id, { source, lines: draft, fileName: file?.name ?? null, s3Key, drawingRef, note, structureType });
+    setBusy(false);
+    if (!r.success) return onError(r.error);
+    onDone();
+  };
+
+  return (
+    <section className={card}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="text-sm font-semibold">Create BOM</h2>
+          <p className="text-[11px] text-slate-500">The quotation price is calculated from this BOM. It is copied into the order when the PO comes, so quotation and execution use the same numbers.</p>
+        </div>
+        {data.bom && (
+          <Button variant="outline" size="sm" onClick={() => setMode(null)}>
+            Cancel – keep current BOM
+          </Button>
+        )}
+      </div>
+      <div className="mb-3 flex gap-1 rounded-lg bg-slate-100 p-1 text-sm">
+        <button type="button" onClick={() => setMode('ENQUIRY')} className={`flex-1 rounded-md px-3 py-1.5 font-medium ${tab === 'ENQUIRY' ? 'bg-white shadow' : 'text-slate-600'}`}>
+          (a) Drawing received with the enquiry
+        </button>
+        <button type="button" onClick={() => setMode('APPROVED')} className={`flex-1 rounded-md px-3 py-1.5 font-medium ${tab === 'APPROVED' ? 'bg-white shadow' : 'text-slate-600'}`}>
+          (b) Our approved drawing {suggestions.length ? `(${suggestions.length})` : ''}
+        </button>
+      </div>
+
+      <div className="mb-3 grid max-w-xl grid-cols-[1fr_auto] items-end gap-2">
+        <div>
+          <label className={labelCls} htmlFor="st">Item / structure type (used to find approved drawings)</label>
+          <input id="st" className={fieldCls} value={structureType} onChange={(e) => setStructureType(e.target.value)} placeholder="e.g. V Cross Arm 11 kV" />
+        </div>
+        <Button variant="outline" onClick={() => void search()}>
+          <RefreshCw /> Search
+        </Button>
+      </div>
+
+      {tab === 'ENQUIRY' ? (
+        <div className="flex flex-col gap-3">
+          <DrawingExtractor
+            disabled={!canEdit}
+            onLines={(l, n, f) => {
+              setDraft(l);
+              setNote(n);
+              setFile(f);
+              if (!drawingRef) setDrawingRef(f.name.replace(/\.[^.]+$/, ''));
+            }}
+          />
+          {note && <p className="rounded bg-blue-50 px-2 py-1 text-[11px] text-blue-900">{note}</p>}
+          <div className="max-w-xl">
+            <label className={labelCls} htmlFor="dref">Drawing no. / reference</label>
+            <input id="dref" className={fieldCls} value={drawingRef} onChange={(e) => setDrawingRef(e.target.value)} />
+          </div>
+          <DraftLinesEditor lines={draft} onChange={setDraft} />
+          {canEdit && (
+            <div className="flex flex-wrap gap-2">
+              <Button disabled={busy || draft.length === 0} onClick={() => void saveDraft('ENQUIRY_DRAWING')}>
+                <CheckCircle2 /> I have checked the lines – save BOM
+              </Button>
+              <Button variant="outline" disabled={busy} onClick={() => void saveDraft('MANUAL')} title="Save the lines typed above as a manual BOM (no drawing)">
+                <Pencil /> Save as manual BOM
+              </Button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <p className="text-[11px] text-slate-500">
+            Search order: same utility + item → same state + item → any approved drawing of the item type (reference only – confirm). Utility: <b>{docket?.utility ?? '–'}</b>, states:{' '}
+            <b>{[docket?.state, docket?.deliveryLocation].filter(Boolean).join(', ') || '–'}</b>.
+          </p>
+          {suggestions.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">
+              No approved drawing for “{structureType || '–'}”. Use the enquiry drawing, or add the drawing in the{' '}
+              <Link href="/admin/drawings" className="text-blue-700 underline">Approved Drawing Library</Link>.
+            </div>
+          ) : (
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th className={th}>Match</th>
+                  <th className={th}>Drawing</th>
+                  <th className={th}>Utility / state</th>
+                  <th className={th}>Item type</th>
+                  <th className={th}>Approval</th>
+                  <th className={`${th} text-right`}>Lines</th>
+                  <th className={th} />
+                </tr>
+              </thead>
+              <tbody>
+                {suggestions.map((s, i) => (
+                  <tr key={s.id} className={i === 0 ? 'bg-emerald-50/40' : ''}>
+                    <td className={td}><Badge tone={levelTone(s.level)}>{MATCH_LABELS[s.level]}</Badge></td>
+                    <td className={`${td} font-semibold`}>{s.drawingNo} rev {s.revision}</td>
+                    <td className={td}>{s.utility} / {s.state ?? '–'}</td>
+                    <td className={td}>{s.itemType}</td>
+                    <td className={td}>{[s.approvalLetterNo, s.approvalDate && `dt ${s.approvalDate}`].filter(Boolean).join(' ') || '–'}</td>
+                    <td className={`${td} text-right`}>{s.lineCount}</td>
+                    <td className={td}>
+                      {canEdit && (
+                        <Button
+                          size="sm"
+                          variant={i === 0 ? 'default' : 'outline'}
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            const r = await createBomFromDrawingAction(item.id, s.id, structureType);
+                            setBusy(false);
+                            if (!r.success) return onError(r.error);
+                            onDone();
+                          }}
+                        >
+                          Use this drawing
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Current BOM: lines with scope / category tags, confirm, add to library.
+// ---------------------------------------------------------------------------
+
+function EditCell({ line, field, disabled, onSaved, onError, numeric }: { line: BomLineRow; field: keyof BomLineRow; disabled: boolean; onSaved: () => void; onError: (e: string) => void; numeric?: boolean }) {
+  const initial = String(line[field] ?? '');
+  const [v, setV] = useState(initial);
+  useEffect(() => setV(initial), [initial]);
+  return (
+    <input
+      className={`${cellInput} ${numeric ? 'text-right' : ''}`}
+      value={v}
+      disabled={disabled}
+      inputMode={numeric ? 'decimal' : undefined}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={async () => {
+        if (v === initial) return;
+        const r = await updateBomLineAction(line.id, field, v);
+        if (!r.success) {
+          setV(initial);
+          return onError(r.error);
+        }
+        onSaved();
+      }}
+    />
+  );
+}
+
+function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; bom: ItemBomInfo; canEdit: boolean; reload: () => void; onError: (e: string) => void; onNew: (m: 'ENQUIRY' | 'APPROVED') => void }) {
+  const draft = bom.status === 'DRAFT';
+  const locked = !canEdit || !draft;
+  const [lib, setLib] = useState<null | { drawingNo: string; revision: string; approvalLetterNo: string; approvalDate: string; fileLink: string; itemType: string }>(null);
+  const set = async (lineId: number, field: string, value: string) => {
+    const r = await updateBomLineAction(lineId, field, value);
+    if (!r.success) return onError(r.error);
+    reload();
+  };
+  const counts = useMemo(() => {
+    const c = { costed: 0, nb: 0, excluded: 0 };
+    for (const l of bom.lines) {
+      if (l.scope === 'NOT_IN_SCOPE' || l.scope === 'CLIENT_SUPPLY' || l.nonBillable) c.excluded++;
+      else if (l.category === 'NUTS_BOLTS') c.nb++;
+      else c.costed++;
+    }
+    return c;
+  }, [bom.lines]);
+
+  return (
+    <section className={card}>
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold">BOM</h2>
+            {draft ? <Badge tone="amber">Draft – check and confirm</Badge> : <Badge tone="green">Confirmed by {bom.confirmedByName}</Badge>}
+            <Badge tone="slate">{SOURCE_LABELS[bom.source] ?? bom.source}</Badge>
+            {bom.matchLevel && <Badge tone={levelTone(bom.matchLevel)}>{MATCH_LABELS[bom.matchLevel as MatchLevel]}</Badge>}
+            {bom.versions > 1 && <span className="text-[11px] text-slate-400">version {bom.versions}</span>}
+          </div>
+          <p className="text-xs text-slate-600">
+            Drawing: <b>{bom.drawingRef || bom.fileName || '–'}</b>
+            {bom.drawing?.fileLink && (
+              <a href={bom.drawing.fileLink} target="_blank" rel="noreferrer" className="ml-1 text-blue-700 underline">open</a>
+            )}
+            {bom.drawing?.status === 'SUPERSEDED' && <span className="ml-1 font-semibold text-rose-700">(drawing since superseded)</span>} · Structure type: <b>{bom.structureType ?? '–'}</b> · {counts.costed} structure/bought-out, {counts.nb} nuts &amp; bolts, {counts.excluded} excluded
+          </p>
+          {bom.extractNote && <p className="rounded bg-blue-50 px-2 py-1 text-[11px] text-blue-900">{bom.extractNote}</p>}
+        </div>
+        {canEdit && (
+          <div className="flex flex-wrap gap-2">
+            {draft ? (
+              <>
+                <Button size="sm" variant="outline" onClick={async () => { const r = await addBomLineAction(bom.id); if (!r.success) return onError(r.error); reload(); }}>
+                  <Plus /> Line
+                </Button>
+                <Button size="sm" onClick={async () => { const r = await confirmItemBomAction(bom.id); if (!r.success) return onError(r.error); reload(); }}>
+                  <Lock /> Confirm BOM
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button size="sm" variant="outline" onClick={async () => { const r = await reopenItemBomAction(bom.id); if (!r.success) return onError(r.error); reload(); }}>
+                  <Unlock /> Reopen
+                </Button>
+                {!bom.drawingId && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setLib({ drawingNo: bom.drawingRef ?? '', revision: '0', approvalLetterNo: '', approvalDate: '', fileLink: '', itemType: bom.structureType ?? '' })}
+                    title="When the client approves this drawing, add it to the library for the next enquiry"
+                  >
+                    <BookPlus /> Add to Approved Drawing Library
+                  </Button>
+                )}
+              </>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => onNew('ENQUIRY')}>
+              <FileSpreadsheet /> New BOM from drawing
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onNew('APPROVED')}>
+              <Library /> New BOM from approved drawing
+            </Button>
+          </div>
+        )}
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[1150px] border-collapse">
+          <thead>
+            <tr>
+              <th className={th}>#</th>
+              <th className={th}>Mark</th>
+              <th className={th}>Description</th>
+              <th className={th}>Section / size</th>
+              <th className={`${th} text-right`}>Length mm</th>
+              <th className={`${th} text-right`}>Qty / set</th>
+              <th className={`${th} text-right`}>Unit wt kg</th>
+              <th className={th}>Category</th>
+              <th className={th}>Scope</th>
+              <th className={th}>Rate key</th>
+              <th className={th}>Non-billable</th>
+              {!locked && <th className={th} />}
+            </tr>
+          </thead>
+          <tbody>
+            {bom.lines.length === 0 && (
+              <tr>
+                <td className={`${td} py-4 text-center text-slate-500`} colSpan={12}>No lines. Add lines or create the BOM from a drawing.</td>
+              </tr>
+            )}
+            {bom.lines.map((l) => {
+              const out = l.scope === 'NOT_IN_SCOPE' || l.scope === 'CLIENT_SUPPLY' || l.nonBillable;
+              return (
+                <tr key={l.id} className={out ? 'bg-slate-50 text-slate-400' : l.category === 'NUTS_BOLTS' ? 'bg-violet-50/40' : ''}>
+                  <td className={`${td} text-slate-400`}>{l.rowNo}</td>
+                  <td className={`${td} w-20`}><EditCell line={l} field="markNo" disabled={locked} onSaved={reload} onError={onError} /></td>
+                  <td className={td}><EditCell line={l} field="description" disabled={locked} onSaved={reload} onError={onError} /></td>
+                  <td className={`${td} w-36`}><EditCell line={l} field="section" disabled={locked} onSaved={reload} onError={onError} /></td>
+                  <td className={`${td} w-24`}><EditCell line={l} field="lengthMm" numeric disabled={locked} onSaved={reload} onError={onError} /></td>
+                  <td className={`${td} w-20`}><EditCell line={l} field="qtyPerSet" numeric disabled={locked} onSaved={reload} onError={onError} /></td>
+                  <td className={`${td} w-20`}><EditCell line={l} field="unitWtKg" numeric disabled={locked} onSaved={reload} onError={onError} /></td>
+                  <td className={`${td} w-44`}>
+                    <select className={cellInput} disabled={locked} value={l.category} onChange={(e) => void set(l.id, 'category', e.target.value)}>
+                      {CATEGORIES.map((c) => <option key={c} value={c}>{CATEGORY_LABELS[c]}</option>)}
+                    </select>
+                  </td>
+                  <td className={`${td} w-32`}>
+                    <select className={cellInput} disabled={locked} value={l.scope} onChange={(e) => void set(l.id, 'scope', e.target.value)}>
+                      {SCOPES.map((s) => <option key={s} value={s}>{SCOPE_LABELS[s]}</option>)}
+                    </select>
+                  </td>
+                  <td className={`${td} w-28`}>
+                    {l.category === 'STRUCTURE' && l.scope !== 'BOUGHT_OUT' ? (
+                      <span className="text-[11px] text-slate-400">{l.sectionKey ?? ''}</span>
+                    ) : (
+                      <EditCell line={l} field="rateKey" disabled={locked} onSaved={reload} onError={onError} />
+                    )}
+                  </td>
+                  <td className={`${td} w-24 text-center`}>
+                    <input type="checkbox" disabled={locked} checked={l.nonBillable} onChange={(e) => void set(l.id, 'nonBillable', String(e.target.checked))} aria-label="Non-billable" />
+                  </td>
+                  {!locked && (
+                    <td className={td}>
+                      <button type="button" aria-label={`Delete row ${l.rowNo}`} className="rounded p-1 text-slate-400 hover:text-rose-600" onClick={async () => { const r = await deleteBomLineAction(l.id); if (!r.success) return onError(r.error); reload(); }}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-[11px] text-slate-500">
+        Only <b>In scope</b> and <b>Bought-out</b> lines are costed. Nuts &amp; bolts are costed from their own rate (rate key = size, e.g. M16X40) and quoted as a separate line – not in the
+        structure weight or per-kg price. Not in scope / Client supply / Non-billable lines are listed but not priced. Weight always uses kg/m from GTP Sections.
+      </p>
+
+      {lib && (
+        <Modal title="Add to Approved Drawing Library" onClose={() => setLib(null)}>
+          <form
+            className="flex flex-col gap-3"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const r = await addBomToLibraryAction(bom.id, lib);
+              if (!r.success) return onError(r.error);
+              setLib(null);
+              reload();
+            }}
+          >
+            <p className="text-xs text-slate-500">Utility and state are taken from the docket ({data.docket?.utility ?? '–'}, {data.docket?.deliveryLocation || data.docket?.state || '–'}).</p>
+            <div className="grid grid-cols-2 gap-3">
+              {(
+                [
+                  ['itemType', 'Item / structure type'],
+                  ['drawingNo', 'Drawing no.'],
+                  ['revision', 'Revision'],
+                  ['approvalLetterNo', 'Approval letter no.'],
+                ] as const
+              ).map(([k, label]) => (
+                <div key={k}>
+                  <label className={labelCls} htmlFor={`l-${k}`}>{label}</label>
+                  <input id={`l-${k}`} className={fieldCls} value={lib[k]} onChange={(e) => setLib({ ...lib, [k]: e.target.value })} />
+                </div>
+              ))}
+              <div>
+                <label className={labelCls} htmlFor="l-date">Approval date</label>
+                <input id="l-date" type="date" className={fieldCls} value={lib.approvalDate} onChange={(e) => setLib({ ...lib, approvalDate: e.target.value })} />
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="l-link">File link (Laser Drive)</label>
+                <input id="l-link" className={fieldCls} value={lib.fileLink} onChange={(e) => setLib({ ...lib, fileLink: e.target.value })} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setLib(null)}>Cancel</Button>
+              <Button type="submit">Add</Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Costing: choices, live calculation, checks, save / apply to the quotation.
+// ---------------------------------------------------------------------------
+
+function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data; bom: ItemBomInfo; canEdit: boolean; role: string; reload: () => void; onError: (e: string) => void }) {
+  const [va, setVa] = useState('');
+  const [date, setDate] = useState(today());
+  const [p, setP] = useState<CostingPreview | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  const run = useCallback(async () => {
+    const r = await previewCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date });
+    if (!r.success) return onError(r.error);
+    setP(r.data);
+  }, [bom.id, va, date, onError]);
+  // Re-run whenever the BOM (lines/choices) or the inputs change.
+  const sig = JSON.stringify([bom.lines, bom.fabType, bom.galvanised, bom.billingBasis, bom.status]);
+  useEffect(() => {
+    const t = setTimeout(() => void run(), 250);
+    return () => clearTimeout(t);
+  }, [run, sig]);
+
+  const meta = async (field: string, value: string) => {
+    const r = await updateBomMetaAction(bom.id, field, value);
+    if (!r.success) return onError(r.error);
+    reload();
+  };
+
+  const save = async (apply: boolean) => {
+    setBusy(true);
+    const r = await saveCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date, apply });
+    setBusy(false);
+    if (!r.success) return onError(r.error);
+    setMsg(apply ? 'Saved and applied: the price is now on the docket item and the offer PDF.' : 'Costing saved.');
+    reload();
+  };
+
+  const res = p?.result;
+  const basisLabel = bom.billingBasis === 'GALV' ? 'galvanised' : 'black';
+  const unitLabel = p?.setsBasis === 'WEIGHT' ? `per kg (${basisLabel})` : 'per set';
+
+  return (
+    <section className={card}>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">Costing</h2>
+        <Link href="/admin/costing" className="text-xs text-blue-700 hover:underline">Costing Master →</Link>
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <div>
+          <label className={labelCls} htmlFor="c-fab">Fabrication type</label>
+          <select id="c-fab" className={fieldCls} disabled={!canEdit} value={bom.fabType} onChange={(e) => void meta('fabType', e.target.value)}>
+            {FAB_TYPES.map((f) => <option key={f} value={f}>{FAB_LABELS[f]}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className={labelCls} htmlFor="c-galv">Galvanised</label>
+          <select id="c-galv" className={fieldCls} disabled={!canEdit} value={String(bom.galvanised)} onChange={(e) => void meta('galvanised', e.target.value)}>
+            <option value="true">Yes (GI)</option>
+            <option value="false">No (black)</option>
+          </select>
+        </div>
+        <div>
+          <label className={labelCls} htmlFor="c-bb">Client billing basis</label>
+          <select id="c-bb" className={fieldCls} disabled={!canEdit} value={bom.billingBasis} onChange={(e) => void meta('billingBasis', e.target.value)}>
+            <option value="GALV">Galvanised weight</option>
+            <option value="BLACK">Black weight</option>
+          </select>
+        </div>
+        <div>
+          <label className={labelCls} htmlFor="c-va">VA % (blank = minimum)</label>
+          <input id="c-va" className={fieldCls} inputMode="decimal" placeholder={res?.minVaPct !== null && res?.minVaPct !== undefined ? String(res.minVaPct) : ''} value={va} onChange={(e) => setVa(e.target.value)} />
+        </div>
+        <div>
+          <label className={labelCls} htmlFor="c-date">Rates as on</label>
+          <input id="c-date" type="date" className={fieldCls} value={date} onChange={(e) => setDate(e.target.value)} />
+        </div>
+        <div>
+          <span className={labelCls}>Sets</span>
+          <div className="py-2 text-sm font-semibold">
+            {res ? inr(res.sets, 3) : '–'}
+            <span className="ml-1 text-[11px] font-normal text-slate-500">{p?.setsBasis === 'WEIGHT' ? `= ${data.item.qty} ${data.item.uom} ÷ set wt` : p?.setsBasis === 'SETS' ? `= item qty` : ''}</span>
+          </div>
+        </div>
+      </div>
+
+      {res && (
+        <>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+            <Stat label="Black wt / set" value={`${inr(res.perSet.blackWtKg, 3)} kg`} />
+            <Stat label="Galv wt / set" value={`${inr(res.perSet.galvWtKg, 3)} kg`} />
+            <Stat label={`Cost / kg (${basisLabel})`} value={`Rs ${inr(res.structure.costPerKg)}`} />
+            <Stat label={`Selling / kg (${basisLabel})`} value={`Rs ${inr(res.structure.sellPerKg)}`} strong tone={res.checks.belowMinVa ? 'red' : undefined} />
+            <Stat label="Selling / set (structure)" value={`Rs ${inr(res.perSet.sell)}`} />
+            <Stat label="N&B / set (separate line)" value={`Rs ${inr(res.nutsBolts.perSetSell)}`} />
+            <Stat label="Item total (all sets)" value={`Rs ${inr(res.grandSell, 0)}`} strong />
+          </div>
+
+          <div className="mt-3 flex flex-col gap-1">
+            {res.checks.messages.map((m, i) => (
+              <div key={i} className={`flex items-start gap-1.5 text-xs ${/below|blank|not in|zero|draft|No line|reference/.test(m) ? 'text-rose-700' : 'text-slate-600'}`}>
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {m}
+              </div>
+            ))}
+            {res.checks.blankLines.concat(res.checks.outsidePurchaseList).slice(0, 15).map((m, i) => (
+              <div key={`b${i}`} className="pl-5 text-[11px] text-rose-700">• {m}</div>
+            ))}
+            {p?.planNote && <div className="text-[11px] text-slate-500">{p.planNote}</div>}
+            {res.checks.messages.length === 0 && <div className="flex items-center gap-1.5 text-xs text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> All checks passed.</div>}
+          </div>
+
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[1150px] border-collapse">
+              <thead>
+                <tr>
+                  <th className={th}>#</th>
+                  <th className={th}>Mark</th>
+                  <th className={th}>Section</th>
+                  <th className={th}>Status</th>
+                  <th className={`${th} text-right`}>Qty/set</th>
+                  <th className={`${th} text-right`}>kg/m</th>
+                  <th className={`${th} text-right`}>Black kg</th>
+                  <th className={`${th} text-right`}>Galv kg</th>
+                  <th className={`${th} text-right`}>Wastage %</th>
+                  <th className={`${th} text-right`}>RM rate</th>
+                  <th className={`${th} text-right`}>RM</th>
+                  <th className={`${th} text-right`}>Fab</th>
+                  <th className={`${th} text-right`}>Galv</th>
+                  <th className={`${th} text-right`}>Freight</th>
+                  <th className={`${th} text-right`}>Insp+pack</th>
+                  <th className={`${th} text-right`}>Commercial</th>
+                  <th className={`${th} text-right`}>Cost</th>
+                  <th className={`${th} text-right`}>Selling</th>
+                </tr>
+              </thead>
+              <tbody>
+                {res.lines.map((l) => (
+                  <tr key={l.rowNo} className={l.status === 'EXCLUDED' ? 'text-slate-400' : l.status === 'FLAGGED' ? 'bg-rose-50' : ''}>
+                    <td className={td}>{l.rowNo}</td>
+                    <td className={td}>{l.markNo ?? ''}</td>
+                    <td className={td}>{l.section ?? CATEGORY_LABELS[l.category as Category]}</td>
+                    <td className={td}>
+                      {l.status === 'COSTED' ? (
+                        <Badge tone={l.category === 'STRUCTURE' ? 'green' : 'blue'}>{l.category === 'STRUCTURE' ? 'Costed' : CATEGORY_LABELS[l.category as Category]}</Badge>
+                      ) : (
+                        <span title={l.note ?? ''}><Badge tone={l.status === 'FLAGGED' ? 'red' : 'slate'}>{l.note ?? l.status}</Badge></span>
+                      )}
+                    </td>
+                    <td className={`${td} text-right`}>{l.qtyPerSet}</td>
+                    <td className={`${td} text-right`} title={l.kgPerMSource ?? ''}>{l.kgPerM ?? '–'}{l.kgPerMSource === 'DRAWING' ? '*' : ''}</td>
+                    <td className={`${td} text-right`}>{inr(l.blackWtKg, 3)}</td>
+                    <td className={`${td} text-right`}>{inr(l.galvWtKg, 3)}</td>
+                    <td className={`${td} text-right`} title={l.wastageSource ?? ''}>{l.wastagePct === null ? '–' : `${l.wastagePct}${l.wastageSource === 'MASTER' ? ' (M)' : l.wastageSource === 'CUTTING_PLAN' ? ' (P)' : ''}`}</td>
+                    <td className={`${td} text-right`}>{l.rmRate === null ? '–' : inr(l.rmRate)}</td>
+                    <td className={`${td} text-right`}>{inr(l.rm)}</td>
+                    <td className={`${td} text-right`}>{inr(l.fab)}</td>
+                    <td className={`${td} text-right`}>{inr(l.galv)}</td>
+                    <td className={`${td} text-right`}>{inr(l.freight)}</td>
+                    <td className={`${td} text-right`}>{inr(l.inspPack)}</td>
+                    <td className={`${td} text-right`}>{inr(l.commercial)}</td>
+                    <td className={`${td} text-right font-semibold`}>{inr(l.cost)}</td>
+                    <td className={`${td} text-right font-semibold`}>{inr(l.sell)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="mt-1 text-[11px] text-slate-500">
+              Per one set, Rs. Wastage (P) = from the cutting plan, (M) = Costing Master override. kg/m* = from the drawing (section missing in GTP Sections). VA {res.vaPct}%
+              {res.minVaPct !== null ? ` (minimum ${res.minVaPct}%)` : ''}.
+            </p>
+          </div>
+
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs font-semibold text-slate-600">Rates used ({res.ratesUsed.length}) – as on {p?.quoteDate}</summary>
+            <table className="mt-1 border-collapse">
+              <tbody>
+                {res.ratesUsed.map((r) => (
+                  <tr key={r.id}>
+                    <td className={td}>{r.kind}</td>
+                    <td className={td}>{r.subject}</td>
+                    <td className={`${td} text-right`}>{r.value}</td>
+                    <td className={td}>{r.unit}</td>
+                    <td className={td}>from {r.effectiveFrom}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+
+          {canEdit && (
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+              <Button variant="outline" disabled={busy} onClick={() => void save(false)}>Save costing</Button>
+              <Button
+                disabled={busy || !res.checks.ok || p?.bomStatus !== 'CONFIRMED' || (res.checks.belowMinVa && role !== 'Admin')}
+                onClick={() => void save(true)}
+                title={!res.checks.ok ? 'Fix the flagged lines first' : p?.bomStatus !== 'CONFIRMED' ? 'Confirm the BOM first' : ''}
+              >
+                <CheckCircle2 /> Save &amp; apply Rs {inr(p?.setsBasis === 'WEIGHT' ? res.structure.sellPerKg : res.perSet.sell)} {unitLabel} to the quotation
+              </Button>
+              {res.checks.belowMinVa && role !== 'Admin' && <span className="text-xs text-rose-700">Below minimum VA: only an Admin can apply.</span>}
+              {msg && <span className="text-xs font-semibold text-emerald-700">{msg}</span>}
+            </div>
+          )}
+        </>
+      )}
+
+      {data.costings.length > 0 && (
+        <div className="mt-4 border-t border-slate-100 pt-3">
+          <h3 className="mb-1 text-xs font-semibold text-slate-700">Saved costings</h3>
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className={th}>#</th>
+                <th className={th}>Rates as on</th>
+                <th className={`${th} text-right`}>VA %</th>
+                <th className={`${th} text-right`}>Sets</th>
+                <th className={`${th} text-right`}>Rs/kg</th>
+                <th className={`${th} text-right`}>Rs/set</th>
+                <th className={`${th} text-right`}>N&amp;B</th>
+                <th className={`${th} text-right`}>Total</th>
+                <th className={th}>By</th>
+                <th className={th} />
+              </tr>
+            </thead>
+            <tbody>
+              {data.costings.map((c) => (
+                <tr key={c.id}>
+                  <td className={td}>{c.id}</td>
+                  <td className={td}>{c.quoteDate}</td>
+                  <td className={`${td} text-right`}>{c.vaPct}</td>
+                  <td className={`${td} text-right`}>{inr(c.sets, 3)}</td>
+                  <td className={`${td} text-right`}>{inr(c.sellPerKg)}</td>
+                  <td className={`${td} text-right`}>{inr(c.sellPerSet)}</td>
+                  <td className={`${td} text-right`}>{inr(c.nbSellTotal, 0)}</td>
+                  <td className={`${td} text-right font-semibold`}>{inr(c.sellTotal, 0)}</td>
+                  <td className={td}>{c.createdByName} · {c.createdAt.slice(0, 10)}</td>
+                  <td className={td}>{c.applied ? <Badge tone="green">On quotation</Badge> : c.okToApply ? '' : <Badge tone="amber">had flags</Badge>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Stat({ label, value, strong, tone }: { label: string; value: string; strong?: boolean; tone?: 'red' }) {
+  return (
+    <div className={`rounded-lg border px-3 py-2 ${tone === 'red' ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'}`}>
+      <div className="text-[11px] text-slate-500">{label}</div>
+      <div className={`text-sm ${strong ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>{value}</div>
+    </div>
+  );
+}

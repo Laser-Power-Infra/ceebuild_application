@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowUp,
   Brain,
+  Calculator,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -828,10 +829,30 @@ const DocketGroup = memo(function DocketGroup({ doc, items, showAll, active, cha
         clamp={c.key === 'itemNameParty'}
       />
     );
-    if (c.key !== 'itemNameParty' || !ctx.isAdmin) return text;
+    if (c.key !== 'itemNameParty') return text;
+    // M14: every docket item gets its BOM + costing (Create BOM from a drawing, cost from the Costing Master).
+    const bomLink = (
+      <Link
+        href={`/costing/${item.id}`}
+        aria-label={`BOM and costing for item #${item.id}`}
+        title="Create BOM / costing"
+        className={cn(iconButton, 'mr-0.5 mt-1 size-6 text-[#0f62fe] opacity-60 hover:opacity-100 focus-visible:opacity-100 group-hover/item:opacity-100')}
+      >
+        <Calculator size={12} />
+      </Link>
+    );
+    if (!ctx.isAdmin) {
+      return (
+        <div className="group/item flex items-start">
+          <div className="min-w-0 flex-1">{text}</div>
+          {bomLink}
+        </div>
+      );
+    }
     return (
       <div className="group/item flex items-start">
         <div className="min-w-0 flex-1">{text}</div>
+        {bomLink}
         <button
           type="button"
           onClick={() => api.actions().deleteItem(item, doc.docketNoQtnNo)}
@@ -935,6 +956,9 @@ const DocketGroup = memo(function DocketGroup({ doc, items, showAll, active, cha
                 <div className="sticky top-9 flex h-11 items-center justify-center gap-0.5">
                   <Link href={`/quotation/${doc.id}`} target="_blank" aria-label={`Open PDF quotation for ${no}`} title="PDF quotation" className={iconButton}>
                     <FileText size={15} />
+                  </Link>
+                  <Link href={`/costing/docket/${doc.id}`} aria-label={`BOM costing for ${no}`} title="BOM costing (all items)" className={iconButton}>
+                    <Calculator size={15} />
                   </Link>
                   <RowMenu doc={doc} attachments={attachments} ctx={ctx} />
                 </div>

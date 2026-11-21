@@ -21,7 +21,8 @@ interface Docket {
 }
 
 interface Item {
-  id: number;
+  /** String for the M14 separate N&B / bought-out lines. */
+  id: number | string;
   itemNameParty: string | null;
   ourItemName: string | null;
   qty: string | null;

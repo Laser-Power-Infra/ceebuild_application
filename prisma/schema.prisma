@@ -202,6 +202,8 @@ model BomUpload {
   confirmedAt     DateTime? @map("confirmed_at")
   // Set when an Admin confirms a BOM that still has flags.
   overrideNote    String?   @map("override_note")
+  // M14: null = client BOM file; QUOTATION = copied from the docket's costed item BOMs.
+  source          String?
   createdAt       DateTime  @default(now()) @map("created_at")
 
   pieces BomPiece[]
@@ -675,4 +677,204 @@ model OrderSecurity {
 
   @@index([orderId])
   @@map("order_securities")
+}
+
+// ---------------------------------------------------------------------------
+// M14: BOM-based quotation costing. Docket item -> BOM (from the enquiry drawing or an approved
+// drawing) -> cost from the Costing Master -> price on the offer -> same BOM into the order.
+// ---------------------------------------------------------------------------
+
+// The short, fixed RM purchase list. A BOM structure line must map to one of these (by section
+// key) to be costed; any other section is flagged and not costed.
+model RmPurchaseItem {
+  id         Int      @id @default(autoincrement())
+  // Normalised section (sectionKey() of the label), e.g. ISMC75X40. Links to section_master.
+  sectionKey String   @unique @map("section_key")
+  label      String
+  // CHANNEL | ANGLE | FLAT | ROD | OTHER
+  category   String
+  active     Boolean  @default(true)
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("rm_purchase_items")
+}
+
+// Costing Master: every factor used by the cost calculation. Rows are never edited: a change is a
+// new row with its own effective date, so an old quotation can always show the rates of its date.
+model CostRate {
+  id            Int      @id @default(autoincrement())
+  // RM_RATE | WASTAGE_PCT | FAB_RATE | GALV_RATE | ZINC_PCT | GALV_TRANSPORT | FREIGHT_MT |
+  // INTEREST_PCT | CREDIT_DAYS | LC_BG_PCT | INSPECTION | PACKING | MIN_VA_PCT | NB_RATE | BOUGHT_OUT
+  kind          String
+  // What the rate is for: purchase item section key, fabrication type, state, N&B size,
+  // bought-out item name, or DEFAULT. Stored upper-case.
+  subject       String   @default("DEFAULT")
+  value         Decimal  @db.Decimal(14, 4)
+  // Rs/kg, %, Rs/MT, days, Rs/set, Rs/no ...
+  unit          String
+  effectiveFrom DateTime @map("effective_from") @db.Date
+  source        String?
+  createdById   Int?     @map("created_by_id")
+  createdByName String?  @map("created_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([kind, subject, effectiveFrom])
+  @@map("cost_rates")
+}
+
+// Approved Drawing Library: client-approved drawings with their BOM, reused on later enquiries.
+model ApprovedDrawing {
+  id               Int       @id @default(autoincrement())
+  utility          String
+  state            String?
+  // Item / structure type, matched to the docket item structure type (case-insensitive).
+  itemType         String    @map("item_type")
+  drawingNo        String    @map("drawing_no")
+  revision         String    @default("0")
+  approvalLetterNo String?   @map("approval_letter_no")
+  approvalDate     DateTime? @map("approval_date") @db.Date
+  // APPROVED | SUPERSEDED
+  status           String    @default("APPROVED")
+  fileLink         String?   @map("file_link")
+  remarks          String?
+  // Docket item BOM this drawing was created from, if any.
+  fromItemBomId    Int?      @map("from_item_bom_id")
+  createdById      Int?      @map("created_by_id")
+  createdByName    String?   @map("created_by_name")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  lines    ApprovedDrawingLine[]
+  itemBoms ItemBom[]
+
+  @@unique([drawingNo, revision])
+  @@index([itemType])
+  @@map("approved_drawings")
+}
+
+model ApprovedDrawingLine {
+  id          Int             @id @default(autoincrement())
+  drawingId   Int             @map("drawing_id")
+  drawing     ApprovedDrawing @relation(fields: [drawingId], references: [id], onDelete: Cascade)
+  rowNo       Int             @map("row_no")
+  markNo      String?         @map("mark_no")
+  description String?
+  section     String?
+  sectionKey  String?         @map("section_key")
+  lengthMm    Int?            @map("length_mm")
+  qtyPerSet   Decimal?        @map("qty_per_set") @db.Decimal(14, 3)
+  kgPerM      Decimal?        @map("kg_per_m") @db.Decimal(10, 3)
+  // Weight of one piece (kg), e.g. for nuts and bolts lines without a length.
+  unitWtKg    Decimal?        @map("unit_wt_kg") @db.Decimal(14, 3)
+  // STRUCTURE | NUTS_BOLTS | BOUGHT_OUT
+  category    String          @default("STRUCTURE")
+  // N&B size or bought-out item name (Costing Master subject of its rate).
+  rateKey     String?         @map("rate_key")
+
+  @@index([drawingId])
+  @@map("approved_drawing_lines")
+}
+
+// The BOM of one docket item (iteam-table row). The latest per item is the current one.
+model ItemBom {
+  id              Int              @id @default(autoincrement())
+  itemId          Int              @map("item_id")
+  docketId        Int?             @map("docket_id")
+  // ENQUIRY_DRAWING | APPROVED_DRAWING | MANUAL
+  source          String
+  drawingId       Int?             @map("drawing_id")
+  drawing         ApprovedDrawing? @relation(fields: [drawingId], references: [id], onDelete: SetNull)
+  // Drawing no + revision as shown on the BOM (kept even if the library row changes).
+  drawingRef      String?          @map("drawing_ref")
+  // UTILITY_ITEM | STATE_ITEM | ANY_ITEM (reference only - confirm); null for enquiry drawings
+  matchLevel      String?          @map("match_level")
+  fileName        String?          @map("file_name")
+  s3Key           String?          @map("s3_key")
+  structureType   String?          @map("structure_type")
+  // PLAIN_CUT | CLAMP_BENT | WELDED (fabrication / conversion rate)
+  fabType         String           @default("PLAIN_CUT") @map("fab_type")
+  galvanised      Boolean          @default(true)
+  // BLACK | GALV: the weight the client is billed on
+  billingBasis    String           @default("GALV") @map("billing_basis")
+  // DRAFT | CONFIRMED
+  status          String           @default("DRAFT")
+  extractNote     String?          @map("extract_note")
+  createdById     Int?             @map("created_by_id")
+  createdByName   String?          @map("created_by_name")
+  confirmedByName String?          @map("confirmed_by_name")
+  confirmedAt     DateTime?        @map("confirmed_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  lines    ItemBomLine[]
+  costings ItemCosting[]
+
+  @@index([itemId])
+  @@index([docketId])
+  @@map("item_boms")
+}
+
+model ItemBomLine {
+  id          Int      @id @default(autoincrement())
+  bomId       Int      @map("bom_id")
+  bom         ItemBom  @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  rowNo       Int      @map("row_no")
+  markNo      String?  @map("mark_no")
+  description String?
+  section     String?
+  sectionKey  String?  @map("section_key")
+  lengthMm    Int?     @map("length_mm")
+  qtyPerSet   Decimal? @map("qty_per_set") @db.Decimal(14, 3)
+  // kg/m as read from the drawing; the costing always uses the GTP section master.
+  kgPerM      Decimal? @map("kg_per_m") @db.Decimal(10, 3)
+  unitWtKg    Decimal? @map("unit_wt_kg") @db.Decimal(14, 3)
+  // STRUCTURE | NUTS_BOLTS | BOUGHT_OUT
+  category    String   @default("STRUCTURE")
+  // IN_SCOPE | NOT_IN_SCOPE | BOUGHT_OUT | CLIENT_SUPPLY
+  scope       String   @default("IN_SCOPE")
+  nonBillable Boolean  @default(false) @map("non_billable")
+  // N&B size (M16X40) or bought-out item name: the Costing Master subject of its rate.
+  rateKey     String?  @map("rate_key")
+
+  @@index([bomId])
+  @@map("item_bom_lines")
+}
+
+// One saved costing of an item BOM: the rates used (snapshot) and the result. Saved costings are
+// never changed; Apply writes the selling price to the quotation item.
+model ItemCosting {
+  id            Int       @id @default(autoincrement())
+  bomId         Int       @map("bom_id")
+  bom           ItemBom   @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  itemId        Int       @map("item_id")
+  docketId      Int?      @map("docket_id")
+  quoteDate     DateTime  @map("quote_date") @db.Date
+  vaPct         Decimal   @map("va_pct") @db.Decimal(8, 3)
+  billingBasis  String    @map("billing_basis")
+  sets          Decimal   @db.Decimal(14, 3)
+  blackWtKg     Decimal   @map("black_wt_kg") @db.Decimal(16, 3)
+  galvWtKg      Decimal   @map("galv_wt_kg") @db.Decimal(16, 3)
+  costTotal     Decimal   @map("cost_total") @db.Decimal(16, 2)
+  sellTotal     Decimal   @map("sell_total") @db.Decimal(16, 2)
+  // Structure selling price per kg on the billing basis.
+  sellPerKg     Decimal   @map("sell_per_kg") @db.Decimal(12, 2)
+  sellPerSet    Decimal   @map("sell_per_set") @db.Decimal(14, 2)
+  // Nuts and bolts and bought-out lines, quoted as separate offer lines.
+  nbSellTotal   Decimal   @default(0) @map("nb_sell_total") @db.Decimal(16, 2)
+  boSellTotal   Decimal   @default(0) @map("bo_sell_total") @db.Decimal(16, 2)
+  // Full calculation: rates used (ids + effective dates), per-line breakdown.
+  detail        Json
+  // Check results: below minimum VA, variance vs last quote, blank weight/rate lines.
+  flags         Json
+  applied       Boolean   @default(false)
+  appliedAt     DateTime? @map("applied_at")
+  createdById   Int?      @map("created_by_id")
+  createdByName String?   @map("created_by_name")
+  createdAt     DateTime  @default(now()) @map("created_at")
+
+  @@index([itemId])
+  @@index([docketId])
+  @@map("item_costings")
 }
