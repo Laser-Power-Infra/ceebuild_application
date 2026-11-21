@@ -27,6 +27,7 @@ export interface DrawingRow {
   usedBy: number;
   createdByName: string | null;
   createdAt: string;
+  approvedByName: string | null;
 }
 
 export interface DrawingLineRow {
@@ -42,6 +43,7 @@ export interface DrawingLineRow {
   unitWtKg: number | null;
   category: string;
   rateKey: string | null;
+  nonBillable: boolean;
   /** Weight per set (kg): qty x length x kg/m (GTP first), or qty x unit wt. */
   kg: number | null;
 }
@@ -89,6 +91,7 @@ export async function listDrawings(): Promise<DrawingRow[]> {
     usedBy: d._count.itemBoms,
     createdByName: d.createdByName,
     createdAt: d.createdAt.toISOString(),
+    approvedByName: d.approvedByName,
   }));
 }
 
@@ -96,7 +99,7 @@ export async function drawingLines(id: number): Promise<DrawingLineRow[]> {
   const [lines, gtp] = await Promise.all([prisma.approvedDrawingLine.findMany({ where: { drawingId: id }, orderBy: { rowNo: 'asc' } }), gtpMap()]);
   return lines.map((l) => {
     const row = { lengthMm: l.lengthMm, qtyPerSet: dec(l.qtyPerSet), kgPerM: dec(l.kgPerM), unitWtKg: dec(l.unitWtKg) };
-    return { id: l.id, rowNo: l.rowNo, markNo: l.markNo, description: l.description, section: l.section, sectionKey: l.sectionKey, ...row, category: l.category, rateKey: l.rateKey, kg: lineKg(row, l.sectionKey ? gtp.get(l.sectionKey) : null) };
+    return { id: l.id, rowNo: l.rowNo, markNo: l.markNo, description: l.description, section: l.section, sectionKey: l.sectionKey, ...row, category: l.category, rateKey: l.rateKey, nonBillable: l.nonBillable, kg: lineKg(row, l.sectionKey ? gtp.get(l.sectionKey) : null) };
   });
 }
 
@@ -151,7 +154,15 @@ export function lineData(lines: BomLineDraft[]) {
     unitWtKg: l.unitWtKg,
     category: l.category,
     rateKey: l.rateKey,
+    nonBillable: !!l.nonBillable,
   }));
+}
+
+/** Admin, or a named technical user (users.drawing_editor), may add drawings. */
+export async function canAddDrawings(user: AuthUser) {
+  if (user.role === 'Admin') return true;
+  const u = await prisma.user.findUnique({ where: { id: user.id }, select: { drawingEditor: true } });
+  return !!u?.drawingEditor;
 }
 
 /**
@@ -159,7 +170,10 @@ export function lineData(lines: BomLineDraft[]) {
  * `supersedePrevious`, other APPROVED revisions of the same drawing no become SUPERSEDED.
  */
 export async function createDrawing(input: Record<string, unknown>, rawLines: unknown, user: AuthUser, fromItemBomId: number | null = null) {
+  if (!(await canAddDrawings(user))) throw new UserError('Only an Admin or a named technical user can add drawings.');
   const h = drawingHeader(input);
+  // Admin-added drawings are approved at once; a technical user's addition waits for an Admin.
+  const isAdmin = user.role === 'Admin';
   const lines = cleanLines(Array.isArray(rawLines) ? (rawLines as Record<string, unknown>[]) : []);
   if (lines.length === 0) throw new UserError('Add the BOM lines of the drawing (at least one).');
   const supersede = input.supersedePrevious !== false && input.supersedePrevious !== 'false';
@@ -167,10 +181,19 @@ export async function createDrawing(input: Record<string, unknown>, rawLines: un
     const clash = await tx.approvedDrawing.findUnique({ where: { drawingNo_revision: { drawingNo: h.drawingNo, revision: h.revision } } });
     if (clash) throw new UserError(`Drawing ${h.drawingNo} rev ${h.revision} is already in the library.`);
     const d = await tx.approvedDrawing.create({
-      data: { ...h, status: 'APPROVED', fromItemBomId, createdById: user.id, createdByName: user.name, lines: { create: lineData(lines) } },
+      data: {
+        ...h,
+        status: isAdmin ? 'APPROVED' : 'PENDING',
+        approvedByName: isAdmin ? user.name : null,
+        approvedAt: isAdmin ? new Date() : null,
+        fromItemBomId,
+        createdById: user.id,
+        createdByName: user.name,
+        lines: { create: lineData(lines) },
+      },
     });
     let superseded = 0;
-    if (supersede) {
+    if (supersede && isAdmin) {
       const r = await tx.approvedDrawing.updateMany({ where: { drawingNo: h.drawingNo, status: 'APPROVED', id: { not: d.id } }, data: { status: 'SUPERSEDED' } });
       superseded = r.count;
     }
@@ -184,7 +207,36 @@ export async function createDrawing(input: Record<string, unknown>, rawLines: un
         ...auditUser(user),
       },
     });
-    return { id: d.id, superseded };
+    return { id: d.id, superseded, status: d.status };
+  });
+}
+
+/** Admin approves a drawing a technical user added (older revisions of the same no. are superseded). */
+export async function approveDrawing(id: number, user: AuthUser) {
+  return prisma.$transaction(async (tx) => {
+    const d = await tx.approvedDrawing.findUnique({ where: { id } });
+    if (!d) throw new UserError('Drawing not found.');
+    if (d.status !== 'PENDING') throw new UserError('Only a pending drawing can be approved.');
+    await tx.approvedDrawing.update({ where: { id }, data: { status: 'APPROVED', approvedByName: user.name, approvedAt: new Date() } });
+    const r = await tx.approvedDrawing.updateMany({ where: { drawingNo: d.drawingNo, status: 'APPROVED', id: { not: id } }, data: { status: 'SUPERSEDED' } });
+    await tx.editLog.create({ data: { tableName: 'approved_drawings', recordId: id, fieldName: 'status', oldValue: 'PENDING', newValue: `APPROVED${r.count ? ` (${r.count} older superseded)` : ''}`, ...auditUser(user) } });
+    return { id };
+  });
+}
+
+export async function listTechnicalUsers() {
+  const users = await prisma.user.findMany({ where: { isActive: true }, select: { id: true, name: true, username: true, role: true, drawingEditor: true }, orderBy: { name: 'asc' } });
+  return users;
+}
+
+/** Admin names the technical users who may add drawings. */
+export async function setDrawingEditor(userId: number, on: boolean, user: AuthUser) {
+  return prisma.$transaction(async (tx) => {
+    const u = await tx.user.findUnique({ where: { id: userId } });
+    if (!u) throw new UserError('User not found.');
+    await tx.user.update({ where: { id: userId }, data: { drawingEditor: on } });
+    await tx.editLog.create({ data: { tableName: 'users', recordId: userId, fieldName: 'drawing_editor', oldValue: String(u.drawingEditor), newValue: String(on), ...auditUser(user) } });
+    return { id: userId };
   });
 }
 
@@ -192,6 +244,7 @@ const EDITABLE = ['utility', 'state', 'itemType', 'approvalLetterNo', 'approvalD
 
 export async function updateDrawingField(id: number, field: string, value: string, user: AuthUser) {
   if (!(EDITABLE as readonly string[]).includes(field)) throw new UserError('This field cannot be edited.');
+  if (!(await canAddDrawings(user))) throw new UserError('Only an Admin or a named technical user can edit drawings.');
   return prisma.$transaction(async (tx) => {
     const d = await tx.approvedDrawing.findUnique({ where: { id } });
     if (!d) throw new UserError('Drawing not found.');
@@ -199,6 +252,7 @@ export async function updateDrawingField(id: number, field: string, value: strin
     const v = value.trim();
     if (field === 'status') {
       if (v !== 'APPROVED' && v !== 'SUPERSEDED') throw new UserError('Status is Approved or Superseded.');
+      if (user.role !== 'Admin') throw new UserError('Only an Admin can approve or supersede a drawing.');
       data.status = v;
     } else if (field === 'approvalDate') {
       if (v && (!/^\d{4}-\d{2}-\d{2}$/.test(v) || Number.isNaN(Date.parse(v)))) throw new UserError('Enter a date.');

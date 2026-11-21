@@ -113,6 +113,8 @@ model User {
   isActive       Boolean   @default(true) @map("is_active")
   // Bumped on password/role change or disable to invalidate existing sessions
   sessionVersion Int       @default(1) @map("session_version")
+  // M14: named technical user who may add drawings to the Approved Drawing Library (Admin approves).
+  drawingEditor  Boolean   @default(false) @map("drawing_editor")
   lastLoginAt    DateTime? @map("last_login_at")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
@@ -735,8 +737,10 @@ model ApprovedDrawing {
   revision         String    @default("0")
   approvalLetterNo String?   @map("approval_letter_no")
   approvalDate     DateTime? @map("approval_date") @db.Date
-  // APPROVED | SUPERSEDED
+  // PENDING (added by a technical user, waiting for Admin) | APPROVED | SUPERSEDED
   status           String    @default("APPROVED")
+  approvedByName   String?   @map("approved_by_name")
+  approvedAt       DateTime? @map("approved_at")
   fileLink         String?   @map("file_link")
   remarks          String?
   // Docket item BOM this drawing was created from, if any.
@@ -772,6 +776,8 @@ model ApprovedDrawingLine {
   category    String          @default("STRUCTURE")
   // N&B size or bought-out item name (Costing Master subject of its rate).
   rateKey     String?         @map("rate_key")
+  // Supplied but not billed (as marked on the client BOM).
+  nonBillable Boolean         @default(false) @map("non_billable")
 
   @@index([drawingId])
   @@map("approved_drawing_lines")
@@ -809,6 +815,7 @@ model ItemBom {
   updatedAt       DateTime         @updatedAt @map("updated_at")
 
   lines    ItemBomLine[]
+  groups   ItemBomGroup[]
   costings ItemCosting[]
 
   @@index([itemId])
@@ -816,27 +823,50 @@ model ItemBom {
   @@map("item_boms")
 }
 
+// One structure type inside an item BOM, with its own set count. A mixed BOM (e.g. SBPDCL RDSS:
+// ~30 structures over 5 sites under one docket item) has many; a single-structure BOM has one.
+model ItemBomGroup {
+  id        Int      @id @default(autoincrement())
+  bomId     Int      @map("bom_id")
+  bom       ItemBom  @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  seq       Int
+  name      String
+  drawingNo String?  @map("drawing_no")
+  drawingId Int?     @map("drawing_id")
+  // Sets of this structure. Null on a single-structure BOM = derived from the item quantity (kg).
+  sets      Decimal? @db.Decimal(14, 3)
+  // Set count per site, e.g. {"Banka Khaira": 1, "Jamui Indpey": 1}.
+  siteSets  Json?    @map("site_sets")
+
+  lines ItemBomLine[]
+
+  @@index([bomId])
+  @@map("item_bom_groups")
+}
+
 model ItemBomLine {
-  id          Int      @id @default(autoincrement())
-  bomId       Int      @map("bom_id")
-  bom         ItemBom  @relation(fields: [bomId], references: [id], onDelete: Cascade)
-  rowNo       Int      @map("row_no")
-  markNo      String?  @map("mark_no")
+  id          Int           @id @default(autoincrement())
+  bomId       Int           @map("bom_id")
+  bom         ItemBom       @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  groupId     Int?          @map("group_id")
+  group       ItemBomGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  rowNo       Int           @map("row_no")
+  markNo      String?       @map("mark_no")
   description String?
   section     String?
-  sectionKey  String?  @map("section_key")
-  lengthMm    Int?     @map("length_mm")
-  qtyPerSet   Decimal? @map("qty_per_set") @db.Decimal(14, 3)
+  sectionKey  String?       @map("section_key")
+  lengthMm    Int?          @map("length_mm")
+  qtyPerSet   Decimal?      @map("qty_per_set") @db.Decimal(14, 3)
   // kg/m as read from the drawing; the costing always uses the GTP section master.
-  kgPerM      Decimal? @map("kg_per_m") @db.Decimal(10, 3)
-  unitWtKg    Decimal? @map("unit_wt_kg") @db.Decimal(14, 3)
+  kgPerM      Decimal?      @map("kg_per_m") @db.Decimal(10, 3)
+  unitWtKg    Decimal?      @map("unit_wt_kg") @db.Decimal(14, 3)
   // STRUCTURE | NUTS_BOLTS | BOUGHT_OUT
-  category    String   @default("STRUCTURE")
+  category    String        @default("STRUCTURE")
   // IN_SCOPE | NOT_IN_SCOPE | BOUGHT_OUT | CLIENT_SUPPLY
-  scope       String   @default("IN_SCOPE")
-  nonBillable Boolean  @default(false) @map("non_billable")
+  scope       String        @default("IN_SCOPE")
+  nonBillable Boolean       @default(false) @map("non_billable")
   // N&B size (M16X40) or bought-out item name: the Costing Master subject of its rate.
-  rateKey     String?  @map("rate_key")
+  rateKey     String?       @map("rate_key")
 
   @@index([bomId])
   @@map("item_bom_lines")

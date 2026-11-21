@@ -15,13 +15,14 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
  * pieces. A client BOM uploaded later becomes a newer version, as before.
  *
  * Only fabricated structure lines in the purchase scope go in (nuts & bolts and bought-out items
- * are not cut or fabricated). Sets per item = the costing's sets rounded up to a whole set (a KG
- * quantity rarely divides exactly). With several items, marks are prefixed "<item no>-" so two
- * items' "A1" stay apart.
+ * are not cut or fabricated); non-billable pieces are supplied, so they are fabricated too.
+ * Sets: a mixed BOM uses each structure's own set count; a single structure uses its count, or
+ * the costing's sets (from a KG quantity). Fractions are rounded up to a whole set. Marks are
+ * prefixed "<item>.<structure>-" when there is more than one, so two structures' "R01" stay apart.
  */
 export async function copyQuotationBomToOrder(tx: Tx, orderId: number, itemIds: number[], user: AuthUser) {
   if (itemIds.length === 0) return null;
-  const boms = await tx.itemBom.findMany({ where: { itemId: { in: itemIds } }, orderBy: { id: 'desc' }, include: { lines: { orderBy: { rowNo: 'asc' } } } });
+  const boms = await tx.itemBom.findMany({ where: { itemId: { in: itemIds } }, orderBy: { id: 'desc' }, include: { lines: { orderBy: { rowNo: 'asc' } }, groups: true } });
   const latest = new Map<number, (typeof boms)[number]>();
   for (const b of boms) if (!latest.has(b.itemId)) latest.set(b.itemId, b);
   const confirmed = itemIds.map((id) => latest.get(id)).filter((b): b is (typeof boms)[number] => !!b && b.status === 'CONFIRMED');
@@ -32,22 +33,32 @@ export async function copyQuotationBomToOrder(tx: Tx, orderId: number, itemIds: 
   const gtp = new Map(sectionRows.map((s) => [s.sectionKey, s.kgPerM.toNumber()]));
   const master = new Map<string, SectionStd>(sectionRows.map((s) => [s.sectionKey, { kgPerM: s.kgPerM.toNumber(), approved: s.approved }]));
 
-  const multi = confirmed.length > 1;
-  const used: { itemBomId: number; costingId: number | null; sets: number }[] = [];
+  const multiItem = confirmed.length > 1;
+  const used: { itemBomId: number; costingId: number | null; sets: number | Record<string, number> }[] = [];
   const pieces: Omit<Prisma.BomPieceCreateManyInput, 'uploadId' | 'orderId'>[] = [];
   let rowNo = 0;
   confirmed.forEach((b, idx) => {
     const c = costings.find((x) => x.bomId === b.id);
-    const sets = c ? Math.ceil(c.sets.toNumber() - 1e-9) : 0;
-    used.push({ itemBomId: b.id, costingId: c?.id ?? null, sets });
+    const multiGroup = b.groups.length > 1;
+    const costSets = c ? Math.ceil(c.sets.toNumber() - 1e-9) : 0;
+    const setsOf = (groupId: number | null) => {
+      const g = b.groups.find((x) => x.id === groupId);
+      const n = g?.sets ? g.sets.toNumber() : multiGroup ? 0 : costSets;
+      return Math.ceil(n - 1e-9);
+    };
+    used.push({ itemBomId: b.id, costingId: c?.id ?? null, sets: multiGroup ? Object.fromEntries(b.groups.map((g) => [g.name, setsOf(g.id)])) : setsOf(b.groups[0]?.id ?? null) });
     for (const l of b.lines) {
-      if (l.category !== 'STRUCTURE' || l.scope !== 'IN_SCOPE' || l.nonBillable) continue;
+      if (l.category !== 'STRUCTURE' || l.scope !== 'IN_SCOPE') continue;
+      const sets = setsOf(l.groupId);
+      if (!(sets > 0)) continue;
+      const g = b.groups.find((x) => x.id === l.groupId);
+      const prefix = [multiItem ? idx + 1 : null, multiGroup && g ? g.seq : null].filter((x) => x !== null).join('.');
       const q = dec(l.qtyPerSet);
       const kgm = (l.sectionKey ? gtp.get(l.sectionKey) : undefined) ?? dec(l.kgPerM);
       const total = q !== null && sets > 0 ? r3(q * sets) : null;
       pieces.push({
         rowNo: ++rowNo,
-        markNo: l.markNo ? (multi ? `${idx + 1}-${l.markNo}` : l.markNo) : null,
+        markNo: l.markNo ? (prefix ? `${prefix}-${l.markNo}` : l.markNo) : prefix ? `${prefix}-ROW${l.rowNo}` : null,
         description: l.description,
         section: l.section,
         sectionKey: l.sectionKey,
@@ -58,7 +69,7 @@ export async function copyQuotationBomToOrder(tx: Tx, orderId: number, itemIds: 
         kgPerM: kgm ?? null,
         unitWtKg: kgm && l.lengthMm ? r3((kgm * l.lengthMm) / 1000) : dec(l.unitWtKg),
         totalWtKg: kgm && l.lengthMm && total !== null ? r3((kgm * l.lengthMm * total) / 1000) : null,
-        raw: { itemBomId: b.id, itemBomLineId: l.id, drawingRef: b.drawingRef } as Prisma.InputJsonValue,
+        raw: { itemBomId: b.id, itemBomLineId: l.id, structure: g?.name ?? null, drawingNo: g?.drawingNo ?? b.drawingRef, nonBillable: l.nonBillable } as Prisma.InputJsonValue,
       });
     }
   });

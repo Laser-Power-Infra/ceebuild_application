@@ -1,10 +1,19 @@
 'use client';
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, ExternalLink, Plus, Trash2 } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Plus, Trash2, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FormError, Modal, fieldCls, labelCls } from '@/components/Modal';
-import { createDrawingAction, deleteDrawingAction, drawingLinesAction, listDrawingsAction, updateDrawingFieldAction } from '@/app/actions/costing';
+import {
+  approveDrawingAction,
+  createDrawingAction,
+  deleteDrawingAction,
+  drawingLinesAction,
+  listDrawingsAction,
+  setDrawingEditorAction,
+  technicalUsersAction,
+  updateDrawingFieldAction,
+} from '@/app/actions/costing';
 import { CATEGORY_LABELS, type Category } from '@/lib/costing/calc';
 import type { BomLineDraft } from '@/lib/costing/drawings';
 import type { DrawingLineRow, DrawingRow } from '../server/drawings';
@@ -13,8 +22,10 @@ import { Badge, DraftLinesEditor, DrawingExtractor, card, inr, td, th } from './
 const empty = { utility: '', state: '', itemType: '', drawingNo: '', revision: '0', approvalLetterNo: '', approvalDate: '', fileLink: '', remarks: '', supersedePrevious: true };
 
 export function DrawingLibraryPage({ role }: { role: string }) {
-  const canEdit = role === 'Admin' || role === 'User';
   const isAdmin = role === 'Admin';
+  // Admin or a named technical user may add / edit drawings; only an Admin approves or deletes.
+  const [canEdit, setCanEdit] = useState(false);
+  const [techUsers, setTechUsers] = useState<null | { id: number; name: string; username: string; role: string; drawingEditor: boolean }[]>(null);
   const [rows, setRows] = useState<DrawingRow[]>([]);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
@@ -29,8 +40,14 @@ export function DrawingLibraryPage({ role }: { role: string }) {
   const load = useCallback(async () => {
     const r = await listDrawingsAction();
     if (!r.success) return setError(r.error);
-    setRows(r.data);
+    setRows(r.data.drawings);
+    setCanEdit(r.data.canAdd);
   }, []);
+  const openTechUsers = async () => {
+    const r = await technicalUsersAction();
+    if (!r.success) return setError(r.error);
+    setTechUsers(r.data);
+  };
   useEffect(() => {
     void load();
   }, [load]);
@@ -48,7 +65,7 @@ export function DrawingLibraryPage({ role }: { role: string }) {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     return rows.filter(
-      (d) => (showSuperseded || d.status === 'APPROVED') && (!s || [d.utility, d.state, d.itemType, d.drawingNo, d.approvalLetterNo].some((v) => String(v ?? '').toLowerCase().includes(s))),
+      (d) => (showSuperseded || d.status !== 'SUPERSEDED') && (!s || [d.utility, d.state, d.itemType, d.drawingNo, d.approvalLetterNo].some((v) => String(v ?? '').toLowerCase().includes(s))),
     );
   }, [rows, q, showSuperseded]);
 
@@ -70,17 +87,24 @@ export function DrawingLibraryPage({ role }: { role: string }) {
             drawing of the item type (reference only – confirm). Add every new approval so the next enquiry can reuse it.
           </p>
         </div>
-        {canEdit && (
-          <Button
-            onClick={() => {
-              setForm({ ...empty });
-              setDraft([]);
-              setNote('');
-            }}
-          >
-            <Plus /> Add approved drawing
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {isAdmin && (
+            <Button variant="outline" onClick={() => void openTechUsers()}>
+              <Users /> Technical users
+            </Button>
+          )}
+          {canEdit && (
+            <Button
+              onClick={() => {
+                setForm({ ...empty });
+                setDraft([]);
+                setNote('');
+              }}
+            >
+              <Plus /> Add drawing
+            </Button>
+          )}
+        </div>
       </div>
       <FormError error={error} />
       <div className="flex flex-wrap items-center gap-3">
@@ -138,8 +162,21 @@ export function DrawingLibraryPage({ role }: { role: string }) {
                     )}
                   </td>
                   <td className={td}>
-                    {d.status === 'APPROVED' ? <Badge tone="green">Approved</Badge> : <Badge tone="slate">Superseded</Badge>}
-                    {canEdit && (
+                    {d.status === 'APPROVED' ? <Badge tone="green">Approved</Badge> : d.status === 'PENDING' ? <Badge tone="amber">Pending approval</Badge> : <Badge tone="slate">Superseded</Badge>}
+                    {d.status === 'PENDING' && isAdmin && (
+                      <button
+                        type="button"
+                        className="ml-1 inline-flex items-center gap-0.5 text-xs font-semibold text-emerald-800 hover:underline"
+                        onClick={async () => {
+                          const r = await approveDrawingAction(d.id);
+                          if (!r.success) return setError(r.error);
+                          void load();
+                        }}
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5" /> approve
+                      </button>
+                    )}
+                    {d.status !== 'PENDING' && isAdmin && (
                       <button
                         type="button"
                         className="ml-1 text-xs text-blue-800 hover:underline"
@@ -296,6 +333,30 @@ export function DrawingLibraryPage({ role }: { role: string }) {
               </Button>
             </div>
           </div>
+        </Modal>
+      )}
+      {techUsers && (
+        <Modal title="Technical users (may add drawings)" onClose={() => setTechUsers(null)}>
+          <p className="mb-3 text-xs text-slate-700">Ticked users can add drawings to the library; their drawings stay “Pending approval” until an Admin approves them. Admins can always add. Delete is Admin only.</p>
+          <div className="flex flex-col gap-1">
+            {techUsers.map((u) => (
+              <label key={u.id} className="flex items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50">
+                <input
+                  type="checkbox"
+                  disabled={u.role === 'Admin'}
+                  checked={u.role === 'Admin' || u.drawingEditor}
+                  onChange={async (e) => {
+                    const r = await setDrawingEditorAction(u.id, e.target.checked);
+                    if (!r.success) return setError(r.error);
+                    void openTechUsers();
+                  }}
+                />
+                <span className="font-medium text-slate-900">{u.name}</span>
+                <span className="text-xs text-slate-700">{u.username} · {u.role}</span>
+              </label>
+            ))}
+          </div>
+          <FormError error={error} />
         </Modal>
       )}
     </div>

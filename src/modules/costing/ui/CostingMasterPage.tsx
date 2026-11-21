@@ -18,7 +18,7 @@ const GROUPS: { title: string; kinds: RateKind[] }[] = [
   { title: 'Galvanising (GI cost master)', kinds: ['GALV_RATE', 'ZINC_PCT', 'GALV_TRANSPORT'] },
   { title: 'Freight (FOR, by destination state)', kinds: ['FREIGHT_MT'] },
   { title: 'Commercial', kinds: ['INTEREST_PCT', 'CREDIT_DAYS', 'LC_BG_PCT', 'INSPECTION', 'PACKING', 'MIN_VA_PCT'] },
-  { title: 'Nuts & bolts (separate offer line) and bought-out items', kinds: ['NB_RATE', 'BOUGHT_OUT'] },
+  { title: 'Nuts & bolts and bought-out items (separate offer lines, own margin %)', kinds: ['NB_RATE', 'NB_MARGIN_PCT', 'BOUGHT_OUT', 'BO_MARGIN_PCT'] },
 ];
 
 export function CostingMasterPage({ role }: { role: string }) {

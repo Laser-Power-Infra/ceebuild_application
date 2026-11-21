@@ -10,10 +10,13 @@
 //   inspection, packing = Rs/kg x billed wt
 //   interest  = base x interest % x credit days / 365;  LC/BG = base x LC/BG %
 //   cost      = base + interest + LC/BG;  selling = cost x (1 + VA %)
-// Nuts & bolts (category NUTS_BOLTS) and bought-out lines are costed from their own rate and kept
-// out of the structure weight and per-kg price; they are quoted as separate offer lines.
+// Mixed BOM: each line carries the set count of its structure; totals are line x sets.
+// Nuts & bolts (category NUTS_BOLTS) and bought-out lines are costed from their own rate plus their
+// own margin % (not the structure VA %), interest/LC included; they are kept out of the structure
+// weight and per-kg price and quoted as separate offer lines.
 // Only lines in the purchase scope are costed (IN_SCOPE, BOUGHT_OUT); NOT_IN_SCOPE / CLIENT_SUPPLY
-// and non-billable lines are listed but excluded.
+// are listed but excluded. Non-billable lines are supplied, so they are costed, but their weight is
+// not billed: their cost is carried on the billable kg.
 
 export const RATE_KINDS = [
   'RM_RATE',
@@ -30,7 +33,9 @@ export const RATE_KINDS = [
   'PACKING',
   'MIN_VA_PCT',
   'NB_RATE',
+  'NB_MARGIN_PCT',
   'BOUGHT_OUT',
+  'BO_MARGIN_PCT',
 ] as const;
 export type RateKind = (typeof RATE_KINDS)[number];
 
@@ -50,7 +55,9 @@ export const RATE_META: Record<RateKind, { label: string; units: string[]; subje
   PACKING: { label: 'Packing', units: ['Rs/kg'], subject: 'DEFAULT', perSubject: false },
   MIN_VA_PCT: { label: 'Minimum VA %', units: ['%'], subject: 'DEFAULT', perSubject: false },
   NB_RATE: { label: 'Nuts & bolts', units: ['Rs/kg', 'Rs/set'], subject: 'Size (e.g. M16X40) or DEFAULT', perSubject: true },
+  NB_MARGIN_PCT: { label: 'Nuts & bolts margin %', units: ['%'], subject: 'DEFAULT', perSubject: false },
   BOUGHT_OUT: { label: 'Bought-out item', units: ['Rs/no'], subject: 'Item name (danger board, stay set ...)', perSubject: true },
+  BO_MARGIN_PCT: { label: 'Bought-out margin %', units: ['%'], subject: 'DEFAULT', perSubject: false },
 };
 
 export const FAB_TYPES = ['PLAIN_CUT', 'CLAMP_BENT', 'WELDED'] as const;
@@ -109,18 +116,22 @@ export interface CostLineInput {
   unitWtKg: number | null;
   category: string;
   scope: string;
+  /** Supplied but not billed (e.g. stay clamps): cost is carried on the billable kg. */
   nonBillable: boolean;
   rateKey: string | null;
+  /** Sets of the structure this line belongs to (mixed BOMs: each structure has its own count); null = unknown. */
+  sets: number | null;
+  /** Structure (group) name; null for a single-structure BOM. */
+  group: string | null;
 }
 
 export interface CostInput {
   lines: CostLineInput[];
-  sets: number;
   fabType: string;
   galvanised: boolean;
   billingBasis: BillingBasis;
   destState: string | null;
-  /** VA % to quote; null = the Costing Master minimum. */
+  /** VA % to quote on the structure; null = the Costing Master minimum. */
   vaPct: number | null;
   /** yyyy-mm-dd: rates in force on this date are used. */
   quoteDate: string;
@@ -143,19 +154,22 @@ export interface LineResult {
   section: string | null;
   category: string;
   scope: string;
+  group: string | null;
+  sets: number;
+  billable: boolean;
   status: LineStatus;
-  /** Why the line is excluded / flagged. */
+  /** Why the line is excluded / flagged, or a remark (non-billable). */
   note: string | null;
   qtyPerSet: number;
   kgPerM: number | null;
   kgPerMSource: 'GTP' | 'DRAWING' | null;
-  /** Per set. */
+  /** Per ONE set of its structure. */
   blackWtKg: number;
   galvWtKg: number;
   wastagePct: number | null;
   wastageSource: 'MASTER' | 'CUTTING_PLAN' | 'DEFAULT' | null;
   rmRate: number | null;
-  /** Per set, Rs. */
+  /** Per one set, Rs. */
   rm: number;
   fab: number;
   galv: number;
@@ -164,6 +178,8 @@ export interface LineResult {
   commercial: number;
   cost: number;
   sell: number;
+  /** Margin used on this line (VA % for structure, own margin for N&B / bought-out). */
+  marginPct: number;
 }
 
 export interface RateUsed {
@@ -182,24 +198,46 @@ export interface Bucket {
   sell: number;
 }
 
-export interface CostResult {
-  lines: LineResult[];
-  vaPct: number;
-  minVaPct: number | null;
+export interface GroupResult {
+  name: string;
   sets: number;
   /** Structure only, per one set. */
-  perSet: Bucket;
+  blackWtPerSet: number;
+  galvWtPerSet: number;
+  billedWtPerSet: number;
+  sellPerSet: number;
   /** Structure only, all sets. */
-  structure: Bucket & { sellPerKg: number; costPerKg: number; billedWtKg: number };
-  nutsBolts: { cost: number; sell: number; perSetSell: number };
-  boughtOut: { cost: number; sell: number; perSetSell: number };
+  blackWtKg: number;
+  billedWtKg: number;
+  sell: number;
+  /** N&B + bought-out of this structure, all sets. */
+  otherSell: number;
+}
+
+export interface CostResult {
+  lines: LineResult[];
+  groups: GroupResult[];
+  vaPct: number;
+  minVaPct: number | null;
+  nbMarginPct: number;
+  boMarginPct: number;
+  /** Sets of a single-structure BOM; null for a mixed BOM. */
+  sets: number | null;
+  /** All structures' sets added up (information only). */
+  totalSets: number;
+  /** Structure only, per one set (single-structure BOM only). */
+  perSet: Bucket | null;
+  /** Structure only, all sets. */
+  structure: Bucket & { sellPerKg: number; costPerKg: number; billedWtKg: number; nonBillableWtKg: number };
+  nutsBolts: { cost: number; sell: number; perSetSell: number | null };
+  boughtOut: { cost: number; sell: number; perSetSell: number | null };
   grandSell: number;
   ratesUsed: RateUsed[];
   checks: {
     belowMinVa: boolean;
     variancePct: number | null;
     varianceRef: string | null;
-    /** Lines with blank weight or rate (they stop the price being applied). */
+    /** Lines with blank weight, rate or set count (they stop the price being applied). */
     blankLines: string[];
     outsidePurchaseList: string[];
     nonBillable: string[];
@@ -226,6 +264,8 @@ export function computeCosting(input: CostInput): CostResult {
   const minVa = take('MIN_VA_PCT', null);
   const vaPct = input.vaPct ?? (minVa ? minVa.value : 0);
   const va = vaPct / 100;
+  const nbMargin = take('NB_MARGIN_PCT', null);
+  const boMargin = take('BO_MARGIN_PCT', null);
 
   // Commercial and plant-wide factors (same for every line).
   const zinc = val(take('ZINC_PCT', null)) / 100;
@@ -243,7 +283,7 @@ export function computeCosting(input: CostInput): CostResult {
   const blank: string[] = [];
   const outside: string[] = [];
   const nonBillable: string[] = [];
-  const label = (l: CostLineInput) => `row ${l.rowNo}${l.markNo ? ` (mark ${l.markNo})` : ''}`;
+  const label = (l: CostLineInput) => `${l.group ? `${l.group}: ` : ''}row ${l.rowNo}${l.markNo ? ` (mark ${l.markNo})` : ''}`;
 
   const lines: LineResult[] = input.lines.map((l) => {
     const qty = l.qtyPerSet ?? 0;
@@ -253,6 +293,9 @@ export function computeCosting(input: CostInput): CostResult {
       section: l.section,
       category: l.category,
       scope: l.scope,
+      group: l.group,
+      sets: l.sets !== null && l.sets > 0 ? l.sets : 0,
+      billable: !l.nonBillable,
       status: 'EXCLUDED',
       note: null,
       qtyPerSet: qty,
@@ -271,32 +314,36 @@ export function computeCosting(input: CostInput): CostResult {
       commercial: 0,
       cost: 0,
       sell: 0,
+      marginPct: 0,
     };
     if (!COSTED_SCOPES.has(l.scope)) return { ...base, note: l.scope === 'CLIENT_SUPPLY' ? 'Client supply' : 'Not in purchase scope' };
-    if (l.nonBillable) {
-      nonBillable.push(label(l));
-      return { ...base, note: 'Non-billable' };
-    }
     if (!(qty > 0)) {
       blank.push(`${label(l)}: qty per set is blank`);
       return { ...base, status: 'FLAGGED', note: 'Qty per set is blank' };
     }
+    if (l.sets === null || Number.isNaN(l.sets)) {
+      blank.push(`${label(l)}: no set count for ${l.group ?? 'the structure'}`);
+      return { ...base, status: 'FLAGGED', note: 'No set count for this structure' };
+    }
+    if (!(l.sets > 0)) return { ...base, note: '0 sets of this structure' };
+    if (l.nonBillable) nonBillable.push(label(l));
 
-    // Bought-out (scope or category): purchase rate per number.
+    // Bought-out (scope or category): purchase rate per number, own margin.
     if (l.scope === 'BOUGHT_OUT' || l.category === 'BOUGHT_OUT') {
       const key = l.rateKey || l.description;
       const rate = take('BOUGHT_OUT', key, false);
       if (!rate) {
         blank.push(`${label(l)}: no bought-out rate for "${normSubject(key)}"`);
-        return { ...base, status: 'FLAGGED', note: `No bought-out rate for ${normSubject(key)}` };
+        return { ...base, category: 'BOUGHT_OUT', status: 'FLAGGED', note: `No bought-out rate for ${normSubject(key)}` };
       }
       const purchase = qty * rate.value;
       const commercial = purchase * commercialFactor;
       const cost = purchase + commercial;
-      return { ...base, category: 'BOUGHT_OUT', status: 'COSTED', rmRate: rate.value, rm: r2(purchase), commercial: r2(commercial), cost: r2(cost), sell: r2(cost * (1 + va)) };
+      const m = val(boMargin);
+      return { ...base, category: 'BOUGHT_OUT', status: 'COSTED', rmRate: rate.value, rm: r2(purchase), commercial: r2(commercial), cost: r2(cost), sell: r2(cost * (1 + m / 100)), marginPct: m };
     }
 
-    // Nuts & bolts: own rate, Rs/kg (needs unit wt) or Rs/set.
+    // Nuts & bolts: own rate (Rs/kg needs unit wt, or Rs/set), own margin.
     if (l.category === 'NUTS_BOLTS') {
       const rate = take('NB_RATE', l.rateKey);
       if (!rate) {
@@ -315,7 +362,8 @@ export function computeCosting(input: CostInput): CostResult {
       } else purchase = qty * rate.value;
       const commercial = purchase * commercialFactor;
       const cost = purchase + commercial;
-      return { ...base, status: 'COSTED', blackWtKg: r3(wt), galvWtKg: r3(wt), rmRate: rate.value, rm: r2(purchase), commercial: r2(commercial), cost: r2(cost), sell: r2(cost * (1 + va)) };
+      const m = val(nbMargin);
+      return { ...base, status: 'COSTED', blackWtKg: r3(wt), galvWtKg: r3(wt), rmRate: rate.value, rm: r2(purchase), commercial: r2(commercial), cost: r2(cost), sell: r2(cost * (1 + m / 100)), marginPct: m };
     }
 
     // Structure.
@@ -326,7 +374,8 @@ export function computeCosting(input: CostInput): CostResult {
     }
     if (!input.purchaseItems[key]) {
       outside.push(`${label(l)}: ${l.section ?? key}`);
-      return { ...base, status: 'FLAGGED', note: `${l.section ?? key} is not in the RM purchase list – not costed` };
+      const k = input.sectionKgm[key] ?? (l.kgPerM && l.kgPerM > 0 ? l.kgPerM : null);
+      return { ...base, status: 'FLAGGED', note: `${l.section ?? key} is not in the RM purchase list – not costed`, kgPerM: k, kgPerMSource: input.sectionKgm[key] ? 'GTP' : k ? 'DRAWING' : null };
     }
     const gtp = input.sectionKgm[key];
     const kgm = gtp ?? (l.kgPerM && l.kgPerM > 0 ? l.kgPerM : null);
@@ -368,14 +417,15 @@ export function computeCosting(input: CostInput): CostResult {
     const fab = black * fabRateRow.value;
     const galv = input.galvanised && galvRate ? galvRate.value * (galvRate.unit === 'Rs/kg galv' ? galvWt : black) + galvTransport * black : 0;
     const freight = (galvWt / 1000) * freightMt;
-    const billed = input.billingBasis === 'GALV' ? galvWt : black;
-    const inspPack = (inspection + packing) * billed;
+    // Inspection / packing per kg of the weight handled (billed or not: the clamp is still packed).
+    const inspPack = (inspection + packing) * (input.billingBasis === 'GALV' ? galvWt : black);
     const baseCost = rm + fab + galv + freight + inspPack;
     const commercial = baseCost * commercialFactor;
     const cost = baseCost + commercial;
     return {
       ...base,
       status: 'COSTED',
+      note: l.nonBillable ? 'Non-billable: supplied, cost carried on billable kg' : null,
       kgPerM: kgm,
       kgPerMSource: kgmSource,
       blackWtKg: r3(black),
@@ -391,60 +441,90 @@ export function computeCosting(input: CostInput): CostResult {
       commercial: r2(commercial),
       cost: r2(cost),
       sell: r2(cost * (1 + va)),
+      marginPct: vaPct,
     };
   });
 
   const costed = lines.filter((l) => l.status === 'COSTED');
-  const sum = (ls: LineResult[], f: (l: LineResult) => number) => ls.reduce((a, l) => a + f(l), 0);
+  const tot = (ls: LineResult[], f: (l: LineResult) => number) => ls.reduce((a, l) => a + f(l) * l.sets, 0);
   const struct = costed.filter((l) => l.category === 'STRUCTURE');
   const nb = costed.filter((l) => l.category === 'NUTS_BOLTS');
   const bo = costed.filter((l) => l.category === 'BOUGHT_OUT');
-  const sets = input.sets > 0 ? input.sets : 0;
+  const billedOf = (l: LineResult) => (l.billable ? (input.billingBasis === 'GALV' ? l.galvWtKg : l.blackWtKg) : 0);
 
-  const perSet: Bucket = {
-    blackWtKg: r3(sum(struct, (l) => l.blackWtKg)),
-    galvWtKg: r3(sum(struct, (l) => l.galvWtKg)),
-    cost: r2(sum(struct, (l) => l.cost)),
-    sell: r2(sum(struct, (l) => l.sell)),
-  };
-  const billedPerSet = input.billingBasis === 'GALV' ? perSet.galvWtKg : perSet.blackWtKg;
-  const sellPerKg = billedPerSet > 0 ? r2(perSet.sell / billedPerSet) : 0;
-  const costPerKg = billedPerSet > 0 ? r2(perSet.cost / billedPerSet) : 0;
-  const nbSellSet = sum(nb, (l) => l.sell);
-  const boSellSet = sum(bo, (l) => l.sell);
+  // Per structure.
+  const groupNames = [...new Set(input.lines.map((l) => l.group ?? ''))];
+  const groups: GroupResult[] = groupNames.map((g) => {
+    const gl = lines.filter((l) => (l.group ?? '') === g);
+    const sets = gl.find((l) => l.sets > 0)?.sets ?? 0;
+    const gs = gl.filter((l) => l.status === 'COSTED' && l.category === 'STRUCTURE');
+    const one = (f: (l: LineResult) => number) => gs.reduce((a, l) => a + f(l), 0);
+    return {
+      name: g || 'Structure',
+      sets,
+      blackWtPerSet: r3(one((l) => l.blackWtKg)),
+      galvWtPerSet: r3(one((l) => l.galvWtKg)),
+      billedWtPerSet: r3(one(billedOf)),
+      sellPerSet: r2(one((l) => l.sell)),
+      blackWtKg: r3(one((l) => l.blackWtKg) * sets),
+      billedWtKg: r3(one(billedOf) * sets),
+      sell: r2(one((l) => l.sell) * sets),
+      otherSell: r2(gl.filter((l) => l.status === 'COSTED' && l.category !== 'STRUCTURE').reduce((a, l) => a + l.sell * l.sets, 0)),
+    };
+  });
+  const single = groups.length === 1 ? groups[0] : null;
 
+  const billedWt = tot(struct, billedOf);
+  const sell = tot(struct, (l) => l.sell);
+  const cost = tot(struct, (l) => l.cost);
   const structure = {
-    blackWtKg: r3(perSet.blackWtKg * sets),
-    galvWtKg: r3(perSet.galvWtKg * sets),
-    cost: r2(perSet.cost * sets),
-    sell: r2(perSet.sell * sets),
-    sellPerKg,
-    costPerKg,
-    billedWtKg: r3(billedPerSet * sets),
+    blackWtKg: r3(tot(struct, (l) => l.blackWtKg)),
+    galvWtKg: r3(tot(struct, (l) => l.galvWtKg)),
+    cost: r2(cost),
+    sell: r2(sell),
+    billedWtKg: r3(billedWt),
+    nonBillableWtKg: r3(tot(struct.filter((l) => !l.billable), (l) => (input.billingBasis === 'GALV' ? l.galvWtKg : l.blackWtKg))),
+    sellPerKg: billedWt > 0 ? r2(sell / billedWt) : 0,
+    costPerKg: billedWt > 0 ? r2(cost / billedWt) : 0,
   };
-  const nutsBolts = { cost: r2(sum(nb, (l) => l.cost) * sets), sell: r2(nbSellSet * sets), perSetSell: r2(nbSellSet) };
-  const boughtOut = { cost: r2(sum(bo, (l) => l.cost) * sets), sell: r2(boSellSet * sets), perSetSell: r2(boSellSet) };
+  const perSet: Bucket | null =
+    single && single.sets > 0
+      ? { blackWtKg: single.blackWtPerSet, galvWtKg: single.galvWtPerSet, cost: r2(cost / single.sets), sell: single.sellPerSet }
+      : null;
+  const nbSell = tot(nb, (l) => l.sell);
+  const boSell = tot(bo, (l) => l.sell);
+  const nutsBolts = { cost: r2(tot(nb, (l) => l.cost)), sell: r2(nbSell), perSetSell: single && single.sets > 0 ? r2(nbSell / single.sets) : null };
+  const boughtOut = { cost: r2(tot(bo, (l) => l.cost)), sell: r2(boSell), perSetSell: single && single.sets > 0 ? r2(boSell / single.sets) : null };
 
   const messages: string[] = [];
   const belowMinVa = !!minVa && vaPct < minVa.value - 1e-9;
   if (!minVa) messages.push('Minimum VA % is not set in the Costing Master.');
   if (belowMinVa) messages.push(`VA ${vaPct}% is below the minimum ${minVa!.value}%.`);
+  if (nb.length && !nbMargin) messages.push('Nuts & bolts margin % is not set in the Costing Master (0% used).');
+  if (bo.length && !boMargin) messages.push('Bought-out margin % is not set in the Costing Master (0% used).');
   let variancePct: number | null = null;
-  if (input.lastPricePerKg && input.lastPricePerKg.value > 0 && sellPerKg > 0) {
-    variancePct = r2(((sellPerKg - input.lastPricePerKg.value) / input.lastPricePerKg.value) * 100);
+  if (input.lastPricePerKg && input.lastPricePerKg.value > 0 && structure.sellPerKg > 0) {
+    variancePct = r2(((structure.sellPerKg - input.lastPricePerKg.value) / input.lastPricePerKg.value) * 100);
     messages.push(`${variancePct > 0 ? '+' : ''}${variancePct}% vs last quoted Rs ${input.lastPricePerKg.value}/kg (${input.lastPricePerKg.ref}).`);
   }
-  if (blank.length) messages.push(`${blank.length} line(s) have a blank weight or rate.`);
+  if (blank.length) messages.push(`${blank.length} line(s) have a blank weight, rate or set count.`);
   if (outside.length) messages.push(`${outside.length} line(s) use a section outside the RM purchase list (not costed).`);
-  if (nonBillable.length) messages.push(`${nonBillable.length} non-billable line(s) excluded.`);
-  if (!(sets > 0)) messages.push('Number of sets is zero: check the item quantity.');
-  if (struct.length === 0 && nb.length === 0 && bo.length === 0) messages.push('No line could be costed.');
+  if (nonBillable.length) messages.push(`${nonBillable.length} non-billable line(s): supplied and costed, but their ${r3(structure.nonBillableWtKg / 1000)} MT is not billed – the cost is carried on the billable kg.`);
+  const fractional = groups.filter((g) => g.sets > 0 && Math.abs(g.sets - Math.round(g.sets)) > 1e-6);
+  if (fractional.length) messages.push(`Fractional set count: ${fractional.map((g) => `${g.name} ${g.sets}`).join('; ')}.`);
+  const totalSets = r3(groups.reduce((a, g) => a + g.sets, 0));
+  if (!(totalSets > 0)) messages.push('No set count: check the item quantity / structure set counts.');
+  if (costed.length === 0) messages.push('No line could be costed.');
 
   return {
     lines,
+    groups,
     vaPct,
     minVaPct: minVa ? minVa.value : null,
-    sets,
+    nbMarginPct: val(nbMargin),
+    boMarginPct: val(boMargin),
+    sets: single ? single.sets : null,
+    totalSets,
     perSet,
     structure,
     nutsBolts,
@@ -458,13 +538,12 @@ export function computeCosting(input: CostInput): CostResult {
       blankLines: blank,
       outsidePurchaseList: outside,
       nonBillable,
-      ok: blank.length === 0 && outside.length === 0 && sets > 0 && costed.length > 0,
+      ok: blank.length === 0 && outside.length === 0 && totalSets > 0 && costed.length > 0,
       messages,
     },
   };
 }
 
-/** Unit of the item quantity -> how many BOM sets it means. KG/MT quantities divide by the set weight. */
 export function setsFromItem(qty: number | null, uom: string | null, setWtKg: number): { sets: number; basis: 'SETS' | 'WEIGHT' | 'UNKNOWN' } {
   if (qty === null || !(qty > 0)) return { sets: 0, basis: 'UNKNOWN' };
   const u = String(uom ?? '').trim().toUpperCase().replace(/[.\s]/g, '');
@@ -474,8 +553,13 @@ export function setsFromItem(qty: number | null, uom: string | null, setWtKg: nu
 }
 
 /** Wastage % per section from a cutting plan's section summaries: scrap / net x 100. */
-export function wastageFromPlan(sections: { sectionKey: string; netKg: number; scrapKg: number }[]): Record<string, number> {
+/**
+ * Wastage % per section from a cutting plan's section summaries: scrap / net x 100. A section that
+ * needs fewer than `minBars` bars is left out (the Costing Master default applies): a few short
+ * pieces would otherwise carry a whole bar (offcut goes to stock), e.g. 787% on 2 pieces of 338 mm.
+ */
+export function wastageFromPlan(sections: { sectionKey: string; netKg: number; scrapKg: number; bars?: number }[], minBars = 0): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const s of sections) if (s.netKg > 0) out[s.sectionKey] = r2((s.scrapKg / s.netKg) * 100);
+  for (const s of sections) if (s.netKg > 0 && (s.bars ?? Infinity) >= minBars) out[s.sectionKey] = r2((s.scrapKg / s.netKg) * 100);
   return out;
 }

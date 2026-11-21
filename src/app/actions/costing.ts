@@ -5,10 +5,24 @@ import { ADMIN_ROLES } from '@/lib/auth/server';
 import { archiveFile } from '@/lib/s3';
 import { toNum } from '@/lib/bom/parse';
 import { addRate, deleteRate, listPurchaseItems, listRates, upsertPurchaseItem } from '@/modules/costing/server/master';
-import { createDrawing, deleteDrawing, drawingLines, listDrawings, updateDrawingField } from '@/modules/costing/server/drawings';
+import {
+  approveDrawing,
+  canAddDrawings,
+  createDrawing,
+  deleteDrawing,
+  drawingLines,
+  listDrawings,
+  listTechnicalUsers,
+  setDrawingEditor,
+  updateDrawingField,
+} from '@/modules/costing/server/drawings';
+import { getSessionUser } from '@/lib/auth/server';
 import {
   addBomLine,
   addBomToLibrary,
+  addGroupFromDrawing,
+  deleteGroup,
+  updateGroup,
   confirmItemBom,
   createBomFromDrawing,
   createBomFromLines,
@@ -46,7 +60,19 @@ export async function deleteRateAction(id: unknown) {
 // ---- Approved Drawing Library ----
 
 export async function listDrawingsAction() {
-  return read(() => listDrawings());
+  return read(async () => {
+    const user = await getSessionUser().catch(() => null);
+    return { drawings: await listDrawings(), canAdd: user ? await canAddDrawings(user) : false };
+  });
+}
+export async function approveDrawingAction(id: unknown) {
+  return write((user) => approveDrawing(toId(id, 'drawing'), user), { roles: ADMIN_ROLES });
+}
+export async function technicalUsersAction() {
+  return write(() => listTechnicalUsers(), { roles: ADMIN_ROLES });
+}
+export async function setDrawingEditorAction(userId: unknown, on: unknown) {
+  return write((user) => setDrawingEditor(toId(userId, 'user'), on === true, user), { roles: ADMIN_ROLES });
 }
 export async function drawingLinesAction(id: unknown) {
   return read(() => drawingLines(toId(id, 'drawing')));
@@ -135,6 +161,7 @@ export async function createBomFromLinesAction(itemId: unknown, input: unknown) 
         s3Key: typeof o.s3Key === 'string' ? o.s3Key : null,
         drawingRef: typeof o.drawingRef === 'string' ? o.drawingRef : null,
         note: typeof o.note === 'string' ? o.note : null,
+        groups: o.groups,
         structureType: typeof o.structureType === 'string' ? o.structureType : null,
       },
       user,
@@ -149,8 +176,17 @@ export async function createBomFromDrawingAction(itemId: unknown, drawingId: unk
 export async function updateBomLineAction(lineId: unknown, field: unknown, value: unknown) {
   return write((user) => updateBomLine(toId(lineId, 'line'), String(field), String(value ?? '').slice(0, 200), user));
 }
-export async function addBomLineAction(bomId: unknown) {
-  return write((user) => addBomLine(toId(bomId, 'BOM'), user));
+export async function addBomLineAction(bomId: unknown, groupId?: unknown) {
+  return write((user) => addBomLine(toId(bomId, 'BOM'), groupId === undefined || groupId === null ? null : toId(groupId, 'structure'), user));
+}
+export async function addGroupFromDrawingAction(bomId: unknown, drawingId: unknown, sets: unknown) {
+  return write((user) => addGroupFromDrawing(toId(bomId, 'BOM'), toId(drawingId, 'drawing'), optNum(sets), user));
+}
+export async function updateGroupAction(groupId: unknown, field: unknown, value: unknown) {
+  return write((user) => updateGroup(toId(groupId, 'structure'), String(field), String(value ?? '').slice(0, 200), user));
+}
+export async function deleteGroupAction(groupId: unknown) {
+  return write((user) => deleteGroup(toId(groupId, 'structure'), user));
 }
 export async function deleteBomLineAction(lineId: unknown) {
   return write((user) => deleteBomLine(toId(lineId, 'line'), user));

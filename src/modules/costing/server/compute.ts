@@ -15,6 +15,7 @@ import { loadItem } from './itemBom';
 const dec = (d: Prisma.Decimal | null) => (d === null ? null : d.toNumber());
 const today = () => new Date().toISOString().slice(0, 10);
 const r2 = (n: number) => Math.round(n * 100) / 100;
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 export interface CostingPreview {
   bomId: number;
@@ -22,9 +23,13 @@ export interface CostingPreview {
   quoteDate: string;
   itemQty: number | null;
   itemUom: string | null;
-  setsBasis: 'SETS' | 'WEIGHT' | 'UNKNOWN';
+  /** SETS = given; WEIGHT = item kg / set weight; STRUCTURES = mixed BOM, each structure's own count. */
+  setsBasis: 'SETS' | 'WEIGHT' | 'UNKNOWN' | 'STRUCTURES';
   destState: string | null;
   planNote: string | null;
+  /** Net weight by section (all supplied structure pieces), for checking against a take-off. */
+  sectionWeights: { key: string; label: string; kg: number; billableKg: number; inGtp: boolean; approved: boolean }[];
+  netKg: number;
   result: CostResult;
 }
 
@@ -70,14 +75,14 @@ async function lastQuoted(structureType: string | null, ourItemName: string | nu
 
 /** Everything the calculator needs, from the BOM, the masters and the docket. */
 export async function previewCosting(bomId: number, opts: { vaPct?: number | null; quoteDate?: string | null }): Promise<CostingPreview> {
-  const bom = await prisma.itemBom.findUnique({ where: { id: bomId }, include: { lines: { orderBy: { rowNo: 'asc' } } } });
+  const bom = await prisma.itemBom.findUnique({ where: { id: bomId }, include: { lines: { orderBy: { rowNo: 'asc' } }, groups: { orderBy: { seq: 'asc' } } } });
   if (!bom) throw new UserError('BOM not found.');
   const { item, docket } = await loadItem(bom.itemId);
   const quoteDate = opts.quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(opts.quoteDate) ? opts.quoteDate : today();
 
   const keys = [...new Set(bom.lines.map((l) => l.sectionKey).filter((k): k is string => !!k))];
   const [sections, purchase, rates, settings] = await Promise.all([
-    prisma.sectionMaster.findMany({ where: { sectionKey: { in: keys } }, select: { sectionKey: true, label: true, kgPerM: true, maxBarMm: true } }),
+    prisma.sectionMaster.findMany({ where: { sectionKey: { in: keys } }, select: { sectionKey: true, label: true, kgPerM: true, maxBarMm: true, approved: true } }),
     prisma.rmPurchaseItem.findMany({ where: { active: true }, select: { sectionKey: true, label: true } }),
     allRates(),
     getPlanSettings(),
@@ -85,59 +90,125 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
   const sectionKgm = Object.fromEntries(sections.map((s) => [s.sectionKey, s.kgPerM.toNumber()]));
   const purchaseItems = Object.fromEntries(purchase.map((p) => [p.sectionKey, p.label]));
 
-  const lines: CostLineInput[] = bom.lines.map((l) => ({
-    rowNo: l.rowNo,
-    markNo: l.markNo,
-    description: l.description,
-    section: l.section,
-    sectionKey: l.sectionKey,
-    lengthMm: l.lengthMm,
-    qtyPerSet: dec(l.qtyPerSet),
-    kgPerM: dec(l.kgPerM),
-    unitWtKg: dec(l.unitWtKg),
-    category: l.category,
-    scope: l.scope,
-    nonBillable: l.nonBillable,
-    rateKey: l.rateKey,
-  }));
-
-  // Weight of one set on the billing basis, to turn a KG/MT item quantity into sets.
-  const base = { lines, fabType: bom.fabType, galvanised: bom.galvanised, billingBasis: bom.billingBasis as BillingBasis, destState: docket?.deliveryLocation || docket?.state || null, quoteDate, sectionKgm, purchaseItems, rates };
-  const oneSet = computeCosting({ ...base, sets: 1, vaPct: opts.vaPct ?? null, planWastagePct: {} });
-  const setWt = bom.billingBasis === 'GALV' ? oneSet.perSet.galvWtKg : oneSet.perSet.blackWtKg;
+  // Structures: a mixed BOM takes each structure's own set count; a single structure with no count
+  // takes it from the item quantity (kg / MT divided by the set weight, or nos / sets as given).
+  const groups = bom.groups;
+  const mixed = groups.length > 1;
+  const groupOf = new Map(groups.map((g) => [g.id, g]));
+  const toLine = (l: (typeof bom.lines)[number], sets: number | null): CostLineInput => {
+    const g = l.groupId ? groupOf.get(l.groupId) : undefined;
+    return {
+      rowNo: l.rowNo,
+      markNo: l.markNo,
+      description: l.description,
+      section: l.section,
+      sectionKey: l.sectionKey,
+      lengthMm: l.lengthMm,
+      qtyPerSet: dec(l.qtyPerSet),
+      kgPerM: dec(l.kgPerM),
+      unitWtKg: dec(l.unitWtKg),
+      category: l.category,
+      scope: l.scope,
+      nonBillable: l.nonBillable,
+      rateKey: l.rateKey,
+      sets,
+      group: mixed ? (g ? `${g.seq}. ${g.name}` : 'No structure') : null,
+    };
+  };
+  const base = { fabType: bom.fabType, galvanised: bom.galvanised, billingBasis: bom.billingBasis as BillingBasis, destState: docket?.deliveryLocation || docket?.state || null, quoteDate, sectionKgm, purchaseItems, rates };
   const qty = toNum(item.qty);
-  const { sets, basis } = setsFromItem(qty, item.uom, setWt);
+  let setsBasis: CostingPreview['setsBasis'];
+  let lines: CostLineInput[];
+  if (mixed) {
+    setsBasis = 'STRUCTURES';
+    lines = bom.lines.map((l) => {
+      const g = l.groupId ? groupOf.get(l.groupId) : undefined;
+      return toLine(l, g ? dec(g.sets) : null);
+    });
+  } else {
+    const given = groups[0] ? dec(groups[0].sets) : null;
+    if (given !== null) {
+      setsBasis = 'SETS';
+      lines = bom.lines.map((l) => toLine(l, given));
+    } else {
+      // Weight of one set on the billing basis (billable lines only), to turn a KG/MT quantity into sets.
+      const oneSet = computeCosting({ ...base, lines: bom.lines.map((l) => toLine(l, 1)), vaPct: opts.vaPct ?? null, planWastagePct: {} });
+      const setWt = oneSet.groups[0]?.billedWtPerSet ?? 0;
+      const d = setsFromItem(qty, item.uom, setWt);
+      setsBasis = d.basis;
+      lines = bom.lines.map((l) => toLine(l, d.sets));
+    }
+  }
 
-  // Wastage from the cutting plan (6 m standard / exact-multiple custom lengths, Planning Settings).
+  // Wastage from the cutting plan (6 m standard / exact-multiple custom lengths, Planning Settings),
+  // on the actual quantities of every structure (non-billable pieces are cut too).
   let planWastagePct: Record<string, number> = {};
   let planNote: string | null = null;
-  const planSets = Math.max(1, Math.ceil(sets || 1));
   const pieces: PlanPiece[] = [];
   const info: Record<string, SectionInfo> = {};
   for (const l of lines) {
-    if (l.category !== 'STRUCTURE' || l.scope !== 'IN_SCOPE' || l.nonBillable || !l.sectionKey || !l.lengthMm || !(l.qtyPerSet && l.qtyPerSet > 0)) continue;
+    if (l.category !== 'STRUCTURE' || l.scope !== 'IN_SCOPE' || !l.sectionKey || !l.lengthMm || !(l.qtyPerSet && l.qtyPerSet > 0) || !(l.sets && l.sets > 0)) continue;
     const kgm = sectionKgm[l.sectionKey] ?? l.kgPerM;
     if (!kgm || !purchaseItems[l.sectionKey]) continue;
     const s = sections.find((x) => x.sectionKey === l.sectionKey);
     info[l.sectionKey] = { label: s?.label ?? l.section ?? l.sectionKey, kgPerM: kgm, maxBarMm: s?.maxBarMm ?? null };
-    pieces.push({ markNo: l.markNo || `ROW ${l.rowNo}`, sectionKey: l.sectionKey, lengthMm: l.lengthMm, qty: Math.ceil(l.qtyPerSet * planSets) });
+    pieces.push({ markNo: l.markNo || `ROW ${l.rowNo}`, sectionKey: l.sectionKey, lengthMm: l.lengthMm, qty: Math.ceil(l.qtyPerSet * l.sets - 1e-9) });
   }
   if (pieces.length) {
     try {
       const plan = planIndent(pieces, info, cutSettingsOf(settings), 'MIXED');
-      planWastagePct = wastageFromPlan(plan.sections);
-      planNote = `Wastage from the cutting plan for ${planSets} set(s), Mixed (custom exact-multiple + ${settings.stdBarMm} mm) bars${settings.confirmed ? '' : '; Planning Settings not yet confirmed by the plant'}.`;
+      // Sections needing fewer bars than the custom-length minimum take the master default wastage.
+      planWastagePct = wastageFromPlan(plan.sections, settings.customMinBars);
+      planNote = `Wastage from the cutting plan on the BOM quantities (sections needing under ${settings.customMinBars} bars use the master default), Mixed (custom exact-multiple + ${settings.stdBarMm} mm) bars, end allowance ${settings.endAllowanceMm} mm, kerf ${settings.kerfMm} mm${settings.confirmed ? '' : ' – Planning Settings not yet confirmed by the plant'}.`;
     } catch (e) {
       planNote = `Cutting plan could not run (${e instanceof Error ? e.message : 'error'}); master/default wastage used.`;
     }
   }
 
   const last = await lastQuoted(bom.structureType, item.ourItemName);
-  const result = computeCosting({ ...base, sets, vaPct: opts.vaPct ?? null, planWastagePct, lastPricePerKg: last });
-  if (basis === 'UNKNOWN') result.checks.messages.push('Item quantity is blank: totals are for 0 sets.');
+  const result = computeCosting({ ...base, lines, vaPct: opts.vaPct ?? null, planWastagePct, lastPricePerKg: last });
+
+  // Section-wise weight (net, all supplied pieces) for checking against an independent take-off.
+  const bySection = new Map<string, { label: string; kg: number; billableKg: number; inGtp: boolean; approved: boolean }>();
+  for (const l of result.lines) {
+    if (l.category !== 'STRUCTURE' || !(l.sets > 0) || !l.kgPerM) continue;
+    const src = lines.find((x) => x.rowNo === l.rowNo)!;
+    const k = src.sectionKey ?? '?';
+    const sec = sections.find((s) => s.sectionKey === k);
+    const kg = (src.qtyPerSet ?? 0) * ((src.lengthMm ?? 0) / 1000) * l.kgPerM * l.sets;
+    const cur = bySection.get(k) ?? { label: sec?.label ?? src.section ?? k, kg: 0, billableKg: 0, inGtp: !!sec, approved: !!sec?.approved };
+    cur.kg += kg;
+    if (!src.nonBillable) cur.billableKg += kg;
+    bySection.set(k, cur);
+  }
+  // Weight of lines flagged before a kg/m was known (e.g. section not in the GTP) still counts, from the drawing's kg/m.
+  for (const src of lines) {
+    const res = result.lines.find((x) => x.rowNo === src.rowNo)!;
+    if (src.category !== 'STRUCTURE' || res.kgPerM || !src.kgPerM || !(src.sets && src.sets > 0)) continue;
+    const k = src.sectionKey ?? '?';
+    const cur = bySection.get(k) ?? { label: `${src.section ?? k} (drawing kg/m)`, kg: 0, billableKg: 0, inGtp: false, approved: false };
+    const kg = (src.qtyPerSet ?? 0) * ((src.lengthMm ?? 0) / 1000) * src.kgPerM * src.sets;
+    cur.kg += kg;
+    if (!src.nonBillable) cur.billableKg += kg;
+    bySection.set(k, cur);
+  }
+  const sectionWeights = [...bySection.entries()]
+    .map(([key, v]) => ({ key, label: v.label, kg: r3(v.kg), billableKg: r3(v.billableKg), inGtp: v.inGtp, approved: v.approved }))
+    .sort((a, b) => b.kg - a.kg);
+  const netKg = r3(sectionWeights.reduce((a, s) => a + s.kg, 0));
+
+  const notApproved = sectionWeights.filter((s) => s.inGtp && !s.approved);
+  if (notApproved.length) result.checks.messages.push(`Section(s) not in the approved GTP (flag – confirm with the client): ${notApproved.map((s) => `${s.label} ${r3(s.kg / 1000)} MT`).join(', ')}.`);
+  const u = String(item.uom ?? '').trim().toUpperCase();
+  const qtyKg = qty === null ? null : /^(MT|TON|TONNE|TONNES|MTS)$/.test(u) ? qty * 1000 : /^(KG|KGS)$/.test(u) ? qty : null;
+  if (mixed && qtyKg) {
+    const pct = r2(((netKg - qtyKg) / qtyKg) * 100);
+    result.checks.messages.push(`BOM net weight ${r3(netKg / 1000)} MT (billable ${r3(result.structure.billedWtKg / 1000)} MT) vs item quantity ${r3(qtyKg / 1000)} MT (${pct > 0 ? '+' : ''}${pct}%).`);
+  }
+  if (setsBasis === 'UNKNOWN') result.checks.messages.push('Item quantity is blank: totals are for 0 sets.');
   if (bom.status !== 'CONFIRMED') result.checks.messages.push('BOM is still a draft: confirm it before applying the price.');
   if (bom.matchLevel === 'ANY_ITEM') result.checks.messages.push('BOM is from a reference-only drawing (other utility/state): confirm with the client.');
-  return { bomId, bomStatus: bom.status, quoteDate, itemQty: qty, itemUom: item.uom, setsBasis: basis, destState: base.destState, planNote, result };
+  return { bomId, bomStatus: bom.status, quoteDate, itemQty: qty, itemUom: item.uom, setsBasis, destState: base.destState, planNote, sectionWeights, netKg, result };
 }
 
 export async function listCostings(itemId: number): Promise<SavedCosting[]> {
@@ -185,10 +256,11 @@ export async function saveCosting(bomId: number, opts: { vaPct?: number | null; 
     if (!opts.apply) return null;
     const u = String(p.itemUom ?? '').trim().toUpperCase();
     const perMt = /^(MT|TON|TONNE|TONNES|MTS)$/.test(u);
-    const perKg = p.setsBasis === 'WEIGHT';
-    const billed = bom!.billingBasis === 'GALV' ? r.perSet.galvWtKg : r.perSet.blackWtKg;
+    // Per kg for weight items and mixed BOMs; per set only for a single structure quoted in sets.
+    const perKg = p.setsBasis === 'WEIGHT' || p.setsBasis === 'STRUCTURES' || !r.perSet;
+    const billed = r.perSet && !perKg ? (r.groups[0]?.billedWtPerSet ?? 0) : r.perSet ? (r.groups[0]?.billedWtPerSet ?? 0) : r.structure.billedWtKg;
     return {
-      price: String(perMt ? r2(r.structure.sellPerKg * 1000) : perKg ? r.structure.sellPerKg : r2(r.perSet.sell)),
+      price: String(perMt ? r2(r.structure.sellPerKg * 1000) : perKg ? r.structure.sellPerKg : r2(r.perSet!.sell)),
       uomOfQtn: perMt ? 'MT' : perKg ? 'KG' : 'SET',
       weightPerPiece: String(billed),
     };
@@ -203,13 +275,13 @@ export async function saveCosting(bomId: number, opts: { vaPct?: number | null; 
         quoteDate: new Date(`${p.quoteDate}T00:00:00Z`),
         vaPct: r.vaPct,
         billingBasis: bom!.billingBasis,
-        sets: r.sets,
+        sets: r.sets ?? r.totalSets,
         blackWtKg: r.structure.blackWtKg,
         galvWtKg: r.structure.galvWtKg,
         costTotal: r2(r.structure.cost + r.nutsBolts.cost + r.boughtOut.cost),
         sellTotal: r.grandSell,
         sellPerKg: r.structure.sellPerKg,
-        sellPerSet: r.perSet.sell,
+        sellPerSet: r.perSet?.sell ?? 0,
         nbSellTotal: r.nutsBolts.sell,
         boSellTotal: r.boughtOut.sell,
         detail: { ...p, ratesUsed: r.ratesUsed } as unknown as Prisma.InputJsonValue,

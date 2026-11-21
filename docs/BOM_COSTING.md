@@ -129,3 +129,20 @@ There are no hard-coded numbers. Every factor is a dated row in `cost_rates`:
    - GTP Sections (kg/m);
    - Costing Master: the RM purchase list and all rates (GI cost master values from Puja);
    - Planning Settings: end allowance and kerf (wastage depends on them).
+
+## Update 21-Nov-2026 (Puja's answers)
+
+- **Mixed BOM (point 5):** one docket item can hold many structures, each with its own set count and set counts per site (`item_bom_groups`). An SBPDCL-style sheet is detected on upload: structure rows, the "Total" sets column, the drawing no., the ERE code and the Billable/Non-Billable column. Each structure's lines are costed × its own sets. Sets are taken from the item's kg quantity **only** for a single structure. A draft BOM can also be built by adding structures from the Approved Drawing Library, each with its set count. Every structure needs a set count before the BOM can be confirmed; fractional counts are flagged.
+- **Nuts & bolts / bought-out margin (point 4):** costed as rate + interest/LC, then their own margin % from the Costing Master (`NB_MARGIN_PCT` and `BO_MARGIN_PCT`), not the structure VA %.
+- **Non-billable lines:** they are supplied, so they are costed and fabricated, but their weight is not billed. Their cost is carried on the billable kg.
+- **Section names:** `L` / `Angle` → ISA, `FL` / `FT` / `Flat` → FLAT, `MC` / `Channel` → ISMC, and `16 Dia` / `Round bar` / `RB` / `Rod` → RB16, applied in all modules. A section that is still not in the GTP list is matched by size within 5% kg/m: "FT 75X40" at 7.14 kg/m is ISMC 75x40.
+- **Wastage:** taken from the cutting plan only for sections that need at least *custom min bars* (Planning Settings). Others use the master default.
+- **Section-wise net weight** is shown on the item costing page, for checking against an independent take-off.
+- **Drawings (point 7):** an Admin, or a named technical user (Approved Drawings → Technical users), can add drawings. A technical user's drawing stays *Pending* until an Admin approves it, and only Admin deletes.
+- **Data load:** `node --conditions=react-server --import tsx scripts/m14_load_sbpdcl.ts <bom.xlsx>` loads:
+  - the GTP sections from letter 2333 (16, including 2 not approved);
+  - the RM purchase list (no rates);
+  - the 21 SBPDCL drawings;
+  - the CEE-000532 mixed BOM as a draft.
+
+  It is idempotent.

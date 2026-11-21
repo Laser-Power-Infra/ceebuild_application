@@ -3,6 +3,7 @@ import { UserError } from '@/lib/actionResult';
 import { getGroqApiKey } from '@/lib/groqHelper';
 import { autoMapHeaders, findHeaderRow, parsePieces } from '@/lib/bom/parse';
 import { cleanLines, parseAiLines, type BomLineDraft } from '@/lib/costing/drawings';
+import { parseMixedBom, type MixedGroup } from '@/lib/costing/mixedBom';
 import { readWorkbook, sheetCells } from '@/modules/bom/server/workbook';
 
 // Piece list out of an enquiry drawing / BOM. Spreadsheets are read by the column rules of the
@@ -12,11 +13,21 @@ import { readWorkbook, sheetCells } from '@/modules/bom/server/workbook';
 export interface ExtractResult {
   lines: BomLineDraft[];
   note: string;
+  /** Mixed BOM: several structures, each with its own set count (lines is then all lines). */
+  groups?: MixedGroup[];
+  sites?: string[];
 }
 
 /** xlsx/csv -> lines, via the same header detection as the client BOM import. */
 export function extractFromSheet(buffer: Buffer): ExtractResult {
   const wb = readWorkbook(buffer);
+  // A multi-structure BOM (structure rows with set counts, e.g. SBPDCL RDSS) is read first.
+  for (const name of wb.SheetNames) {
+    const mixed = parseMixedBom(sheetCells(wb, name).cells);
+    if (mixed && mixed.groups.length > 0) {
+      return { lines: mixed.groups.flatMap((g) => g.lines), groups: mixed.groups, sites: mixed.sites, note: `Sheet "${name}". ${mixed.note}` };
+    }
+  }
   for (const name of wb.SheetNames) {
     const { cells } = sheetCells(wb, name);
     const headerRow = findHeaderRow(cells);

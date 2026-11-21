@@ -73,6 +73,8 @@ export interface BomLineDraft {
   unitWtKg: number | null;
   category: 'STRUCTURE' | 'NUTS_BOLTS' | 'BOUGHT_OUT';
   rateKey: string | null;
+  /** Supplied but not billed (BOM column "Billable / Non-Billable"). */
+  nonBillable?: boolean;
 }
 
 const NB_RE = /\b(nut|bolt|washer|n\s*&\s*b|hex\s*bolt|m\d{2}\s*x)/i;
@@ -99,6 +101,9 @@ export function nbSize(...texts: (string | null | undefined)[]): string | null {
 
 /** Category from the text: nuts/bolts/washers -> NUTS_BOLTS, known bought-out items -> BOUGHT_OUT, else STRUCTURE. */
 export function guessCategory(description: string | null, section: string | null): BomLineDraft['category'] {
+  // A piece cut from a steel section is fabricated, whatever it is for ("clamp for danger board",
+  // "eye hook/bolt" from 16 dia rod).
+  if (/^(ISMC|ISA|FLAT|RB)\d/.test(sectionKey(section) ?? '')) return 'STRUCTURE';
   const t = `${description ?? ''} ${section ?? ''}`;
   if (NB_RE.test(t)) return 'NUTS_BOLTS';
   if (BOUGHT_RE.test(t)) return 'BOUGHT_OUT';
@@ -141,9 +146,10 @@ export function cleanLines(rows: Record<string, unknown>[], opts: { lengthInMetr
       unitWtKg: num(g('unitWtKg', 'unit_wt_kg', 'unitWt')),
       category,
       rateKey,
+      nonBillable: r.nonBillable === true || r.nonBillable === 'true' || /^non/i.test(String(r.billable ?? '')),
     });
   }
-  return out.slice(0, 500);
+  return out.slice(0, 2000);
 }
 
 /** JSON array out of an AI reply (plain, fenced, or wrapped in {"lines": [...]}). */

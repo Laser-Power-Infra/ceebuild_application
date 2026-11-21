@@ -88,18 +88,41 @@ const toText = (v: unknown) => {
   return s === '' ? null : s;
 };
 
-/** "ISMC 100 x 50", "ISA-50X50X6 mm" -> "ISMC100X50", "ISA50X50X6". */
+/**
+ * "ISMC 100 x 50", "ISA-50X50X6 mm" -> "ISMC100X50", "ISA50X50X6". The section family is written
+ * one way however the BOM spells it (M14, SBPDCL BOM): L / ANGLE -> ISA, FL / FT / FLAT / MS FLAT
+ * -> FLAT, MC / CHANNEL -> ISMC, "16 Dia" / "Round bar 16" / "RB 16" / "Rod 16" -> RB16.
+ */
 export function sectionKey(section: string | null | undefined): string | null {
   if (!section) return null;
-  const k = section
+  let k = section
     .toUpperCase()
     .replace(/[×*]/g, 'X')
+    .replace(/Ø|Φ/g, 'DIA')
     // "6MM" / "6 MM" (unit touching a digit) as well as a free-standing "MM".
     .replace(/(\d)\s*MM(?![A-Z])/g, '$1')
     .replace(/\bMM\b/g, '')
     .replace(/[\s\-_.]/g, '');
-  return k || null;
+  if (!k) return null;
+  // Round bar: any of RB / ROD / ROUNDBAR / ROUND with a diameter, or a bare "16DIA".
+  const rb = k.match(/^(?:MS)?(?:ROUNDBAR|ROUND|RODS?|RB|RD|BAR)?(\d+(?:\.\d+)?)DIA$/) ?? k.match(/^(?:MS)?(?:ROUNDBAR|ROUND|RODS?|RB|RD)?DIA(\d+(?:\.\d+)?)$/) ?? k.match(/^(?:MS)?(?:ROUNDBAR|ROUND|RODS?|RB|RD)(\d+(?:\.\d+)?)$/);
+  if (rb) return `RB${rb[1]}`;
+  const fam: [RegExp, string][] = [
+    [/^(?:MS)?(?:ANGLE|ANG|ISA|L)(?=\d)/, 'ISA'],
+    [/^(?:MS)?(?:FLAT|FLT|FL|FT|PF|F)(?=\d)/, 'FLAT'],
+    [/^(?:MS)?(?:CHANNEL|ISMC|MC|C)(?=\d)/, 'ISMC'],
+  ];
+  for (const [re, name] of fam) {
+    if (re.test(k)) {
+      k = k.replace(re, name);
+      break;
+    }
+  }
+  return k;
 }
+
+/** Size part of a section key: "ISMC75X40" -> "75X40", "RB16" -> "16". */
+export const sectionDims = (key: string) => key.replace(/^[A-Z]+/, '');
 
 export interface ParsedPiece {
   rowNo: number; // 1-based row number in the sheet

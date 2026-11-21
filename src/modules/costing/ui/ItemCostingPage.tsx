@@ -1,12 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { AlertTriangle, ArrowLeft, BookPlus, CheckCircle2, FileSpreadsheet, Library, Lock, Pencil, Plus, RefreshCw, Trash2, Unlock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FormError, Modal, fieldCls, labelCls } from '@/components/Modal';
 import {
   addBomLineAction,
+  addGroupFromDrawingAction,
+  deleteGroupAction,
+  listDrawingsAction,
+  updateGroupAction,
   addBomToLibraryAction,
   archiveDrawingAction,
   confirmItemBomAction,
@@ -23,7 +27,9 @@ import {
 } from '@/app/actions/costing';
 import { CATEGORIES, CATEGORY_LABELS, FAB_LABELS, FAB_TYPES, SCOPES, SCOPE_LABELS, type Category, type Scope } from '@/lib/costing/calc';
 import { MATCH_LABELS, type BomLineDraft, type MatchLevel } from '@/lib/costing/drawings';
-import type { BomLineRow, DocketInfo, DrawingSuggestion, ItemBomInfo, ItemInfo } from '../server/itemBom';
+import type { BomGroupRow, BomLineRow, DocketInfo, DrawingSuggestion, ItemBomInfo, ItemInfo } from '../server/itemBom';
+import type { MixedGroup } from '@/lib/costing/mixedBom';
+import type { DrawingRow } from '../server/drawings';
 import type { CostingPreview, SavedCosting } from '../server/compute';
 import { Badge, DraftLinesEditor, DrawingExtractor, card, cellInput, inr, td, th } from './shared';
 
@@ -109,6 +115,7 @@ function CreateBom({
 }) {
   const { item, docket } = data;
   const [draft, setDraft] = useState<BomLineDraft[]>([]);
+  const [groups, setGroups] = useState<MixedGroup[] | null>(null);
   const [note, setNote] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [drawingRef, setDrawingRef] = useState('');
@@ -133,7 +140,7 @@ function CreateBom({
       const a = await archiveDrawingAction(fd);
       if (a.success) s3Key = a.data;
     }
-    const r = await createBomFromLinesAction(item.id, { source, lines: draft, fileName: file?.name ?? null, s3Key, drawingRef, note, structureType });
+    const r = await createBomFromLinesAction(item.id, { source, lines: groups ? [] : draft, groups: groups ?? undefined, fileName: file?.name ?? null, s3Key, drawingRef, note, structureType });
     setBusy(false);
     if (!r.success) return onError(r.error);
     onDone();
@@ -175,8 +182,9 @@ function CreateBom({
         <div className="flex flex-col gap-3">
           <DrawingExtractor
             disabled={!canEdit}
-            onLines={(l, n, f) => {
+            onLines={(l, n, f, extra) => {
               setDraft(l);
+              setGroups(extra?.groups ?? null);
               setNote(n);
               setFile(f);
               if (!drawingRef) setDrawingRef(f.name.replace(/\.[^.]+$/, ''));
@@ -187,10 +195,10 @@ function CreateBom({
             <label className={labelCls} htmlFor="dref">Drawing no. / reference</label>
             <input id="dref" className={fieldCls} value={drawingRef} onChange={(e) => setDrawingRef(e.target.value)} />
           </div>
-          <DraftLinesEditor lines={draft} onChange={setDraft} />
+          {groups ? <StructuresPreview groups={groups} onChange={setGroups} /> : <DraftLinesEditor lines={draft} onChange={setDraft} />}
           {canEdit && (
             <div className="flex flex-wrap gap-2">
-              <Button disabled={busy || draft.length === 0} onClick={() => void saveDraft('ENQUIRY_DRAWING')}>
+              <Button disabled={busy || (groups ? groups.length === 0 : draft.length === 0)} onClick={() => void saveDraft('ENQUIRY_DRAWING')}>
                 <CheckCircle2 /> I have checked the lines – save BOM
               </Button>
               <Button variant="outline" disabled={busy} onClick={() => void saveDraft('MANUAL')} title="Save the lines typed above as a manual BOM (no drawing)">
@@ -298,10 +306,18 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
     if (!r.success) return onError(r.error);
     reload();
   };
+  const [adding, setAdding] = useState(false);
+  const blocks = useMemo(() => {
+    if (bom.groups.length === 0) return [{ g: null as BomGroupRow | null, lines: bom.lines }];
+    const out: { g: BomGroupRow | null; lines: BomLineRow[] }[] = bom.groups.map((g) => ({ g, lines: bom.lines.filter((l) => l.groupId === g.id) }));
+    const orphans = bom.lines.filter((l) => !bom.groups.some((g) => g.id === l.groupId));
+    if (orphans.length) out.push({ g: null, lines: orphans });
+    return out;
+  }, [bom.groups, bom.lines]);
   const counts = useMemo(() => {
     const c = { costed: 0, nb: 0, excluded: 0 };
     for (const l of bom.lines) {
-      if (l.scope === 'NOT_IN_SCOPE' || l.scope === 'CLIENT_SUPPLY' || l.nonBillable) c.excluded++;
+      if (l.scope === 'NOT_IN_SCOPE' || l.scope === 'CLIENT_SUPPLY') c.excluded++;
       else if (l.category === 'NUTS_BOLTS') c.nb++;
       else c.costed++;
     }
@@ -332,8 +348,8 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
           <div className="flex flex-wrap gap-2">
             {draft ? (
               <>
-                <Button size="sm" variant="outline" onClick={async () => { const r = await addBomLineAction(bom.id); if (!r.success) return onError(r.error); reload(); }}>
-                  <Plus /> Line
+                <Button size="sm" variant="outline" onClick={() => setAdding(true)} title="Add a structure from the Approved Drawing Library, with its set count (mixed BOM)">
+                  <Library /> Add structure
                 </Button>
                 <Button size="sm" onClick={async () => { const r = await confirmItemBomAction(bom.id); if (!r.success) return onError(r.error); reload(); }}>
                   <Lock /> Confirm BOM
@@ -390,8 +406,13 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
                 <td className={`${td} py-4 text-center text-slate-700`} colSpan={12}>No lines. Add lines or create the BOM from a drawing.</td>
               </tr>
             )}
-            {bom.lines.map((l) => {
-              const out = l.scope === 'NOT_IN_SCOPE' || l.scope === 'CLIENT_SUPPLY' || l.nonBillable;
+            {blocks.map(({ g, lines: gl }) => (
+              <Fragment key={g?.id ?? 0}>
+                {g && (bom.groups.length > 1 || g.sets !== null || !locked) && (
+                  <GroupHeaderRow g={g} bom={bom} locked={locked} reload={reload} onError={onError} colSpan={locked ? 11 : 12} />
+                )}
+            {gl.map((l) => {
+              const out = l.scope === 'NOT_IN_SCOPE' || l.scope === 'CLIENT_SUPPLY';
               return (
                 <tr key={l.id} className={out ? 'bg-slate-50 text-slate-600' : l.category === 'NUTS_BOLTS' ? 'bg-violet-50/40' : ''}>
                   <td className={`${td} text-slate-700`}>{l.rowNo}</td>
@@ -431,14 +452,17 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
                 </tr>
               );
             })}
+              </Fragment>
+            ))}
           </tbody>
         </table>
       </div>
       <p className="mt-2 text-xs text-slate-700">
-        Only <b>In scope</b> and <b>Bought-out</b> lines are costed. Nuts &amp; bolts are costed from their own rate (rate key = size, e.g. M16X40) and quoted as a separate line – not in the
-        structure weight or per-kg price. Not in scope / Client supply / Non-billable lines are listed but not priced. Weight always uses kg/m from GTP Sections.
+        Only <b>In scope</b> and <b>Bought-out</b> lines are costed. <b>Non-billable</b> lines are supplied, so they are costed, but their weight is not billed (the cost is carried on the billable kg). Nuts &amp; bolts are costed from their own rate (rate key = size, e.g. M16X40) and quoted as a separate line – not in the
+        structure weight or per-kg price. Not in scope / Client supply lines are listed but not priced. Weight always uses kg/m from GTP Sections.
       </p>
 
+      {adding && <AddStructureModal bomId={bom.id} onClose={() => setAdding(false)} onDone={() => { setAdding(false); reload(); }} onError={onError} />}
       {lib && (
         <Modal title="Add to Approved Drawing Library" onClose={() => setLib(null)}>
           <form
@@ -526,7 +550,8 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
 
   const res = p?.result;
   const basisLabel = bom.billingBasis === 'GALV' ? 'galvanised' : 'black';
-  const unitLabel = p?.setsBasis === 'WEIGHT' ? `per kg (${basisLabel})` : 'per set';
+  const perKgPrice = p?.setsBasis === 'WEIGHT' || p?.setsBasis === 'STRUCTURES' || !p?.result.perSet;
+  const unitLabel = perKgPrice ? `per kg (${basisLabel})` : 'per set';
 
   return (
     <section className={card}>
@@ -566,8 +591,10 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
         <div>
           <span className={labelCls}>Sets</span>
           <div className="py-2 text-sm font-semibold">
-            {res ? inr(res.sets, 3) : '–'}
-            <span className="ml-1 text-xs font-normal text-slate-700">{p?.setsBasis === 'WEIGHT' ? `= ${data.item.qty} ${data.item.uom} ÷ set wt` : p?.setsBasis === 'SETS' ? `= item qty` : ''}</span>
+            {res ? (res.sets !== null ? inr(res.sets, 3) : `${res.groups.length} structures`) : '–'}
+            <span className="ml-1 text-xs font-normal text-slate-700">
+              {p?.setsBasis === 'WEIGHT' ? `= ${data.item.qty} ${data.item.uom} ÷ set wt` : p?.setsBasis === 'SETS' ? '= set count of the BOM' : p?.setsBasis === 'STRUCTURES' ? `${inr(res?.totalSets ?? 0, 0)} sets in all` : ''}
+            </span>
           </div>
         </div>
       </div>
@@ -575,12 +602,25 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
       {res && (
         <>
           <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
-            <Stat label="Black wt / set" value={`${inr(res.perSet.blackWtKg, 3)} kg`} />
-            <Stat label="Galv wt / set" value={`${inr(res.perSet.galvWtKg, 3)} kg`} />
+            {res.perSet ? (
+              <>
+                <Stat label="Black wt / set" value={`${inr(res.perSet.blackWtKg, 3)} kg`} />
+                <Stat label="Galv wt / set" value={`${inr(res.perSet.galvWtKg, 3)} kg`} />
+              </>
+            ) : (
+              <>
+                <Stat label="Net black wt (all)" value={`${inr((p?.netKg ?? res.structure.blackWtKg) / 1000, 3)} MT`} />
+                <Stat label={`Billable ${basisLabel} wt`} value={`${inr(res.structure.billedWtKg / 1000, 3)} MT`} />
+              </>
+            )}
             <Stat label={`Cost / kg (${basisLabel})`} value={`Rs ${inr(res.structure.costPerKg)}`} />
             <Stat label={`Selling / kg (${basisLabel})`} value={`Rs ${inr(res.structure.sellPerKg)}`} strong tone={res.checks.belowMinVa ? 'red' : undefined} />
-            <Stat label="Selling / set (structure)" value={`Rs ${inr(res.perSet.sell)}`} />
-            <Stat label="N&B / set (separate line)" value={`Rs ${inr(res.nutsBolts.perSetSell)}`} />
+            {res.perSet ? (
+              <Stat label="Selling / set (structure)" value={`Rs ${inr(res.perSet.sell)}`} />
+            ) : (
+              <Stat label="Selling / MT (billable)" value={`Rs ${inr(res.structure.sellPerKg * 1000, 0)}`} strong />
+            )}
+            <Stat label="N&B + bought-out (separate)" value={`Rs ${inr(res.nutsBolts.sell + res.boughtOut.sell, 0)}`} />
             <Stat label="Item total (all sets)" value={`Rs ${inr(res.grandSell, 0)}`} strong />
           </div>
 
@@ -594,6 +634,12 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
               <div key={`b${i}`} className="pl-5 text-xs text-rose-800">• {m}</div>
             ))}
             {p?.planNote && <div className="text-xs text-slate-700">{p.planNote}</div>}
+          </div>
+
+          {res.groups.length > 1 && <StructureSummary res={res} basisLabel={basisLabel} />}
+          {p && p.sectionWeights.length > 0 && <SectionWeights p={p} />}
+
+          <div className="mt-1">
             {res.checks.messages.length === 0 && <div className="flex items-center gap-1.5 text-xs text-emerald-800"><CheckCircle2 className="h-3.5 w-3.5" /> All checks passed.</div>}
           </div>
 
@@ -622,8 +668,16 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
                 </tr>
               </thead>
               <tbody>
-                {res.lines.map((l) => (
-                  <tr key={l.rowNo} className={l.status === 'EXCLUDED' ? 'text-slate-700' : l.status === 'FLAGGED' ? 'bg-rose-50' : ''}>
+                {res.lines.map((l, i) => (
+                  <Fragment key={l.rowNo}>
+                  {l.group && l.group !== res.lines[i - 1]?.group && (
+                    <tr>
+                      <td colSpan={18} className="border-b border-slate-300 bg-slate-100 px-2 py-1.5 text-[13px] font-bold text-slate-900">
+                        {l.group} <span className="font-semibold text-slate-700">· {inr(l.sets, l.sets % 1 ? 3 : 0)} sets</span>
+                      </td>
+                    </tr>
+                  )}
+                  <tr className={l.status === 'EXCLUDED' ? 'text-slate-700' : l.status === 'FLAGGED' ? 'bg-rose-50' : ''}>
                     <td className={td}>{l.rowNo}</td>
                     <td className={td}>{l.markNo ?? ''}</td>
                     <td className={td}>{l.section ?? CATEGORY_LABELS[l.category as Category]}</td>
@@ -649,6 +703,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
                     <td className={`${td} text-right font-semibold`}>{inr(l.cost)}</td>
                     <td className={`${td} text-right font-semibold`}>{inr(l.sell)}</td>
                   </tr>
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -683,7 +738,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
                 onClick={() => void save(true)}
                 title={!res.checks.ok ? 'Fix the flagged lines first' : p?.bomStatus !== 'CONFIRMED' ? 'Confirm the BOM first' : ''}
               >
-                <CheckCircle2 /> Save &amp; apply Rs {inr(p?.setsBasis === 'WEIGHT' ? res.structure.sellPerKg : res.perSet.sell)} {unitLabel} to the quotation
+                <CheckCircle2 /> Save &amp; apply Rs {inr(perKgPrice || !res.perSet ? res.structure.sellPerKg : res.perSet.sell)} {unitLabel} to the quotation
               </Button>
               {res.checks.belowMinVa && role !== 'Admin' && <span className="text-xs text-rose-800">Below minimum VA: only an Admin can apply.</span>}
               {msg && <span className="text-xs font-semibold text-emerald-800">{msg}</span>}
@@ -738,6 +793,310 @@ function Stat({ label, value, strong, tone }: { label: string; value: string; st
     <div className={`rounded-lg border px-3 py-2 ${tone === 'red' ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'}`}>
       <div className="text-xs text-slate-700">{label}</div>
       <div className={`text-sm ${strong ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>{value}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Mixed BOM (several structures, each with its own set count).
+// ---------------------------------------------------------------------------
+
+const fmtSets = (n: number) => String(Math.round(n * 1000) / 1000);
+
+/** Structures read from a mixed BOM, before saving: names and set counts can be corrected. */
+function StructuresPreview({ groups, onChange }: { groups: MixedGroup[]; onChange: (g: MixedGroup[]) => void }) {
+  const lines = groups.reduce((a, g) => a + g.lines.length, 0);
+  const nonBill = groups.reduce((a, g) => a + g.lines.filter((l) => l.nonBillable).length, 0);
+  return (
+    <div className="max-h-[55vh] overflow-auto rounded-lg border border-slate-200">
+      <div className="sticky top-0 border-b border-slate-200 bg-blue-50 px-3 py-2 text-[13px] text-blue-900">
+        <b>Mixed BOM:</b> {groups.length} structures, {lines} lines ({nonBill} non-billable). Check every set count against the client BOM; the price is built from these counts.
+      </div>
+      <table className="w-full border-collapse">
+        <thead>
+          <tr>
+            <th className={th}>#</th>
+            <th className={th}>Structure</th>
+            <th className={th}>Drawing no.</th>
+            <th className={th}>Sets by site</th>
+            <th className={`${th} text-right`}>Sets</th>
+            <th className={`${th} text-right`}>Lines</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g, i) => (
+            <tr key={i} className={g.sets === 0 ? 'text-slate-500' : ''}>
+              <td className={td}>{i + 1}</td>
+              <td className={td}>
+                <input className={cellInput} value={g.name} onChange={(e) => onChange(groups.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))} />
+              </td>
+              <td className={td}>{g.drawingNo ?? '–'}</td>
+              <td className={`${td} text-xs`}>
+                {Object.entries(g.siteSets)
+                  .filter(([, n]) => n)
+                  .map(([site, n]) => `${site} ${fmtSets(n)}`)
+                  .join(' · ') || '–'}
+              </td>
+              <td className={`${td} w-28`}>
+                <input
+                  className={`${cellInput} text-right ${g.sets !== null && g.sets % 1 ? 'border-amber-500 bg-amber-50' : ''}`}
+                  inputMode="decimal"
+                  value={g.sets ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value.trim();
+                    const n = v === '' ? null : Number(v);
+                    onChange(groups.map((x, j) => (j === i ? { ...x, sets: n === null || Number.isNaN(n) ? null : n } : x)));
+                  }}
+                  title={g.sets !== null && g.sets % 1 ? 'Fractional set count – check' : ''}
+                />
+              </td>
+              <td className={`${td} text-right`}>{g.lines.length}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function GroupHeaderRow({ g, bom, locked, reload, onError, colSpan }: { g: BomGroupRow; bom: ItemBomInfo; locked: boolean; reload: () => void; onError: (e: string) => void; colSpan: number }) {
+  const initial = g.sets === null ? '' : String(g.sets);
+  const [sets, setSets] = useState(initial);
+  useEffect(() => setSets(initial), [initial]);
+  const sites = Object.entries(g.siteSets ?? {}).filter(([, n]) => n);
+  const single = bom.groups.length === 1;
+  return (
+    <tr>
+      <td colSpan={colSpan} className="border-b border-slate-300 bg-slate-100 px-2 py-1.5">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] text-slate-900">
+          <span className="font-bold">
+            {g.seq}. {g.name}
+          </span>
+          <span className="text-slate-700">
+            Drawing: <b>{g.drawingNo ?? '–'}</b>
+          </span>
+          <label className="flex items-center gap-1.5">
+            <span className="font-semibold">Sets</span>
+            <input
+              className={`${cellInput} w-28 text-right ${g.sets !== null && g.sets % 1 ? 'border-amber-500 bg-amber-50' : ''}`}
+              disabled={locked}
+              inputMode="decimal"
+              placeholder={single ? 'from item qty' : 'required'}
+              value={sets}
+              onChange={(e) => setSets(e.target.value)}
+              onBlur={async () => {
+                if (sets === initial) return;
+                const r = await updateGroupAction(g.id, 'sets', sets);
+                if (!r.success) {
+                  setSets(initial);
+                  return onError(r.error);
+                }
+                reload();
+              }}
+            />
+          </label>
+          {sites.length > 0 && <span className="text-xs text-slate-700">{sites.map(([site, n]) => `${site} ${fmtSets(n)}`).join(' · ')}</span>}
+          <span className="text-xs text-slate-700">{g.lineCount} lines</span>
+          {!locked && (
+            <span className="ml-auto flex gap-3">
+              <button
+                type="button"
+                className="text-xs font-semibold text-blue-800 hover:underline"
+                onClick={async () => {
+                  const r = await addBomLineAction(bom.id, g.id);
+                  if (!r.success) return onError(r.error);
+                  reload();
+                }}
+              >
+                + line
+              </button>
+              {!single && (
+                <button
+                  type="button"
+                  className="text-xs font-semibold text-rose-800 hover:underline"
+                  onClick={async () => {
+                    if (!window.confirm(`Remove structure "${g.name}" and its ${g.lineCount} lines from this BOM?`)) return;
+                    const r = await deleteGroupAction(g.id);
+                    if (!r.success) return onError(r.error);
+                    reload();
+                  }}
+                >
+                  remove structure
+                </button>
+              )}
+            </span>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+/** Add an approved drawing as one more structure (with its set count) to a draft BOM. */
+function AddStructureModal({ bomId, onClose, onDone, onError }: { bomId: number; onClose: () => void; onDone: () => void; onError: (e: string) => void }) {
+  const [list, setList] = useState<DrawingRow[]>([]);
+  const [q, setQ] = useState('');
+  const [pick, setPick] = useState<number | null>(null);
+  const [sets, setSets] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    void listDrawingsAction().then((r) => (r.success ? setList(r.data.drawings.filter((d) => d.status === 'APPROVED')) : setErr(r.error)));
+  }, []);
+  const needle = q.trim().toLowerCase();
+  const shown = list.filter((d) => !needle || `${d.drawingNo} ${d.itemType} ${d.utility} ${d.state ?? ''}`.toLowerCase().includes(needle)).slice(0, 60);
+  return (
+    <Modal title="Add structure from an approved drawing" wide onClose={onClose}>
+      <div className="flex flex-col gap-3">
+        <input className={fieldCls} placeholder="Search drawing no., structure type, utility" value={q} onChange={(e) => setQ(e.target.value)} />
+        <div className="max-h-[45vh] overflow-auto rounded-lg border border-slate-200">
+          <table className="w-full border-collapse">
+            <thead>
+              <tr>
+                <th className={th} />
+                <th className={th}>Drawing</th>
+                <th className={th}>Structure type</th>
+                <th className={th}>Utility / state</th>
+                <th className={`${th} text-right`}>Set wt kg</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((d) => (
+                <tr key={d.id} className={`cursor-pointer ${pick === d.id ? 'bg-blue-50' : 'hover:bg-slate-50'}`} onClick={() => setPick(d.id)}>
+                  <td className={td}>
+                    <input type="radio" checked={pick === d.id} onChange={() => setPick(d.id)} aria-label={d.drawingNo} />
+                  </td>
+                  <td className={`${td} font-semibold`}>
+                    {d.drawingNo} rev {d.revision}
+                  </td>
+                  <td className={td}>{d.itemType}</td>
+                  <td className={td}>
+                    {d.utility} / {d.state ?? '–'}
+                  </td>
+                  <td className={`${td} text-right`}>{inr(d.setWtKg, 3)}</td>
+                </tr>
+              ))}
+              {shown.length === 0 && (
+                <tr>
+                  <td colSpan={5} className={`${td} py-4 text-center`}>
+                    No approved drawing found.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-end gap-3">
+          <div className="w-40">
+            <label className={labelCls} htmlFor="as-sets">
+              Number of sets
+            </label>
+            <input id="as-sets" className={fieldCls} inputMode="decimal" value={sets} onChange={(e) => setSets(e.target.value)} />
+          </div>
+          <FormError error={err} />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            disabled={!pick || sets.trim() === ''}
+            onClick={async () => {
+              const r = await addGroupFromDrawingAction(bomId, pick, sets);
+              if (!r.success) {
+                setErr(r.error);
+                return onError(r.error);
+              }
+              onDone();
+            }}
+          >
+            Add structure
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function StructureSummary({ res, basisLabel }: { res: CostingPreview['result']; basisLabel: string }) {
+  return (
+    <div className="mt-4 overflow-x-auto">
+      <h3 className="mb-1 text-sm font-semibold text-slate-900">By structure</h3>
+      <table className="w-full min-w-[900px] border-collapse">
+        <thead>
+          <tr>
+            <th className={th}>Structure</th>
+            <th className={`${th} text-right`}>Sets</th>
+            <th className={`${th} text-right`}>Black kg / set</th>
+            <th className={`${th} text-right`}>Billable {basisLabel} kg / set</th>
+            <th className={`${th} text-right`}>Selling / set</th>
+            <th className={`${th} text-right`}>Black kg (all)</th>
+            <th className={`${th} text-right`}>Selling (structure)</th>
+            <th className={`${th} text-right`}>N&amp;B / bought-out</th>
+          </tr>
+        </thead>
+        <tbody>
+          {res.groups.map((g) => (
+            <tr key={g.name} className={g.sets === 0 ? 'text-slate-500' : ''}>
+              <td className={`${td} font-medium`}>{g.name}</td>
+              <td className={`${td} text-right ${g.sets % 1 ? 'font-bold text-amber-800' : ''}`}>{inr(g.sets, g.sets % 1 ? 3 : 0)}</td>
+              <td className={`${td} text-right`}>{inr(g.blackWtPerSet, 3)}</td>
+              <td className={`${td} text-right`}>{inr(g.billedWtPerSet, 3)}</td>
+              <td className={`${td} text-right`}>{inr(g.sellPerSet)}</td>
+              <td className={`${td} text-right`}>{inr(g.blackWtKg, 1)}</td>
+              <td className={`${td} text-right font-semibold`}>{inr(g.sell, 0)}</td>
+              <td className={`${td} text-right`}>{g.otherSell ? inr(g.otherSell, 0) : '–'}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td className={`${td} font-bold`}>Total</td>
+            <td className={`${td} text-right font-bold`}>{inr(res.totalSets, 0)}</td>
+            <td className={td} colSpan={3} />
+            <td className={`${td} text-right font-bold`}>{inr(res.structure.blackWtKg, 1)}</td>
+            <td className={`${td} text-right font-bold`}>{inr(res.structure.sell, 0)}</td>
+            <td className={`${td} text-right font-bold`}>{inr(res.nutsBolts.sell + res.boughtOut.sell, 0)}</td>
+          </tr>
+        </tfoot>
+      </table>
+      <p className="mt-1 text-xs text-slate-700">Only lines that could be costed are in these totals; flagged lines are listed above.</p>
+    </div>
+  );
+}
+
+/** Net weight by section, for checking against an independent take-off (e.g. 100.07 MT for SBPDCL). */
+function SectionWeights({ p }: { p: CostingPreview }) {
+  return (
+    <div className="mt-4 overflow-x-auto">
+      <h3 className="mb-1 text-sm font-semibold text-slate-900">Weight by section (net black, all supplied pieces)</h3>
+      <table className="border-collapse">
+        <thead>
+          <tr>
+            <th className={th}>Section</th>
+            <th className={`${th} text-right`}>Total MT</th>
+            <th className={`${th} text-right`}>Billable MT</th>
+            <th className={th}>GTP</th>
+          </tr>
+        </thead>
+        <tbody>
+          {p.sectionWeights.map((sw) => (
+            <tr key={sw.key}>
+              <td className={td}>{sw.label}</td>
+              <td className={`${td} text-right`}>{inr(sw.kg / 1000, 3)}</td>
+              <td className={`${td} text-right`}>{inr(sw.billableKg / 1000, 3)}</td>
+              <td className={td}>{!sw.inGtp ? <Badge tone="red">not in GTP</Badge> : sw.approved ? <Badge tone="green">approved</Badge> : <Badge tone="amber">not approved – confirm</Badge>}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td className={`${td} font-bold`}>Total</td>
+            <td className={`${td} text-right font-bold`}>{inr(p.netKg / 1000, 3)}</td>
+            <td className={`${td} text-right font-bold`}>{inr(p.sectionWeights.reduce((a, sw) => a + sw.billableKg, 0) / 1000, 3)}</td>
+            <td className={td} />
+          </tr>
+        </tfoot>
+      </table>
     </div>
   );
 }
