@@ -62,7 +62,7 @@ export function CostingMasterPage({ role }: { role: string }) {
     <div className="flex flex-col gap-4">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">Costing Master</h1>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-slate-700">
           Every factor used by the BOM costing is read from here – nothing is hard-coded. Each value has an effective date and is kept as a version: a new value is a new row, so an
           old quotation always shows the rates of its date. Only Admins can change it; every change goes to the Audit Log.
         </p>
@@ -79,7 +79,7 @@ export function CostingMasterPage({ role }: { role: string }) {
         <div className="mb-2 flex items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold">RM purchase list</h2>
-            <p className="text-[11px] text-slate-500">Short, fixed list of sections actually bought. A BOM line must map to one of these (one rate); any other section is flagged, not costed.</p>
+            <p className="text-xs text-slate-700">Short, fixed list of sections actually bought. A BOM line must map to one of these (one rate); any other section is flagged, not costed.</p>
           </div>
           {isAdmin && (
             <Button size="sm" onClick={() => setItemForm({ label: '', category: 'CHANNEL', sortOrder: String(items.length + 1), active: true })}>
@@ -101,20 +101,20 @@ export function CostingMasterPage({ role }: { role: string }) {
           <tbody>
             {items.length === 0 && (
               <tr>
-                <td className={`${td} py-4 text-center text-slate-500`} colSpan={6}>No purchase items yet. Add ISMC 75x40, ISMC 100x50, the angles, flats and round bar actually bought.</td>
+                <td className={`${td} py-4 text-center text-slate-700`} colSpan={6}>No purchase items yet. Add ISMC 75x40, ISMC 100x50, the angles, flats and round bar actually bought.</td>
               </tr>
             )}
             {items.map((i) => {
               const r = rates.find((x) => x.kind === 'RM_RATE' && x.subject === i.sectionKey && x.current);
               return (
                 <tr key={i.id}>
-                  <td className={`${td} font-semibold`}>{i.label} <span className="font-normal text-slate-400">{i.sectionKey}</span></td>
+                  <td className={`${td} font-semibold`}>{i.label} <span className="font-normal text-slate-700">{i.sectionKey}</span></td>
                   <td className={td}>{i.category}</td>
                   <td className={`${td} text-right`}>{i.kgPerM ?? <Badge tone="amber">add in GTP Sections</Badge>}</td>
                   <td className={`${td} text-right`}>
                     {r ? `${inr(r.value)} from ${r.effectiveFrom}` : <Badge tone="red">no rate</Badge>}
                     {isAdmin && (
-                      <button type="button" className="ml-2 text-[11px] font-semibold text-blue-700 hover:underline" onClick={() => openRate('RM_RATE', i.label)}>
+                      <button type="button" className="ml-2 text-xs font-semibold text-blue-800 hover:underline" onClick={() => openRate('RM_RATE', i.label)}>
                         new rate
                       </button>
                     )}
@@ -122,7 +122,7 @@ export function CostingMasterPage({ role }: { role: string }) {
                   <td className={td}>{i.active ? <Badge tone="green">Active</Badge> : <Badge tone="slate">Inactive</Badge>}</td>
                   {isAdmin && (
                     <td className={td}>
-                      <button type="button" className="text-[11px] font-semibold text-blue-700 hover:underline" onClick={() => setItemForm({ label: i.label, category: i.category, sortOrder: String(i.sortOrder), active: i.active })}>
+                      <button type="button" className="text-xs font-semibold text-blue-800 hover:underline" onClick={() => setItemForm({ label: i.label, category: i.category, sortOrder: String(i.sortOrder), active: i.active })}>
                         edit
                       </button>
                     </td>
@@ -136,7 +136,7 @@ export function CostingMasterPage({ role }: { role: string }) {
 
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">Rates</h2>
-        <label className="flex items-center gap-2 text-xs text-slate-600">
+        <label className="flex items-center gap-2 text-xs text-slate-700">
           <input type="checkbox" checked={showHistory} onChange={(e) => setShowHistory(e.target.checked)} />
           <History className="h-3.5 w-3.5" /> Show all versions (history)
         </label>
@@ -171,13 +171,13 @@ export function CostingMasterPage({ role }: { role: string }) {
             <tbody>
               {shown.filter((r) => (g.kinds as string[]).includes(r.kind)).length === 0 && (
                 <tr>
-                  <td className={`${td} py-3 text-center text-slate-400`} colSpan={8}>Not set</td>
+                  <td className={`${td} py-3 text-center text-slate-700`} colSpan={8}>Not set</td>
                 </tr>
               )}
               {shown
                 .filter((r) => (g.kinds as string[]).includes(r.kind))
                 .map((r) => (
-                  <tr key={r.id} className={r.current ? '' : 'text-slate-400'}>
+                  <tr key={r.id} className={r.current ? '' : 'text-slate-700'}>
                     <td className={td}>
                       {RATE_META[r.kind as RateKind]?.label ?? r.kind}{' '}
                       {r.current ? <Badge tone="green">in force</Badge> : r.effectiveFrom > today() ? <Badge tone="blue">future</Badge> : <Badge tone="slate">old</Badge>}
@@ -191,13 +191,13 @@ export function CostingMasterPage({ role }: { role: string }) {
                     {isAdmin && (
                       <td className={td}>
                         <div className="flex gap-1">
-                          <button type="button" className="text-[11px] font-semibold text-blue-700 hover:underline" onClick={() => setRateForm({ kind: r.kind as RateKind, subject: r.kind === 'RM_RATE' || r.kind === 'WASTAGE_PCT' ? (r.subject === 'DEFAULT' ? '' : labelOf(r.kind, r.subject)) : r.subject === 'DEFAULT' ? '' : r.subject, value: String(r.value), unit: r.unit, effectiveFrom: today(), source: '' })}>
+                          <button type="button" className="text-xs font-semibold text-blue-800 hover:underline" onClick={() => setRateForm({ kind: r.kind as RateKind, subject: r.kind === 'RM_RATE' || r.kind === 'WASTAGE_PCT' ? (r.subject === 'DEFAULT' ? '' : labelOf(r.kind, r.subject)) : r.subject === 'DEFAULT' ? '' : r.subject, value: String(r.value), unit: r.unit, effectiveFrom: today(), source: '' })}>
                             new version
                           </button>
                           <button
                             type="button"
                             aria-label="Delete this version"
-                            className="rounded p-0.5 text-slate-400 hover:text-rose-600"
+                            className="rounded p-0.5 text-slate-700 hover:text-rose-600"
                             onClick={async () => {
                               if (!window.confirm('Delete this rate version? Only possible if no saved costing used it.')) return;
                               const res = await deleteRateAction(r.id);
@@ -216,7 +216,7 @@ export function CostingMasterPage({ role }: { role: string }) {
           </table>
         </section>
       ))}
-      {!isAdmin && <p className="text-xs text-slate-500">Only Admins can change the Costing Master.</p>}
+      {!isAdmin && <p className="text-xs text-slate-700">Only Admins can change the Costing Master.</p>}
 
       {rateForm && (
         <Modal title={`New ${RATE_META[rateForm.kind].label}`} onClose={() => setRateForm(null)}>
@@ -276,7 +276,7 @@ export function CostingMasterPage({ role }: { role: string }) {
               <label className={labelCls} htmlFor="r-src">Source / reference</label>
               <input id="r-src" className={fieldCls} placeholder={rateForm.kind === 'RM_RATE' ? 'PO 1234 / GRN 567 dt 15-11-2026' : 'GI cost master Nov-2026'} value={rateForm.source} onChange={(e) => setRateForm({ ...rateForm, source: e.target.value })} />
             </div>
-            <p className="text-[11px] text-slate-500">The previous value is kept; quotations dated before the effective date keep using it.</p>
+            <p className="text-xs text-slate-700">The previous value is kept; quotations dated before the effective date keep using it.</p>
             <FormError error={error} />
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setRateForm(null)}>Cancel</Button>
@@ -320,7 +320,7 @@ export function CostingMasterPage({ role }: { role: string }) {
                 <input type="checkbox" checked={itemForm.active} onChange={(e) => setItemForm({ ...itemForm, active: e.target.checked })} /> Active (bought now)
               </label>
             </div>
-            <p className="text-[11px] text-slate-500">Matched to BOM lines and GTP Sections by the normalised section (spaces, “x”, “mm” ignored). Same section again = update.</p>
+            <p className="text-xs text-slate-700">Matched to BOM lines and GTP Sections by the normalised section (spaces, “x”, “mm” ignored). Same section again = update.</p>
             <FormError error={error} />
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setItemForm(null)}>Cancel</Button>

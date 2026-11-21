@@ -17,7 +17,7 @@ export function DocketCostingPage({ docketId }: { docketId: number }) {
   useEffect(() => {
     void docketCostingAction(docketId).then((r) => (r.success ? setData(r.data) : setError(r.error)));
   }, [docketId]);
-  if (!data) return <div className="p-6 text-sm text-slate-500">{error || 'Loading…'}</div>;
+  if (!data) return <div className="p-6 text-sm text-slate-700">{error || 'Loading…'}</div>;
   const { docket, rows } = data;
   const done = rows.filter((r) => r.costingId).length;
 
@@ -25,11 +25,11 @@ export function DocketCostingPage({ docketId }: { docketId: number }) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Link href="/?tab=dockets" className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-slate-800">
+          <Link href="/?tab=dockets" className="inline-flex items-center gap-1 text-xs text-slate-700 hover:text-slate-800">
             <ArrowLeft className="h-3.5 w-3.5" /> Dockets
           </Link>
           <h1 className="mt-1 text-xl font-semibold text-slate-900">Costing – {docket.docketNo ?? `docket #${docket.id}`}</h1>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-700">
             {docket.partyName} · {docket.utility ?? 'no utility'} · {docket.state ?? ''}
             {docket.deliveryLocation ? ` → ${docket.deliveryLocation}` : ''} · {done} of {rows.length} item(s) costed from a BOM
           </p>
@@ -60,7 +60,7 @@ export function DocketCostingPage({ docketId }: { docketId: number }) {
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td className={`${td} py-6 text-center text-slate-500`} colSpan={12}>This docket has no items.</td>
+                <td className={`${td} py-6 text-center text-slate-700`} colSpan={12}>This docket has no items.</td>
               </tr>
             )}
             {rows.map((r) => (
@@ -75,7 +75,7 @@ export function DocketCostingPage({ docketId }: { docketId: number }) {
                 </td>
                 <td className={`${td} text-right`}>
                   {r.price ? `Rs ${r.price}/${r.uomOfQtn ?? r.uom ?? ''}` : '–'}
-                  {!r.costingId && r.price && <div className="text-[10px] text-amber-700">typed, not from BOM</div>}
+                  {!r.costingId && r.price && <div className="text-xs text-amber-700">typed, not from BOM</div>}
                 </td>
                 <td className={`${td} text-right`}>{r.vaPct ?? '–'}</td>
                 <td className={`${td} text-right`}>{inr(r.sellPerSet)}</td>
@@ -88,7 +88,7 @@ export function DocketCostingPage({ docketId }: { docketId: number }) {
                   )}
                 </td>
                 <td className={td}>
-                  <Link href={`/costing/${r.itemId}`} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">
+                  <Link href={`/costing/${r.itemId}`} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-800 hover:underline">
                     <Calculator className="h-3.5 w-3.5" /> {r.bomId ? 'Open' : 'Create BOM'}
                   </Link>
                 </td>

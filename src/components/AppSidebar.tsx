@@ -113,7 +113,7 @@ export function AppSidebar({
       <>
         {active && <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-full bg-blue-600" aria-hidden />}
         <Icon
-          className={`h-4 w-4 shrink-0 ${n.soon ? 'text-slate-300' : active ? 'text-blue-600' : 'text-slate-400 group-hover:text-slate-600'}`}
+          className={`h-4 w-4 shrink-0 ${n.soon ? 'text-slate-300' : active ? 'text-blue-600' : 'text-slate-600 group-hover:text-slate-800'}`}
           strokeWidth={1.9}
         />
         {!rail && (
@@ -125,7 +125,7 @@ export function AppSidebar({
               </span>
             ) : (
               typeof count === 'number' && (
-                <span className="text-[11px] tabular-nums text-slate-400">{count.toLocaleString('en-IN')}</span>
+                <span className="text-[11px] tabular-nums text-slate-600">{count.toLocaleString('en-IN')}</span>
               )
             )}
           </>
@@ -187,7 +187,7 @@ export function AppSidebar({
                 onClick={() => toggleGroup(g.key)}
                 disabled={hasActive}
                 aria-expanded={open}
-                className="flex w-full items-center justify-between rounded px-2.5 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400 hover:text-slate-600 disabled:cursor-default disabled:hover:text-slate-400"
+                className="flex w-full items-center justify-between rounded px-2.5 pb-1.5 pt-1 text-xs font-bold uppercase tracking-wider text-slate-600 hover:text-slate-800 disabled:cursor-default disabled:hover:text-slate-600"
               >
                 {g.label}
                 {!hasActive && (
@@ -215,7 +215,7 @@ export function AppSidebar({
           {!rail && (
             <div className="min-w-0 flex-1 leading-tight">
               <div className="truncate text-[13px] font-medium text-slate-900">{user.name}</div>
-              <div className="text-[11px] text-slate-500">
+              <div className="text-xs text-slate-600">
                 {user.role}
                 {user.role === 'Viewer' ? ' · read-only' : ''}
               </div>
@@ -321,7 +321,7 @@ export function PageHeader({
     <div className="flex flex-wrap items-end justify-between gap-3">
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h1>
-        {description && <p className="mt-0.5 text-[13px] text-slate-500">{description}</p>}
+        {description && <p className="mt-0.5 text-[13px] text-slate-700">{description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>

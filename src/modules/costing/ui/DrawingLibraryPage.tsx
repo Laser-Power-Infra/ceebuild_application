@@ -65,7 +65,7 @@ export function DrawingLibraryPage({ role }: { role: string }) {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold text-slate-900">Approved Drawing Library</h1>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-700">
             Client-approved drawings with their BOM. When an enquiry comes without a drawing, the item BOM is taken from here: same utility + item → same state + item → any approved
             drawing of the item type (reference only – confirm). Add every new approval so the next enquiry can reuse it.
           </p>
@@ -85,10 +85,10 @@ export function DrawingLibraryPage({ role }: { role: string }) {
       <FormError error={error} />
       <div className="flex flex-wrap items-center gap-3">
         <input className={`${fieldCls} max-w-sm`} placeholder="Search utility, state, item type, drawing no, letter" value={q} onChange={(e) => setQ(e.target.value)} />
-        <label className="flex items-center gap-2 text-xs text-slate-600">
+        <label className="flex items-center gap-2 text-xs text-slate-700">
           <input type="checkbox" checked={showSuperseded} onChange={(e) => setShowSuperseded(e.target.checked)} /> Show superseded
         </label>
-        <span className="text-xs text-slate-500">{filtered.length} drawing(s)</span>
+        <span className="text-xs text-slate-700">{filtered.length} drawing(s)</span>
       </div>
 
       <div className={`${card} overflow-x-auto p-0`}>
@@ -113,12 +113,12 @@ export function DrawingLibraryPage({ role }: { role: string }) {
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td className={`${td} py-6 text-center text-slate-500`} colSpan={13}>No drawings yet. Add the approved drawings (e.g. SBPDCL letter 2333 dt 28-07-2025) with their BOM.</td>
+                <td className={`${td} py-6 text-center text-slate-700`} colSpan={13}>No drawings yet. Add the approved drawings (e.g. SBPDCL letter 2333 dt 28-07-2025) with their BOM.</td>
               </tr>
             )}
             {filtered.map((d) => (
               <Fragment key={d.id}>
-                <tr className={d.status === 'SUPERSEDED' ? 'text-slate-400' : ''}>
+                <tr className={d.status === 'SUPERSEDED' ? 'text-slate-700' : ''}>
                   <td className={td}>
                     <button type="button" aria-label="Show BOM lines" onClick={() => void toggle(d.id)} className="rounded p-0.5 hover:bg-slate-100">
                       {open === d.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
@@ -132,7 +132,7 @@ export function DrawingLibraryPage({ role }: { role: string }) {
                   <td className={td}>
                     {[d.approvalLetterNo, d.approvalDate && `dt ${d.approvalDate}`].filter(Boolean).join(' ') || '–'}
                     {canEdit && (
-                      <button type="button" className="ml-1 text-[11px] text-blue-700 hover:underline" onClick={() => void edit(d, 'approvalLetterNo', d.approvalLetterNo, 'Approval letter no.')}>
+                      <button type="button" className="ml-1 text-xs text-blue-800 hover:underline" onClick={() => void edit(d, 'approvalLetterNo', d.approvalLetterNo, 'Approval letter no.')}>
                         edit
                       </button>
                     )}
@@ -142,7 +142,7 @@ export function DrawingLibraryPage({ role }: { role: string }) {
                     {canEdit && (
                       <button
                         type="button"
-                        className="ml-1 text-[11px] text-blue-700 hover:underline"
+                        className="ml-1 text-xs text-blue-800 hover:underline"
                         onClick={async () => {
                           const r = await updateDrawingFieldAction(d.id, 'status', d.status === 'APPROVED' ? 'SUPERSEDED' : 'APPROVED');
                           if (!r.success) return setError(r.error);
@@ -158,11 +158,11 @@ export function DrawingLibraryPage({ role }: { role: string }) {
                   <td className={`${td} text-right`}>{d.usedBy}</td>
                   <td className={td}>
                     {d.fileLink ? (
-                      <a href={d.fileLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-700 hover:underline">
+                      <a href={d.fileLink} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-blue-800 hover:underline">
                         Drive <ExternalLink className="h-3 w-3" />
                       </a>
                     ) : canEdit ? (
-                      <button type="button" className="text-[11px] text-blue-700 hover:underline" onClick={() => void edit(d, 'fileLink', d.fileLink, 'Laser Drive link of the drawing')}>
+                      <button type="button" className="text-xs text-blue-800 hover:underline" onClick={() => void edit(d, 'fileLink', d.fileLink, 'Laser Drive link of the drawing')}>
                         add link
                       </button>
                     ) : (
@@ -174,7 +174,7 @@ export function DrawingLibraryPage({ role }: { role: string }) {
                       <button
                         type="button"
                         aria-label={`Delete drawing ${d.drawingNo}`}
-                        className="rounded p-1 text-slate-400 hover:text-rose-600"
+                        className="rounded p-1 text-slate-700 hover:text-rose-600"
                         onClick={async () => {
                           if (!window.confirm(`Delete drawing ${d.drawingNo} rev ${d.revision}? Item BOMs made from it keep their lines. Prefer "supersede".`)) return;
                           const r = await deleteDrawingAction(d.id);
@@ -190,7 +190,7 @@ export function DrawingLibraryPage({ role }: { role: string }) {
                 {open === d.id && (
                   <tr>
                     <td colSpan={13} className="bg-slate-50 p-3">
-                      {d.remarks && <p className="mb-2 text-xs text-slate-600">{d.remarks}</p>}
+                      {d.remarks && <p className="mb-2 text-xs text-slate-700">{d.remarks}</p>}
                       <table className="w-full border-collapse bg-white">
                         <thead>
                           <tr>
@@ -272,7 +272,7 @@ export function DrawingLibraryPage({ role }: { role: string }) {
                   if (!form.drawingNo) setForm((f) => (f ? { ...f, drawingNo: file.name.replace(/\.[^.]+$/, '').slice(0, 100) } : f));
                 }}
               />
-              {note && <p className="mt-2 rounded bg-blue-50 px-2 py-1 text-[11px] text-blue-900">{note}</p>}
+              {note && <p className="mt-2 rounded bg-blue-50 px-2 py-1 text-xs text-blue-900">{note}</p>}
               <div className="mt-2">
                 <DraftLinesEditor lines={draft} onChange={setDraft} />
               </div>

@@ -49,14 +49,14 @@ export function ItemCostingPage({ itemId, role }: { itemId: number; role: string
     void load();
   }, [load]);
 
-  if (!data) return <div className="p-6 text-sm text-slate-500">{error || 'Loading…'}</div>;
+  if (!data) return <div className="p-6 text-sm text-slate-700">{error || 'Loading…'}</div>;
   const { item, docket, bom } = data;
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <div className="flex items-center gap-2 text-xs text-slate-500">
+          <div className="flex items-center gap-2 text-xs text-slate-700">
             <Link href="/?tab=dockets" className="inline-flex items-center gap-1 hover:text-slate-800">
               <ArrowLeft className="h-3.5 w-3.5" /> Dockets
             </Link>
@@ -68,7 +68,7 @@ export function ItemCostingPage({ itemId, role }: { itemId: number; role: string
             )}
           </div>
           <h1 className="mt-1 text-xl font-semibold text-slate-900">BOM &amp; costing – {item.itemNameParty || item.ourItemName || `item #${item.id}`}</h1>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-700">
             {docket ? `${docket.docketNo} · ${docket.partyName ?? ''} · ${docket.utility ?? 'no utility'} · ${docket.state ?? ''}${docket.deliveryLocation ? ` → ${docket.deliveryLocation}` : ''}` : 'No docket found for this item'} · Qty{' '}
             <b>{item.qty ?? '–'} {item.uom ?? ''}</b> · Our item: {item.ourItemName ?? '–'} · Current price: <b>{item.price ? `Rs ${item.price}/${item.uomOfQtn ?? item.uom ?? ''}` : 'blank'}</b>
           </p>
@@ -144,7 +144,7 @@ function CreateBom({
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold">Create BOM</h2>
-          <p className="text-[11px] text-slate-500">The quotation price is calculated from this BOM. It is copied into the order when the PO comes, so quotation and execution use the same numbers.</p>
+          <p className="text-xs text-slate-700">The quotation price is calculated from this BOM. It is copied into the order when the PO comes, so quotation and execution use the same numbers.</p>
         </div>
         {data.bom && (
           <Button variant="outline" size="sm" onClick={() => setMode(null)}>
@@ -153,10 +153,10 @@ function CreateBom({
         )}
       </div>
       <div className="mb-3 flex gap-1 rounded-lg bg-slate-100 p-1 text-sm">
-        <button type="button" onClick={() => setMode('ENQUIRY')} className={`flex-1 rounded-md px-3 py-1.5 font-medium ${tab === 'ENQUIRY' ? 'bg-white shadow' : 'text-slate-600'}`}>
+        <button type="button" onClick={() => setMode('ENQUIRY')} className={`flex-1 rounded-md px-3 py-1.5 font-medium ${tab === 'ENQUIRY' ? 'bg-white shadow' : 'text-slate-700'}`}>
           (a) Drawing received with the enquiry
         </button>
-        <button type="button" onClick={() => setMode('APPROVED')} className={`flex-1 rounded-md px-3 py-1.5 font-medium ${tab === 'APPROVED' ? 'bg-white shadow' : 'text-slate-600'}`}>
+        <button type="button" onClick={() => setMode('APPROVED')} className={`flex-1 rounded-md px-3 py-1.5 font-medium ${tab === 'APPROVED' ? 'bg-white shadow' : 'text-slate-700'}`}>
           (b) Our approved drawing {suggestions.length ? `(${suggestions.length})` : ''}
         </button>
       </div>
@@ -182,7 +182,7 @@ function CreateBom({
               if (!drawingRef) setDrawingRef(f.name.replace(/\.[^.]+$/, ''));
             }}
           />
-          {note && <p className="rounded bg-blue-50 px-2 py-1 text-[11px] text-blue-900">{note}</p>}
+          {note && <p className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-900">{note}</p>}
           <div className="max-w-xl">
             <label className={labelCls} htmlFor="dref">Drawing no. / reference</label>
             <input id="dref" className={fieldCls} value={drawingRef} onChange={(e) => setDrawingRef(e.target.value)} />
@@ -201,14 +201,14 @@ function CreateBom({
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <p className="text-[11px] text-slate-500">
+          <p className="text-xs text-slate-700">
             Search order: same utility + item → same state + item → any approved drawing of the item type (reference only – confirm). Utility: <b>{docket?.utility ?? '–'}</b>, states:{' '}
             <b>{[docket?.state, docket?.deliveryLocation].filter(Boolean).join(', ') || '–'}</b>.
           </p>
           {suggestions.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-xs text-slate-500">
+            <div className="rounded-lg border border-dashed border-slate-300 p-4 text-center text-xs text-slate-700">
               No approved drawing for “{structureType || '–'}”. Use the enquiry drawing, or add the drawing in the{' '}
-              <Link href="/admin/drawings" className="text-blue-700 underline">Approved Drawing Library</Link>.
+              <Link href="/admin/drawings" className="text-blue-800 underline">Approved Drawing Library</Link>.
             </div>
           ) : (
             <table className="w-full border-collapse">
@@ -317,16 +317,16 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
             {draft ? <Badge tone="amber">Draft – check and confirm</Badge> : <Badge tone="green">Confirmed by {bom.confirmedByName}</Badge>}
             <Badge tone="slate">{SOURCE_LABELS[bom.source] ?? bom.source}</Badge>
             {bom.matchLevel && <Badge tone={levelTone(bom.matchLevel)}>{MATCH_LABELS[bom.matchLevel as MatchLevel]}</Badge>}
-            {bom.versions > 1 && <span className="text-[11px] text-slate-400">version {bom.versions}</span>}
+            {bom.versions > 1 && <span className="text-xs text-slate-700">version {bom.versions}</span>}
           </div>
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-slate-700">
             Drawing: <b>{bom.drawingRef || bom.fileName || '–'}</b>
             {bom.drawing?.fileLink && (
-              <a href={bom.drawing.fileLink} target="_blank" rel="noreferrer" className="ml-1 text-blue-700 underline">open</a>
+              <a href={bom.drawing.fileLink} target="_blank" rel="noreferrer" className="ml-1 text-blue-800 underline">open</a>
             )}
-            {bom.drawing?.status === 'SUPERSEDED' && <span className="ml-1 font-semibold text-rose-700">(drawing since superseded)</span>} · Structure type: <b>{bom.structureType ?? '–'}</b> · {counts.costed} structure/bought-out, {counts.nb} nuts &amp; bolts, {counts.excluded} excluded
+            {bom.drawing?.status === 'SUPERSEDED' && <span className="ml-1 font-semibold text-rose-800">(drawing since superseded)</span>} · Structure type: <b>{bom.structureType ?? '–'}</b> · {counts.costed} structure/bought-out, {counts.nb} nuts &amp; bolts, {counts.excluded} excluded
           </p>
-          {bom.extractNote && <p className="rounded bg-blue-50 px-2 py-1 text-[11px] text-blue-900">{bom.extractNote}</p>}
+          {bom.extractNote && <p className="rounded bg-blue-50 px-2 py-1 text-xs text-blue-900">{bom.extractNote}</p>}
         </div>
         {canEdit && (
           <div className="flex flex-wrap gap-2">
@@ -387,14 +387,14 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
           <tbody>
             {bom.lines.length === 0 && (
               <tr>
-                <td className={`${td} py-4 text-center text-slate-500`} colSpan={12}>No lines. Add lines or create the BOM from a drawing.</td>
+                <td className={`${td} py-4 text-center text-slate-700`} colSpan={12}>No lines. Add lines or create the BOM from a drawing.</td>
               </tr>
             )}
             {bom.lines.map((l) => {
               const out = l.scope === 'NOT_IN_SCOPE' || l.scope === 'CLIENT_SUPPLY' || l.nonBillable;
               return (
-                <tr key={l.id} className={out ? 'bg-slate-50 text-slate-400' : l.category === 'NUTS_BOLTS' ? 'bg-violet-50/40' : ''}>
-                  <td className={`${td} text-slate-400`}>{l.rowNo}</td>
+                <tr key={l.id} className={out ? 'bg-slate-50 text-slate-600' : l.category === 'NUTS_BOLTS' ? 'bg-violet-50/40' : ''}>
+                  <td className={`${td} text-slate-700`}>{l.rowNo}</td>
                   <td className={`${td} w-20`}><EditCell line={l} field="markNo" disabled={locked} onSaved={reload} onError={onError} /></td>
                   <td className={td}><EditCell line={l} field="description" disabled={locked} onSaved={reload} onError={onError} /></td>
                   <td className={`${td} w-36`}><EditCell line={l} field="section" disabled={locked} onSaved={reload} onError={onError} /></td>
@@ -413,7 +413,7 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
                   </td>
                   <td className={`${td} w-28`}>
                     {l.category === 'STRUCTURE' && l.scope !== 'BOUGHT_OUT' ? (
-                      <span className="text-[11px] text-slate-400">{l.sectionKey ?? ''}</span>
+                      <span className="text-xs text-slate-700">{l.sectionKey ?? ''}</span>
                     ) : (
                       <EditCell line={l} field="rateKey" disabled={locked} onSaved={reload} onError={onError} />
                     )}
@@ -423,7 +423,7 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
                   </td>
                   {!locked && (
                     <td className={td}>
-                      <button type="button" aria-label={`Delete row ${l.rowNo}`} className="rounded p-1 text-slate-400 hover:text-rose-600" onClick={async () => { const r = await deleteBomLineAction(l.id); if (!r.success) return onError(r.error); reload(); }}>
+                      <button type="button" aria-label={`Delete row ${l.rowNo}`} className="rounded p-1 text-slate-700 hover:text-rose-600" onClick={async () => { const r = await deleteBomLineAction(l.id); if (!r.success) return onError(r.error); reload(); }}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </td>
@@ -434,7 +434,7 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-[11px] text-slate-500">
+      <p className="mt-2 text-xs text-slate-700">
         Only <b>In scope</b> and <b>Bought-out</b> lines are costed. Nuts &amp; bolts are costed from their own rate (rate key = size, e.g. M16X40) and quoted as a separate line – not in the
         structure weight or per-kg price. Not in scope / Client supply / Non-billable lines are listed but not priced. Weight always uses kg/m from GTP Sections.
       </p>
@@ -451,7 +451,7 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
               reload();
             }}
           >
-            <p className="text-xs text-slate-500">Utility and state are taken from the docket ({data.docket?.utility ?? '–'}, {data.docket?.deliveryLocation || data.docket?.state || '–'}).</p>
+            <p className="text-xs text-slate-700">Utility and state are taken from the docket ({data.docket?.utility ?? '–'}, {data.docket?.deliveryLocation || data.docket?.state || '–'}).</p>
             <div className="grid grid-cols-2 gap-3">
               {(
                 [
@@ -532,7 +532,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
     <section className={card}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Costing</h2>
-        <Link href="/admin/costing" className="text-xs text-blue-700 hover:underline">Costing Master →</Link>
+        <Link href="/admin/costing" className="text-xs text-blue-800 hover:underline">Costing Master →</Link>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <div>
@@ -567,7 +567,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
           <span className={labelCls}>Sets</span>
           <div className="py-2 text-sm font-semibold">
             {res ? inr(res.sets, 3) : '–'}
-            <span className="ml-1 text-[11px] font-normal text-slate-500">{p?.setsBasis === 'WEIGHT' ? `= ${data.item.qty} ${data.item.uom} ÷ set wt` : p?.setsBasis === 'SETS' ? `= item qty` : ''}</span>
+            <span className="ml-1 text-xs font-normal text-slate-700">{p?.setsBasis === 'WEIGHT' ? `= ${data.item.qty} ${data.item.uom} ÷ set wt` : p?.setsBasis === 'SETS' ? `= item qty` : ''}</span>
           </div>
         </div>
       </div>
@@ -586,15 +586,15 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
 
           <div className="mt-3 flex flex-col gap-1">
             {res.checks.messages.map((m, i) => (
-              <div key={i} className={`flex items-start gap-1.5 text-xs ${/below|blank|not in|zero|draft|No line|reference/.test(m) ? 'text-rose-700' : 'text-slate-600'}`}>
+              <div key={i} className={`flex items-start gap-1.5 text-xs ${/below|blank|not in|zero|draft|No line|reference/.test(m) ? 'text-rose-800' : 'text-slate-700'}`}>
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {m}
               </div>
             ))}
             {res.checks.blankLines.concat(res.checks.outsidePurchaseList).slice(0, 15).map((m, i) => (
-              <div key={`b${i}`} className="pl-5 text-[11px] text-rose-700">• {m}</div>
+              <div key={`b${i}`} className="pl-5 text-xs text-rose-800">• {m}</div>
             ))}
-            {p?.planNote && <div className="text-[11px] text-slate-500">{p.planNote}</div>}
-            {res.checks.messages.length === 0 && <div className="flex items-center gap-1.5 text-xs text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" /> All checks passed.</div>}
+            {p?.planNote && <div className="text-xs text-slate-700">{p.planNote}</div>}
+            {res.checks.messages.length === 0 && <div className="flex items-center gap-1.5 text-xs text-emerald-800"><CheckCircle2 className="h-3.5 w-3.5" /> All checks passed.</div>}
           </div>
 
           <div className="mt-3 overflow-x-auto">
@@ -623,7 +623,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
               </thead>
               <tbody>
                 {res.lines.map((l) => (
-                  <tr key={l.rowNo} className={l.status === 'EXCLUDED' ? 'text-slate-400' : l.status === 'FLAGGED' ? 'bg-rose-50' : ''}>
+                  <tr key={l.rowNo} className={l.status === 'EXCLUDED' ? 'text-slate-700' : l.status === 'FLAGGED' ? 'bg-rose-50' : ''}>
                     <td className={td}>{l.rowNo}</td>
                     <td className={td}>{l.markNo ?? ''}</td>
                     <td className={td}>{l.section ?? CATEGORY_LABELS[l.category as Category]}</td>
@@ -652,14 +652,14 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
                 ))}
               </tbody>
             </table>
-            <p className="mt-1 text-[11px] text-slate-500">
+            <p className="mt-1 text-xs text-slate-700">
               Per one set, Rs. Wastage (P) = from the cutting plan, (M) = Costing Master override. kg/m* = from the drawing (section missing in GTP Sections). VA {res.vaPct}%
               {res.minVaPct !== null ? ` (minimum ${res.minVaPct}%)` : ''}.
             </p>
           </div>
 
           <details className="mt-2">
-            <summary className="cursor-pointer text-xs font-semibold text-slate-600">Rates used ({res.ratesUsed.length}) – as on {p?.quoteDate}</summary>
+            <summary className="cursor-pointer text-xs font-semibold text-slate-700">Rates used ({res.ratesUsed.length}) – as on {p?.quoteDate}</summary>
             <table className="mt-1 border-collapse">
               <tbody>
                 {res.ratesUsed.map((r) => (
@@ -685,8 +685,8 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
               >
                 <CheckCircle2 /> Save &amp; apply Rs {inr(p?.setsBasis === 'WEIGHT' ? res.structure.sellPerKg : res.perSet.sell)} {unitLabel} to the quotation
               </Button>
-              {res.checks.belowMinVa && role !== 'Admin' && <span className="text-xs text-rose-700">Below minimum VA: only an Admin can apply.</span>}
-              {msg && <span className="text-xs font-semibold text-emerald-700">{msg}</span>}
+              {res.checks.belowMinVa && role !== 'Admin' && <span className="text-xs text-rose-800">Below minimum VA: only an Admin can apply.</span>}
+              {msg && <span className="text-xs font-semibold text-emerald-800">{msg}</span>}
             </div>
           )}
         </>
@@ -736,7 +736,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
 function Stat({ label, value, strong, tone }: { label: string; value: string; strong?: boolean; tone?: 'red' }) {
   return (
     <div className={`rounded-lg border px-3 py-2 ${tone === 'red' ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'}`}>
-      <div className="text-[11px] text-slate-500">{label}</div>
+      <div className="text-xs text-slate-700">{label}</div>
       <div className={`text-sm ${strong ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>{value}</div>
     </div>
   );
