@@ -18,6 +18,7 @@ dist/
 .env.development.local
 .env.test.local
 .env.production.local
+.env.production
 
 # Prisma generated client (regenerated at build time)
 prisma/migrations/.gitkeep
