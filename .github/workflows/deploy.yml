@@ -71,56 +71,64 @@ jobs:
           APP_DIR: D:\ceebuild-dashboard\ceebuild_application
           DEPLOY_SHA: ${{ github.sha }}
         run: |
-          $ErrorActionPreference = "Stop"
-          # Native commands (git, docker) do not throw in Windows PowerShell: check every exit code.
-          function Invoke-Checked([string]$exe, [string[]]$argv) {
-            Write-Host "> $exe $($argv -join ' ')"
-            & $exe @argv
-            if ($LASTEXITCODE -ne 0) { throw "$exe $($argv -join ' ') failed with exit code $LASTEXITCODE" }
+          try {
+            # git/docker print progress on stderr; in Windows PowerShell 5 under the runner that becomes an
+            # error record, and with "Stop" (the runner's default) the script would abort on harmless output.
+            # So: Continue, check every native exit code, and stop explicitly on cmdlet errors.
+            $ErrorActionPreference = "Continue"
+            function Invoke-Checked([string]$exe, [string[]]$argv) {
+              Write-Host "> $exe $($argv -join ' ')"
+              & $exe @argv 2>&1 | ForEach-Object { "$_" }
+              if ($LASTEXITCODE -ne 0) { throw "$exe $($argv -join ' ') failed with exit code $LASTEXITCODE" }
+            }
+
+            if (-not (Test-Path (Join-Path $env:APP_DIR '.git'))) { throw "App folder $env:APP_DIR is not a git checkout on this runner ($env:COMPUTERNAME)." }
+            Set-Location $env:APP_DIR -ErrorAction Stop
+            Write-Host "::notice title=Runner::$env:COMPUTERNAME as $env:USERNAME, folder $env:APP_DIR, deploying $env:DEPLOY_SHA"
+
+            # The runner service account may not own the folder.
+            if (-not ((git config --global --get-all safe.directory) -contains ($env:APP_DIR -replace '\\', '/'))) {
+              Invoke-Checked git @('config', '--global', '--add', 'safe.directory', ($env:APP_DIR -replace '\\', '/'))
+            }
+
+            # Keep this server's own compose file (it builds locally and holds the server settings).
+            $backup = Join-Path (Split-Path $env:APP_DIR -Parent) 'docker-compose.server-backup.yml'
+            Copy-Item docker-compose.yml $backup -Force -ErrorAction Stop
+
+            Invoke-Checked git @('fetch', '--prune', 'origin', 'main')
+            # Server-side edits to tracked files are kept in a stash (listed by `git stash list`), not lost.
+            $dirty = git status --porcelain --untracked-files=no
+            if ($dirty) {
+              Write-Host "Local changes on the server (stashed):`n$dirty"
+              Invoke-Checked git @('stash', 'push', '-m', "deploy $env:DEPLOY_SHA $(Get-Date -Format s)")
+            }
+            Invoke-Checked git @('checkout', '-B', 'main', $env:DEPLOY_SHA)
+            Copy-Item $backup docker-compose.yml -Force -ErrorAction Stop
+            Write-Host "Source now at $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
+
+            $before = Get-Date
+            Invoke-Checked docker @('compose', 'up', '-d', '--build', '--force-recreate', 'ceebuild-dashboard')
+
+            # The container must have restarted after this job began, and must answer /api/health.
+            # Docker gives 9 decimals; .NET parses up to 7.
+            $raw = (docker inspect -f '{{.State.StartedAt}}' ceebuild-dashboard | Out-String).Trim()
+            $started = [datetime]::Parse(($raw -replace '(\.\d{7})\d+', '$1'), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)
+            if ($started -lt $before.ToUniversalTime().AddSeconds(-5)) { throw "Container ceebuild-dashboard was not restarted (started $started)." }
+            $ok = $false
+            for ($i = 0; $i -lt 36 -and -not $ok; $i++) {
+              Start-Sleep -Seconds 5
+              try { $ok = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 'http://localhost:6011/api/health').StatusCode -eq 200 } catch { }
+            }
+            if (-not $ok) {
+              docker logs --tail 80 ceebuild-dashboard
+              throw 'The app did not answer http://localhost:6011/api/health within 3 minutes.'
+            }
+            Write-Host "Deployed $env:DEPLOY_SHA; container started $started; health OK."
+
+            # Remove dangling build layers only (named images are kept for rollback).
+            docker image prune -f | Out-Null
+          } catch {
+            # Visible in the run summary (annotations) without opening the log.
+            Write-Host "::error title=Deploy failed on $env:COMPUTERNAME::$($_.Exception.Message)"
+            exit 1
           }
-
-          if (-not (Test-Path (Join-Path $env:APP_DIR '.git'))) { throw "App folder $env:APP_DIR is not a git checkout on this runner ($env:COMPUTERNAME)." }
-          Set-Location $env:APP_DIR
-          Write-Host "Runner: $env:COMPUTERNAME as $env:USERNAME, folder $env:APP_DIR, deploying $env:DEPLOY_SHA"
-
-          # The runner service account may not own the folder.
-          if (-not ((git config --global --get-all safe.directory) -contains ($env:APP_DIR -replace '\\', '/'))) {
-            Invoke-Checked git @('config', '--global', '--add', 'safe.directory', ($env:APP_DIR -replace '\\', '/'))
-          }
-
-          # Keep this server's own compose file (it builds locally and holds the server settings).
-          $backup = Join-Path (Split-Path $env:APP_DIR -Parent) 'docker-compose.server-backup.yml'
-          Copy-Item docker-compose.yml $backup -Force
-
-          Invoke-Checked git @('fetch', '--prune', 'origin', 'main')
-          # Server-side edits to tracked files are kept in a stash (listed by `git stash list`), not lost.
-          $dirty = git status --porcelain --untracked-files=no
-          if ($dirty) {
-            Write-Host "Local changes on the server (stashed):`n$dirty"
-            Invoke-Checked git @('stash', 'push', '-m', "deploy $env:DEPLOY_SHA $(Get-Date -Format s)")
-          }
-          Invoke-Checked git @('checkout', '-B', 'main', $env:DEPLOY_SHA)
-          Copy-Item $backup docker-compose.yml -Force
-          Write-Host "Source now at $(git rev-parse --short HEAD): $(git log -1 --format=%s)"
-
-          $before = Get-Date
-          Invoke-Checked docker @('compose', 'up', '-d', '--build', '--force-recreate', 'ceebuild-dashboard')
-
-          # The container must have restarted after this job began, and must answer /api/health.
-          # Docker gives 9 decimals; .NET parses up to 7.
-          $raw = (docker inspect -f '{{.State.StartedAt}}' ceebuild-dashboard | Out-String).Trim()
-          $started = [datetime]::Parse(($raw -replace '(\.\d{7})\d+', '$1'), [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)
-          if ($started -lt $before.ToUniversalTime().AddSeconds(-5)) { throw "Container ceebuild-dashboard was not restarted (started $started)." }
-          $ok = $false
-          for ($i = 0; $i -lt 36 -and -not $ok; $i++) {
-            Start-Sleep -Seconds 5
-            try { $ok = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 'http://localhost:6011/api/health').StatusCode -eq 200 } catch { }
-          }
-          if (-not $ok) {
-            docker logs --tail 80 ceebuild-dashboard
-            throw 'The app did not answer http://localhost:6011/api/health within 3 minutes.'
-          }
-          Write-Host "Deployed $env:DEPLOY_SHA; container started $started; health OK."
-
-          # Remove dangling build layers only (named images are kept for rollback).
-          docker image prune -f | Out-Null
