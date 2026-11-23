@@ -867,6 +867,8 @@ model ItemBomLine {
   nonBillable Boolean       @default(false) @map("non_billable")
   // N&B size (M16X40) or bought-out item name: the Costing Master subject of its rate.
   rateKey     String?       @map("rate_key")
+  // Fabrication category (FAB_RATE subject) set by hand; null = picked from section/description.
+  fabCat      String?       @map("fab_cat")
 
   @@index([bomId])
   @@map("item_bom_lines")

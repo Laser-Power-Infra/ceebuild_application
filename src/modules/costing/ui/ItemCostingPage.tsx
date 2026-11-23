@@ -25,7 +25,8 @@ import {
   updateBomLineAction,
   updateBomMetaAction,
 } from '@/app/actions/costing';
-import { CATEGORIES, CATEGORY_LABELS, FAB_LABELS, FAB_TYPES, SCOPES, SCOPE_LABELS, type Category, type Scope } from '@/lib/costing/calc';
+import { CATEGORIES, CATEGORY_LABELS, SCOPES, SCOPE_LABELS, type Category, type Scope } from '@/lib/costing/calc';
+import { FAB_CATS, FAB_CAT_BY_CODE, fabCatLabel } from '@/lib/costing/fab';
 import { MATCH_LABELS, type BomLineDraft, type MatchLevel } from '@/lib/costing/drawings';
 import type { BomGroupRow, BomLineRow, DocketInfo, DrawingSuggestion, ItemBomInfo, ItemInfo } from '../server/itemBom';
 import type { MixedGroup } from '@/lib/costing/mixedBom';
@@ -396,6 +397,7 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
               <th className={th}>Category</th>
               <th className={th}>Scope</th>
               <th className={th}>Rate key</th>
+              <th className={th} title="Job-work chart category: picks the fabrication rate (Rs/kg on black weight, or Rs/pc on qty)">Fab category</th>
               <th className={th}>Non-billable</th>
               {!locked && <th className={th} />}
             </tr>
@@ -403,13 +405,13 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
           <tbody>
             {bom.lines.length === 0 && (
               <tr>
-                <td className={`${td} py-4 text-center text-slate-700`} colSpan={12}>No lines. Add lines or create the BOM from a drawing.</td>
+                <td className={`${td} py-4 text-center text-slate-700`} colSpan={13}>No lines. Add lines or create the BOM from a drawing.</td>
               </tr>
             )}
             {blocks.map(({ g, lines: gl }) => (
               <Fragment key={g?.id ?? 0}>
                 {g && (bom.groups.length > 1 || g.sets !== null || !locked) && (
-                  <GroupHeaderRow g={g} bom={bom} locked={locked} reload={reload} onError={onError} colSpan={locked ? 11 : 12} />
+                  <GroupHeaderRow g={g} bom={bom} locked={locked} reload={reload} onError={onError} colSpan={locked ? 12 : 13} />
                 )}
             {gl.map((l) => {
               const out = l.scope === 'NOT_IN_SCOPE' || l.scope === 'CLIENT_SUPPLY';
@@ -437,6 +439,22 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
                       <span className="text-xs text-slate-700">{l.sectionKey ?? ''}</span>
                     ) : (
                       <EditCell line={l} field="rateKey" disabled={locked} onSaved={reload} onError={onError} />
+                    )}
+                  </td>
+                  <td className={`${td} w-52`}>
+                    {l.category === 'STRUCTURE' ? (
+                      <select
+                        className={`${cellInput} ${!l.fabCat && !l.fabCatAuto ? 'border-rose-400 bg-rose-50' : ''}`}
+                        disabled={!canEdit}
+                        value={l.fabCat ?? ''}
+                        title={l.fabCat ? 'Set by hand' : l.fabCatAuto ? 'Picked from section / description' : 'No category matches: the line is flagged, not costed'}
+                        onChange={(e) => void set(l.id, 'fabCat', e.target.value)}
+                      >
+                        <option value="">{l.fabCatAuto ? `Auto: ${fabCatLabel(l.fabCatAuto)}` : 'Auto: none matches (flagged)'}</option>
+                        {FAB_CATS.map((c) => <option key={c.code} value={c.code}>{c.label} ({c.unit})</option>)}
+                      </select>
+                    ) : (
+                      <span className="text-xs text-slate-700">–</span>
                     )}
                   </td>
                   <td className={`${td} w-24 text-center`}>
@@ -560,12 +578,6 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
         <Link href="/admin/costing" className="text-xs text-blue-800 hover:underline">Costing Master →</Link>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <div>
-          <label className={labelCls} htmlFor="c-fab">Fabrication type</label>
-          <select id="c-fab" className={fieldCls} disabled={!canEdit} value={bom.fabType} onChange={(e) => void meta('fabType', e.target.value)}>
-            {FAB_TYPES.map((f) => <option key={f} value={f}>{FAB_LABELS[f]}</option>)}
-          </select>
-        </div>
         <div>
           <label className={labelCls} htmlFor="c-galv">Galvanised</label>
           <select id="c-galv" className={fieldCls} disabled={!canEdit} value={String(bom.galvanised)} onChange={(e) => void meta('galvanised', e.target.value)}>
@@ -693,9 +705,12 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
                     <td className={`${td} text-right`}>{inr(l.blackWtKg, 3)}</td>
                     <td className={`${td} text-right`}>{inr(l.galvWtKg, 3)}</td>
                     <td className={`${td} text-right`} title={l.wastageSource ?? ''}>{l.wastagePct === null ? '–' : `${l.wastagePct}${l.wastageSource === 'MASTER' ? ' (M)' : l.wastageSource === 'CUTTING_PLAN' ? ' (P)' : ''}`}</td>
-                    <td className={`${td} text-right`}>{l.rmRate === null ? '–' : inr(l.rmRate)}</td>
+                    <td className={`${td} text-right`} title={l.rmInterim ? 'Interim rate (supplier quote) – to be replaced by the PO/GRN rate' : ''}>
+                      {l.rmRate === null ? '–' : inr(l.rmRate)}
+                      {l.rmInterim && <span className="ml-1 text-[11px] font-semibold text-amber-700">(interim)</span>}
+                    </td>
                     <td className={`${td} text-right`}>{inr(l.rm)}</td>
-                    <td className={`${td} text-right`}>{inr(l.fab)}</td>
+                    <td className={`${td} text-right`} title={l.fabCat ? `${fabCatLabel(l.fabCat)}${l.fabRate !== null ? ` @ Rs ${l.fabRate} ${FAB_CAT_BY_CODE[l.fabCat]?.unit === 'Rs/pc' ? '/pc' : '/kg'}` : ''}` : ''}>{inr(l.fab)}</td>
                     <td className={`${td} text-right`}>{inr(l.galv)}</td>
                     <td className={`${td} text-right`}>{inr(l.freight)}</td>
                     <td className={`${td} text-right`}>{inr(l.inspPack)}</td>

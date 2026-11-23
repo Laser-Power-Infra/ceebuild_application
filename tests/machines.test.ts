@@ -71,13 +71,27 @@ test('load splits across an operation in proportion to capacity; bottleneck is t
 });
 
 test('an operation with load but no active machine blocks the plan instead of dividing by zero', () => {
-  const plan = computeMachinePlan([{ markNo: 'T1', qty: 10, routing: route({ threads: 2, numbering: false }) }], [machine({ code: 'SH1', operation: 'SHEARING' })]);
-  const thread = plan.operations.find((o) => o.operation === 'THREADING')!;
-  assert.equal(thread.noMachine, true);
-  assert.equal(thread.days, null);
-  assert.deepEqual(plan.bottleneck, { operation: 'THREADING', days: null });
+  const plan = computeMachinePlan([{ markNo: 'T1', qty: 10, routing: route({ bends: 2, numbering: false }) }], [machine({ code: 'SH1', operation: 'SHEARING' })]);
+  const bend = plan.operations.find((o) => o.operation === 'BENDING')!;
+  assert.equal(bend.noMachine, true);
+  assert.equal(bend.outside, false);
+  assert.equal(bend.days, null);
+  assert.deepEqual(plan.bottleneck, { operation: 'BENDING', days: null });
   assert.equal(plan.totalDays, null);
   assert.equal(plan.weeks, null);
+});
+
+test('threading with no in-house machine goes to outside job work (Laser) and does not block', () => {
+  const plan = computeMachinePlan(
+    [{ markNo: 'T1', qty: 10, routing: route({ threads: 2, numbering: false }) }],
+    [machine({ code: 'SH1', operation: 'SHEARING' }), machine({ code: 'LN1', operation: 'THREADING', active: false })],
+  );
+  const thread = plan.operations.find((o) => o.operation === 'THREADING')!;
+  assert.equal(thread.noMachine, true);
+  assert.equal(thread.outside, true);
+  assert.equal(thread.days, null);
+  assert.notEqual(plan.totalDays, null);
+  assert.equal(plan.bottleneck?.operation, 'SHEARING');
 });
 
 test('REMAINING basis subtracts what is already produced per operation and never goes negative', () => {

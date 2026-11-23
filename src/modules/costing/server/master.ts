@@ -4,6 +4,7 @@ import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
 import { sectionKey, toNum } from '@/lib/bom/parse';
 import { RATE_KINDS, RATE_META, normSubject, type RateKind, type RateRow } from '@/lib/costing/calc';
+import { FAB_CAT_BY_CODE } from '@/lib/costing/fab';
 
 // Costing Master (Administration). Admin only: every change is a new, dated row plus an audit entry.
 
@@ -106,7 +107,7 @@ export async function listRates(): Promise<RateListRow[]> {
 /** All rates as plain rows for the calculator. */
 export async function allRates(): Promise<RateRow[]> {
   const rows = await prisma.costRate.findMany();
-  return rows.map((r) => ({ id: r.id, kind: r.kind, subject: r.subject, value: r.value.toNumber(), unit: r.unit, effectiveFrom: ymd(r.effectiveFrom) }));
+  return rows.map((r) => ({ id: r.id, kind: r.kind, subject: r.subject, value: r.value.toNumber(), unit: r.unit, effectiveFrom: ymd(r.effectiveFrom), source: r.source }));
 }
 
 /** New version of a rate. Old versions are kept untouched. */
@@ -122,7 +123,13 @@ export async function addRate(input: Record<string, unknown>, user: AuthUser) {
     if (!item) throw new UserError('RM rate must be for an item on the RM purchase list. Add the item first.');
   }
   if (kind === 'BOUGHT_OUT' && subject === 'DEFAULT') throw new UserError('Give the bought-out item name.');
-  const unit = String(input.unit ?? meta.units[0]);
+  let unit = String(input.unit ?? meta.units[0]);
+  if (kind === 'FAB_RATE') {
+    // Keyed by the job-work chart category; the unit (Rs/kg or Rs/pc) is the category's own.
+    const cat = FAB_CAT_BY_CODE[subject];
+    if (!cat) throw new UserError('Choose a fabrication category from the job-work chart.');
+    unit = cat.unit;
+  }
   if (!meta.units.includes(unit)) throw new UserError(`Unit must be ${meta.units.join(' or ')}.`);
   const value = toNum(input.value);
   if (value === null || value < 0 || value > 1e9) throw new UserError('Enter a value of 0 or more.');

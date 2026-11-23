@@ -5,7 +5,8 @@ import { History, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FormError, Modal, fieldCls, labelCls } from '@/components/Modal';
 import { addRateAction, costingMasterAction, deleteRateAction, upsertPurchaseItemAction } from '@/app/actions/costing';
-import { FAB_LABELS, FAB_TYPES, RATE_KINDS, RATE_META, type RateKind } from '@/lib/costing/calc';
+import { RATE_KINDS, RATE_META, isInterim, type RateKind } from '@/lib/costing/calc';
+import { FAB_CATS, FAB_CAT_BY_CODE, fabCatLabel } from '@/lib/costing/fab';
 import type { PurchaseItemRow, RateListRow } from '../server/master';
 import { Badge, card, inr, td, th } from './shared';
 
@@ -42,7 +43,7 @@ export function CostingMasterPage({ role }: { role: string }) {
 
   const shown = useMemo(() => (showHistory ? rates : rates.filter((r) => r.current || r.effectiveFrom > today())), [rates, showHistory]);
   const labelOf = (kind: string, subject: string) =>
-    kind === 'RM_RATE' || kind === 'WASTAGE_PCT' ? items.find((i) => i.sectionKey === subject)?.label ?? subject : kind === 'FAB_RATE' ? FAB_LABELS[subject as keyof typeof FAB_LABELS] ?? subject : subject;
+    kind === 'RM_RATE' || kind === 'WASTAGE_PCT' ? items.find((i) => i.sectionKey === subject)?.label ?? subject : kind === 'FAB_RATE' ? fabCatLabel(subject) : subject;
 
   const openRate = (kind: RateKind, subject = '') => setRateForm({ kind, subject, value: '', unit: RATE_META[kind].units[0], effectiveFrom: today(), source: '' });
 
@@ -53,8 +54,8 @@ export function CostingMasterPage({ role }: { role: string }) {
       if (!has('RM_RATE', i.sectionKey)) out.push(`RM rate for ${i.label}`);
       if (!i.inGtp) out.push(`kg/m for ${i.label} (GTP Sections)`);
     }
-    for (const f of FAB_TYPES) if (!has('FAB_RATE', f) && !has('FAB_RATE', 'DEFAULT')) out.push(`Fabrication rate – ${FAB_LABELS[f]}`);
-    for (const k of ['GALV_RATE', 'ZINC_PCT', 'MIN_VA_PCT', 'FREIGHT_MT'] as const) if (!has(k)) out.push(RATE_META[k].label);
+    for (const f of FAB_CATS) if (!has('FAB_RATE', f.code)) out.push(`Fabrication rate – ${f.label}`);
+    for (const k of ['GALV_RATE', 'ZINC_PCT', 'GALV_TRANSPORT', 'MIN_VA_PCT', 'FREIGHT_MT', 'INTEREST_PCT', 'CREDIT_DAYS', 'LC_BG_PCT', 'INSPECTION', 'PACKING', 'NB_MARGIN_PCT', 'BO_MARGIN_PCT'] as const) if (!has(k)) out.push(RATE_META[k].label);
     return out;
   }, [items, rates]);
 
@@ -186,7 +187,7 @@ export function CostingMasterPage({ role }: { role: string }) {
                     <td className={`${td} text-right font-semibold`}>{inr(r.value, r.unit === 'days' ? 0 : 2)}</td>
                     <td className={td}>{r.unit}</td>
                     <td className={td}>{r.effectiveFrom}</td>
-                    <td className={td}>{r.source ?? ''}</td>
+                    <td className={td}>{isInterim(r) && <Badge tone="amber">Interim</Badge>} {r.source ?? ''}</td>
                     <td className={td}>{r.createdByName ?? ''}</td>
                     {isAdmin && (
                       <td className={td}>
@@ -243,10 +244,15 @@ export function CostingMasterPage({ role }: { role: string }) {
                     ))}
                   </select>
                 ) : rateForm.kind === 'FAB_RATE' ? (
-                  <select id="r-subj" className={fieldCls} value={rateForm.subject} onChange={(e) => setRateForm({ ...rateForm, subject: e.target.value })}>
+                  <select
+                    id="r-subj"
+                    className={fieldCls}
+                    value={rateForm.subject}
+                    onChange={(e) => setRateForm({ ...rateForm, subject: e.target.value, unit: FAB_CAT_BY_CODE[e.target.value]?.unit ?? rateForm.unit })}
+                  >
                     <option value="">Choose…</option>
-                    {FAB_TYPES.map((f) => (
-                      <option key={f} value={f}>{FAB_LABELS[f]}</option>
+                    {FAB_CATS.map((f) => (
+                      <option key={f.code} value={f.code}>{f.label} ({f.unit})</option>
                     ))}
                   </select>
                 ) : (

@@ -9,7 +9,7 @@ import { OPERATION_LABELS, type MachinePlanResult } from '@/lib/planning/machine
 export function PlanResultView({ plan, workDaysPerWeek }: { plan: MachinePlanResult; workDaysPerWeek: number }) {
   const [open, setOpen] = useState<string | null>(null);
   const maxDays = Math.max(1, ...plan.operations.map((o) => o.days ?? 0));
-  const blocked = plan.operations.some((o) => o.noMachine);
+  const blocked = plan.operations.some((o) => o.noMachine && !o.outside);
 
   return (
     <div className="flex flex-col gap-3">
@@ -73,10 +73,10 @@ export function PlanResultView({ plan, workDaysPerWeek }: { plan: MachinePlanRes
                       <td className="px-4 py-2 text-right tabular-nums">{fmtNum(o.pieces, 0)}</td>
                       <td className="px-4 py-2 text-right tabular-nums">{fmtNum(o.load, 0)} {o.unit}</td>
                       <td className="px-4 py-2 text-right tabular-nums">{o.noMachine ? '–' : fmtNum(o.capacityPerDay, 0)}</td>
-                      <td className={`px-4 py-2 text-right font-semibold tabular-nums ${o.noMachine ? 'text-rose-700' : ''}`}>{o.days === null ? 'No machine' : fmtNum(o.days, 1)}</td>
+                      <td className={`px-4 py-2 text-right font-semibold tabular-nums ${o.outside ? 'text-amber-700' : o.noMachine ? 'text-rose-700' : ''}`}>{o.outside ? 'Outside job work' : o.days === null ? 'No machine' : fmtNum(o.days, 1)}</td>
                       <td className="px-4 py-2">
                         <div className="h-2.5 w-full rounded-full bg-slate-100">
-                          <div className={`h-2.5 rounded-full ${o.noMachine ? 'bg-rose-500' : isBottleneck ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
+                          <div className={`h-2.5 rounded-full ${o.outside ? 'bg-amber-300' : o.noMachine ? 'bg-rose-500' : isBottleneck ? 'bg-amber-500' : 'bg-blue-500'}`} style={{ width: `${pct}%` }} />
                         </div>
                       </td>
                     </tr>

@@ -4,13 +4,14 @@ import { computeCosting, pickRate, setsFromItem, wastageFromPlan, type CostInput
 import { cleanLines, guessCategory, nbSize, parseAiLines, rankDrawings } from '../src/lib/costing/drawings';
 import { isMixedBom, parseMixedBom, resolveSection } from '../src/lib/costing/mixedBom';
 import { sectionKey } from '../src/lib/bom/parse';
+import { classifyFab } from '../src/lib/costing/fab';
 
 let nextId = 1;
 const rate = (kind: string, value: number, unit: string, subject = 'DEFAULT', effectiveFrom = '2026-01-01'): RateRow => ({ id: nextId++, kind, subject, value, unit, effectiveFrom });
 
 const baseRates = (): RateRow[] => [
   rate('RM_RATE', 55, 'Rs/kg', 'ISMC100X50'),
-  rate('FAB_RATE', 6, 'Rs/kg', 'PLAIN_CUT'),
+  rate('FAB_RATE', 6, 'Rs/kg', 'CH_ANG'),
   rate('GALV_RATE', 20, 'Rs/kg black'),
   rate('ZINC_PCT', 5, '%'),
   rate('GALV_TRANSPORT', 1, 'Rs/kg'),
@@ -18,6 +19,8 @@ const baseRates = (): RateRow[] => [
   rate('INTEREST_PCT', 0, '%'),
   rate('CREDIT_DAYS', 0, 'days'),
   rate('LC_BG_PCT', 0, '%'),
+  rate('INSPECTION', 0, 'Rs/kg'),
+  rate('PACKING', 0, 'Rs/kg'),
   rate('MIN_VA_PCT', 10, '%'),
   rate('NB_RATE', 110, 'Rs/kg', 'M16X40'),
   rate('NB_MARGIN_PCT', 5, '%'),
@@ -41,12 +44,12 @@ const line = (over: Partial<CostLineInput> = {}): CostLineInput => ({
   rateKey: null,
   sets: 10,
   group: null,
+  fabCat: 'CH_ANG',
   ...over,
 });
 
 const input = (over: Partial<CostInput> = {}): CostInput => ({
   lines: [line()],
-  fabType: 'PLAIN_CUT',
   galvanised: true,
   billingBasis: 'BLACK',
   destState: 'Bihar',
@@ -242,4 +245,72 @@ test('cleanLines / nbSize / parseAiLines', () => {
   assert.equal(lines[1].category, 'NUTS_BOLTS');
   assert.equal(lines[2].nonBillable, true);
   assert.equal(parseAiLines('```json\n{"lines":[{"markNo":"1"}]}\n```').length, 1);
+});
+
+// --- 23-Nov-2026: fabrication rate per line category (job-work chart), masters blank-flagged ---
+
+const fc = (section: string, description = '', lengthMm: number | null = 1000, structureType: string | null = null) =>
+  classifyFab({ sectionKey: sectionKey(section), section, description, lengthMm, structureType });
+
+test('classifyFab: picks the job-work chart category from section, description and item type', () => {
+  assert.equal(fc('ISMC 100x50', 'Cross arm'), 'CH_ANG');
+  assert.equal(fc('L 50x50x6', 'Bracing angle'), 'CH_ANG');
+  assert.equal(fc('FL 50x8', 'Clamp'), 'CLAMP_65_50');
+  assert.equal(fc('Flat 65x6', 'Radius clamp'), 'RADIUS_CLAMP');
+  assert.equal(fc('FL 40x5', 'Stay clamp'), 'CLAMP_40');
+  assert.equal(fc('FL 30x3', 'Barbed wire clamp'), 'CLAMP_30_25');
+  assert.equal(fc('FT 50x8', 'Welded flat'), 'WELDED');
+  assert.equal(fc('ISMC 75x40', 'V-Bracket'), 'WELDED');
+  assert.equal(fc('ISMC 100x50', 'Taper cut V-cross arm'), 'TAPER_VCROSS');
+  assert.equal(fc('FL 50x5', 'Square washer'), 'SQ_WASHER');
+  assert.equal(fc('16 Dia', 'Rod', 560), 'RB16_CUT_560');
+  assert.equal(fc('RB 16', 'Rod', 1800), 'RB16_CUT_1800');
+  assert.equal(fc('16 Dia', 'Angle bow', 400), 'RB16_BOW');
+  assert.equal(fc('40 NB tube', 'Pipe', 3000), 'TUBE40_3000_DRILL');
+  assert.equal(fc('40 NB tube', 'Pipe', 1800), 'TUBE40_1800_DRILL');
+  assert.equal(fc('Plate 200x200x6', 'Base plate', 200), 'PLATE200_PUNCH');
+  assert.equal(fc('ISA 50x50x6', 'Leg', 3000, 'Lattice tower 9M'), 'WELDED');
+  // No category on the chart: flagged.
+  assert.equal(fc('FL 75x10', 'Plate'), null);
+  assert.equal(fc('16 Dia', 'Rod', 900), null);
+  assert.equal(fc('40 NB tube', 'Pipe', 2500), null);
+});
+
+test('fab: per-kg rate on black weight, per-piece rate on BOM qty; no category is flagged, not costed', () => {
+  const rates = [...baseRates(), rate('FAB_RATE', 1.5, 'Rs/pc', 'RB16_CUT_1800'), rate('RM_RATE', 50.5, 'Rs/kg', 'RB16')];
+  const r = computeCosting(
+    input({
+      rates,
+      sectionKgm: { ISMC100X50: 9.56, RB16: 1.58 },
+      purchaseItems: { ISMC100X50: 'ISMC 100x50', RB16: 'Round bar 16' },
+      lines: [
+        line(),
+        line({ rowNo: 2, markNo: 'R1', section: '16 Dia', sectionKey: 'RB16', lengthMm: 1800, qtyPerSet: 4, fabCat: 'RB16_CUT_1800' }),
+        line({ rowNo: 3, markNo: 'X1', fabCat: null }),
+      ],
+    }),
+  );
+  assert.equal(r.lines[0].fab, 229.44); // 38.24 kg x Rs 6
+  assert.equal(r.lines[1].fab, 6); // 4 pcs x Rs 1.5
+  assert.equal(r.lines[1].fabUnit, 'Rs/pc');
+  assert.equal(r.lines[2].status, 'FLAGGED');
+  assert.match(r.lines[2].note ?? '', /No fabrication category/);
+  assert.equal(r.checks.ok, false);
+});
+
+test('masters left blank are listed and block Apply; interim RM rate is marked but allowed', () => {
+  const full = [
+    ...baseRates().filter((x) => x.kind !== 'RM_RATE'),
+    { ...rate('RM_RATE', 50.5, 'Rs/kg', 'ISMC100X50', '2026-11-20'), source: 'INTERIM – Anchal Ispat L1 quote 20-Nov-2026' },
+  ];
+  const ok = computeCosting(input({ rates: full, planConfirmed: true }));
+  assert.deepEqual(ok.checks.missingMasters, []);
+  assert.equal(ok.lines[0].rmInterim, true);
+  assert.equal(ok.checks.interimLines.length, 1);
+  assert.equal(ok.checks.ok, true);
+
+  const noFreight = computeCosting(input({ rates: full.filter((x) => x.kind !== 'FREIGHT_MT' && x.kind !== 'INTEREST_PCT'), planConfirmed: false }));
+  assert.equal(noFreight.checks.ok, false);
+  assert.equal(noFreight.checks.missingMasters.length, 3); // freight, interest, end allowance / kerf
+  assert.ok(noFreight.checks.missingMasters.some((m) => /End allowance/.test(m)));
 });

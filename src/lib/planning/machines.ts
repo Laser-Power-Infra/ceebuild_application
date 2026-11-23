@@ -10,7 +10,7 @@
 //  - Operations run in parallel (different machines), so the order takes as long as its slowest
 //    operation: the bottleneck.
 
-export const OPERATIONS = ['CROPPING', 'SHEARING', 'PUNCHING', 'NOTCHING', 'BENDING', 'WELDING', 'NUMBERING', 'THREADING'] as const;
+export const OPERATIONS = ['CROPPING', 'SHEARING', 'PUNCHING', 'NOTCHING', 'BENDING', 'WELDING', 'NUMBERING', 'THREADING', 'DRILLING', 'ANNEALING'] as const;
 export type Operation = (typeof OPERATIONS)[number];
 
 export const CUT_OPS = ['CROPPING', 'SHEARING', 'NONE'] as const;
@@ -25,7 +25,15 @@ export const OPERATION_LABELS: Record<Operation, string> = {
   WELDING: 'Welding',
   NUMBERING: 'Numbering',
   THREADING: 'Threading',
+  DRILLING: 'Drilling',
+  ANNEALING: 'Annealing',
 };
+
+/**
+ * Operations that go to outside job work (or Laser) when no in-house machine is working, instead
+ * of blocking the plan: threading (LN1/LN2 shifted to Laser) and drilling (radial drills down).
+ */
+export const OUTSIDE_OK_OPS: readonly Operation[] = ['THREADING', 'DRILLING'];
 
 /** Unit of work each operation's rate is expressed in. */
 export const OP_UNIT: Record<Operation, string> = {
@@ -37,6 +45,8 @@ export const OP_UNIT: Record<Operation, string> = {
   WELDING: 'joints',
   NUMBERING: 'pieces',
   THREADING: 'threads',
+  DRILLING: 'holes',
+  ANNEALING: 'pieces',
 };
 
 export const isOperation = (v: unknown): v is Operation => typeof v === 'string' && (OPERATIONS as readonly string[]).includes(v);
@@ -80,6 +90,10 @@ export function unitsPerPiece(r: Routing, op: Operation): number {
       return r.threads;
     case 'NUMBERING':
       return r.numbering ? 1 : 0;
+    // Not in the piece routing yet: listed in the machine master only.
+    case 'DRILLING':
+    case 'ANNEALING':
+      return 0;
   }
 }
 
@@ -139,6 +153,8 @@ export interface OperationLoad {
   /** Working days; null when there is load but no active machine (blocked). */
   days: number | null;
   noMachine: boolean;
+  /** No in-house machine, but the operation goes to outside job work / Laser (does not block). */
+  outside: boolean;
   machines: MachineLoad[];
   marks: { markNo: string; pieces: number; units: number }[];
 }
@@ -185,6 +201,7 @@ export function computeMachinePlan(marks: PlanMark[], machines: PlanMachine[], w
       capacityPerDay: round(capacity),
       days: days === null ? null : round(days),
       noMachine: capacity <= 0,
+      outside: capacity <= 0 && OUTSIDE_OK_OPS.includes(op),
       machines: caps.map(({ m, cap }) => {
         const share = cap / capacity;
         return {
@@ -201,7 +218,7 @@ export function computeMachinePlan(marks: PlanMark[], machines: PlanMachine[], w
       marks: markLoads.sort((a, b) => b.units - a.units),
     });
   }
-  const blocked = operations.find((o) => o.noMachine);
+  const blocked = operations.find((o) => o.noMachine && !o.outside);
   const slowest = operations.reduce<OperationLoad | null>((best, o) => (o.days !== null && (!best || (best.days ?? 0) < o.days) ? o : best), null);
   const bottleneck = blocked ? { operation: blocked.operation, days: null } : slowest ? { operation: slowest.operation, days: slowest.days } : null;
   const totalDays = blocked ? null : slowest ? slowest.days : 0;

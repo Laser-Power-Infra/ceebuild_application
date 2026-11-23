@@ -4,7 +4,8 @@
 //   black wt  = qty/set x length x kg/m (kg/m from the GTP section master)
 //   galv wt   = black wt x (1 + zinc pick-up %)           (black wt when not galvanised)
 //   RM        = black wt x RM rate x (1 + wastage %)       (wastage: master override, else cutting plan)
-//   fab       = black wt x fabrication rate (by fabrication type)
+//   fab       = black wt x Rs/kg, or qty x Rs/pc: the rate of the line's own fabrication category
+//               (job-work chart, src/lib/costing/fab.ts); a line with no category is flagged
 //   galv      = galvanising rate x (galv or black wt, per the rate unit) + transport x black wt
 //   freight   = despatch wt / 1000 x Rs/MT (destination state)
 //   inspection, packing = Rs/kg x billed wt
@@ -43,7 +44,7 @@ export type RateKind = (typeof RATE_KINDS)[number];
 export const RATE_META: Record<RateKind, { label: string; units: string[]; subject: string; perSubject: boolean }> = {
   RM_RATE: { label: 'RM rate', units: ['Rs/kg'], subject: 'RM purchase item', perSubject: true },
   WASTAGE_PCT: { label: 'Wastage % (override of cutting plan)', units: ['%'], subject: 'RM purchase item or DEFAULT', perSubject: true },
-  FAB_RATE: { label: 'Fabrication / conversion', units: ['Rs/kg'], subject: 'Fabrication type', perSubject: true },
+  FAB_RATE: { label: 'Fabrication / conversion', units: ['Rs/kg', 'Rs/pc'], subject: 'Fabrication category (job-work chart)', perSubject: true },
   GALV_RATE: { label: 'Galvanising rate', units: ['Rs/kg black', 'Rs/kg galv'], subject: 'DEFAULT', perSubject: false },
   ZINC_PCT: { label: 'Zinc pick-up %', units: ['%'], subject: 'DEFAULT', perSubject: false },
   GALV_TRANSPORT: { label: 'Transport to/from galvaniser', units: ['Rs/kg'], subject: 'DEFAULT', perSubject: false },
@@ -82,7 +83,12 @@ export interface RateRow {
   unit: string;
   /** yyyy-mm-dd */
   effectiveFrom: string;
+  /** Where the figure came from; "INTERIM ..." marks a provisional rate. */
+  source?: string | null;
 }
+
+/** Rate marked provisional (e.g. RM rates from a supplier quote until purchase gives PO/GRN rates). */
+export const isInterim = (r: { source?: string | null } | null | undefined) => !!r && /^\s*INTERIM\b/i.test(r.source ?? '');
 
 export const normSubject = (s: string | null | undefined) =>
   String(s ?? '')
@@ -123,11 +129,12 @@ export interface CostLineInput {
   sets: number | null;
   /** Structure (group) name; null for a single-structure BOM. */
   group: string | null;
+  /** Fabrication category (FAB_RATE subject) of a structure line; null = none matched (flagged). */
+  fabCat?: string | null;
 }
 
 export interface CostInput {
   lines: CostLineInput[];
-  fabType: string;
   galvanised: boolean;
   billingBasis: BillingBasis;
   destState: string | null;
@@ -144,6 +151,11 @@ export interface CostInput {
   rates: RateRow[];
   /** Last quoted structure price per kg for the same item type (variance check). */
   lastPricePerKg?: { value: number; ref: string } | null;
+  /**
+   * Planning Settings (end allowance / kerf) confirmed by the plant. False blocks Apply: the
+   * cutting-plan wastage is not final. Undefined = not checked (unit tests).
+   */
+  planConfirmed?: boolean;
 }
 
 export type LineStatus = 'COSTED' | 'EXCLUDED' | 'FLAGGED';
@@ -169,6 +181,11 @@ export interface LineResult {
   wastagePct: number | null;
   wastageSource: 'MASTER' | 'CUTTING_PLAN' | 'DEFAULT' | null;
   rmRate: number | null;
+  /** RM rate is provisional (marked INTERIM in the Costing Master). */
+  rmInterim: boolean;
+  fabCat: string | null;
+  fabRate: number | null;
+  fabUnit: string | null;
   /** Per one set, Rs. */
   rm: number;
   fab: number;
@@ -241,6 +258,10 @@ export interface CostResult {
     blankLines: string[];
     outsidePurchaseList: string[];
     nonBillable: string[];
+    /** Costing Master / Planning Settings values not entered yet (they stop the price being applied). */
+    missingMasters: string[];
+    /** Lines priced with a provisional (INTERIM) RM rate. */
+    interimLines: string[];
     /** True when the price may be applied to the quotation. */
     ok: boolean;
     messages: string[];
@@ -278,7 +299,26 @@ export function computeCosting(input: CostInput): CostResult {
   const creditDays = val(take('CREDIT_DAYS', null));
   const lcbg = val(take('LC_BG_PCT', null)) / 100;
   const commercialFactor = interestPct * (creditDays / 365) + lcbg;
-  const fabRateRow = take('FAB_RATE', input.fabType);
+
+  // Masters still blank: listed, and Apply is blocked until they are filled (a 0 entered is filled).
+  const missingMasters: string[] = [];
+  const need = (kind: RateKind, label: string, subject: string | null = null) => {
+    if (!pickRate(input.rates, kind, subject, input.quoteDate)) missingMasters.push(label);
+  };
+  need('MIN_VA_PCT', 'Minimum VA %');
+  need('FREIGHT_MT', `Freight Rs/MT${input.destState ? ` (${input.destState})` : ''}`, input.destState);
+  need('INTEREST_PCT', 'Interest %');
+  need('CREDIT_DAYS', 'Credit days');
+  need('LC_BG_PCT', 'LC / BG charges %');
+  need('INSPECTION', 'Inspection cost');
+  need('PACKING', 'Packing cost');
+  if (input.galvanised) {
+    need('GALV_RATE', 'Galvanising rate (GI cost master)');
+    need('ZINC_PCT', 'Zinc pick-up % (GI cost master)');
+    need('GALV_TRANSPORT', 'Galvaniser transport (GI cost master)');
+  }
+  if (input.planConfirmed === false) missingMasters.push('End allowance / kerf – not confirmed by the plant (Planning Settings)');
+  const interimLines: string[] = [];
 
   const blank: string[] = [];
   const outside: string[] = [];
@@ -306,6 +346,10 @@ export function computeCosting(input: CostInput): CostResult {
       wastagePct: null,
       wastageSource: null,
       rmRate: null,
+      rmInterim: false,
+      fabCat: l.category === 'STRUCTURE' ? (l.fabCat ?? null) : null,
+      fabRate: null,
+      fabUnit: null,
       rm: 0,
       fab: 0,
       galv: 0,
@@ -389,9 +433,14 @@ export function computeCosting(input: CostInput): CostResult {
       blank.push(`${label(l)}: no RM rate for ${input.purchaseItems[key]}`);
       return { ...base, status: 'FLAGGED', note: `No RM rate for ${input.purchaseItems[key]}`, kgPerM: kgm, kgPerMSource: kgmSource };
     }
+    if (!l.fabCat) {
+      blank.push(`${label(l)}: no fabrication category matches (set it on the line)`);
+      return { ...base, status: 'FLAGGED', note: 'No fabrication category matches – not costed', kgPerM: kgm, kgPerMSource: kgmSource };
+    }
+    const fabRateRow = take('FAB_RATE', l.fabCat, false);
     if (!fabRateRow) {
-      blank.push(`${label(l)}: no fabrication rate for ${input.fabType}`);
-      return { ...base, status: 'FLAGGED', note: `No fabrication rate for ${input.fabType}`, kgPerM: kgm, kgPerMSource: kgmSource };
+      blank.push(`${label(l)}: no fabrication rate for ${l.fabCat}`);
+      return { ...base, status: 'FLAGGED', note: `No fabrication rate for ${l.fabCat}`, kgPerM: kgm, kgPerMSource: kgmSource };
     }
     if (input.galvanised && !galvRate) {
       blank.push(`${label(l)}: no galvanising rate`);
@@ -414,7 +463,10 @@ export function computeCosting(input: CostInput): CostResult {
       wastageSource = 'DEFAULT';
     }
     const rm = black * rmRate.value * (1 + wastagePct / 100);
-    const fab = black * fabRateRow.value;
+    // Per-kg rates on the black weight, per-piece rates on the BOM qty.
+    const fab = fabRateRow.unit === 'Rs/pc' ? qty * fabRateRow.value : black * fabRateRow.value;
+    const rmInterim = isInterim(rmRate);
+    if (rmInterim) interimLines.push(label(l));
     const galv = input.galvanised && galvRate ? galvRate.value * (galvRate.unit === 'Rs/kg galv' ? galvWt : black) + galvTransport * black : 0;
     const freight = (galvWt / 1000) * freightMt;
     // Inspection / packing per kg of the weight handled (billed or not: the clamp is still packed).
@@ -433,6 +485,9 @@ export function computeCosting(input: CostInput): CostResult {
       wastagePct: r2(wastagePct),
       wastageSource,
       rmRate: rmRate.value,
+      rmInterim,
+      fabRate: fabRateRow.value,
+      fabUnit: fabRateRow.unit,
       rm: r2(rm),
       fab: r2(fab),
       galv: r2(galv),
@@ -507,6 +562,8 @@ export function computeCosting(input: CostInput): CostResult {
     variancePct = r2(((structure.sellPerKg - input.lastPricePerKg.value) / input.lastPricePerKg.value) * 100);
     messages.push(`${variancePct > 0 ? '+' : ''}${variancePct}% vs last quoted Rs ${input.lastPricePerKg.value}/kg (${input.lastPricePerKg.ref}).`);
   }
+  if (missingMasters.length) messages.push(`Not yet in the masters (price cannot be applied): ${missingMasters.join('; ')}.`);
+  if (interimLines.length) messages.push(`${interimLines.length} line(s) use an INTERIM RM rate (supplier quote) – replace with the PO/GRN rate when purchase sends it.`);
   if (blank.length) messages.push(`${blank.length} line(s) have a blank weight, rate or set count.`);
   if (outside.length) messages.push(`${outside.length} line(s) use a section outside the RM purchase list (not costed).`);
   if (nonBillable.length) messages.push(`${nonBillable.length} non-billable line(s): supplied and costed, but their ${r3(structure.nonBillableWtKg / 1000)} MT is not billed – the cost is carried on the billable kg.`);
@@ -538,7 +595,9 @@ export function computeCosting(input: CostInput): CostResult {
       blankLines: blank,
       outsidePurchaseList: outside,
       nonBillable,
-      ok: blank.length === 0 && outside.length === 0 && totalSets > 0 && costed.length > 0,
+      missingMasters,
+      interimLines,
+      ok: blank.length === 0 && outside.length === 0 && missingMasters.length === 0 && totalSets > 0 && costed.length > 0,
       messages,
     },
   };

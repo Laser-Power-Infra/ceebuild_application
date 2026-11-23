@@ -72,7 +72,7 @@ There are no hard-coded numbers. Every factor is a dated row in `cost_rates`:
 |---|---|---|
 | RM rate (Rs/kg, from the latest PO/GRN) | RM_RATE | purchase item |
 | Wastage % override | WASTAGE_PCT | purchase item / DEFAULT |
-| Fabrication (Rs/kg) | FAB_RATE | Plain cut / Clamp-bent / Welded |
+| Fabrication (Rs/kg or Rs/pc) | FAB_RATE | job-work chart category (see Update 23-Nov) |
 | Galvanising (Rs/kg black or galv), zinc pick-up %, transport | GALV_RATE, ZINC_PCT, GALV_TRANSPORT | – |
 | Freight (Rs/MT, FOR) | FREIGHT_MT | destination state / DEFAULT |
 | Interest %, credit days, LC/BG %, inspection, packing | INTEREST_PCT, CREDIT_DAYS, LC_BG_PCT, INSPECTION, PACKING | – |
@@ -146,3 +146,28 @@ There are no hard-coded numbers. Every factor is a dated row in `cost_rates`:
   - the CEE-000532 mixed BOM as a draft.
 
   It is idempotent.
+
+## Update 23-Nov-2026 (Puja: Costing Master & Machine Master rules)
+
+- **Fabrication per line (A).** The BOM-level "fabrication type" is gone. Each structure line takes the rate of its own job-work chart category (`src/lib/costing/fab.ts`), picked from the section, the description and the item type:
+
+  | Category | Rate | Matched by |
+  |---|---|---|
+  | Channel & angle – cut, punch, number | Rs 1.60/kg | ISMC / ISA |
+  | Clamps FB 65x6, 50x10, 50x8, 50x6 | Rs 1.70/kg | flat of that size |
+  | Clamps FB 40x6, 40x5 | Rs 1.80/kg | flat of that size |
+  | Radius clamps FB 65x6, 50x10, 50x8, 50x6 | Rs 1.80/kg | "radius" in the description |
+  | Welded (V-bracket, top cleat, J11V-KLIT) and all tower materials | Rs 2.50/kg | weld / V-bracket / top cleat / KLIT / J11V, or item type "tower" |
+  | Taper cutting – V-cross (352DM) | Rs 2.80/kg | "taper" or "352DM" |
+  | Clamps FB 30x3, 25x3 | Rs 2.85/kg | flat of that size |
+  | Square washer 50x5 & 65x5 | Rs 3.50/kg | "washer" |
+  | 40 NB tube 3000 / 1800 drilling | Rs 16 / Rs 14 per pc | 40 NB tube by length (3000 to be confirmed: chart Sr 15 says Rs 100) |
+  | 16 mm angle bow | Rs 6/pc | RB16 + "bow" |
+  | 16 mm rod cut 560 / 1800 mm | Rs 0.50 / Rs 1.50 per pc | RB16 by length |
+  | Plate 200x200x6 punching | Rs 1/pc | plate 200x200x6 |
+
+  Per-kg rates apply to the black weight, per-piece rates to the BOM qty. A line matching no category is **flagged, not costed**. The category can be set by hand on the BOM line ("Fab category" column; allowed on a confirmed BOM too, as it changes the price only).
+- **Masters blank-flagged (D).** Minimum VA %, freight for the destination state, interest %, credit days, LC/BG %, inspection, packing and, for GI items, the galvanising rate, zinc % and galvaniser transport must be present (0 entered counts as filled). Planning Settings must be confirmed by the plant (end allowance / kerf). Anything missing is listed on the costing and blocks **Apply**.
+- **Interim RM rates (C).** A rate whose source starts with "INTERIM" is used but marked (Costing Master badge, "(interim)" on the line, a costing message).
+- **Machine master (B).** Migration `20261123090000_m14_fab_categories_machines`: PP1 / PP11 to cropping, UP-1 one machine, PP2 / PP7 / PP10 / LN1 / LN2 out of planning, PP15–PP17 added (9 punching presses), W3 and 201i added (5 welding sets, AR1 renamed ARC1), annealing furnace ANN1 and radial drills D1 / D3 (inactive) added with two new operations, DRILLING and ANNEALING. Threading and drilling with no working machine show as **outside job work** in the machine plan instead of blocking it.
+- **Data load:** `node --conditions=react-server --import tsx scripts/m14_load_rates_23nov.ts` adds the 14 fabrication rates (from 23-Nov) and the interim Anchal Ispat RM rates (from 20-Nov). Idempotent.

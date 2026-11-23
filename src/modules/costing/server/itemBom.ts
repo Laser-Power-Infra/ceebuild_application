@@ -6,6 +6,7 @@ import { UserError } from '@/lib/actionResult';
 import { sectionKey, toNum } from '@/lib/bom/parse';
 import { normalizeDocketNo } from '@/lib/dockets';
 import { CATEGORIES, FAB_TYPES, SCOPES, normSubject } from '@/lib/costing/calc';
+import { classifyFab, isFabCat } from '@/lib/costing/fab';
 import { cleanLines, nbSize, rankDrawings, type BomLineDraft, type MatchLevel } from '@/lib/costing/drawings';
 import { resolveSection } from '@/lib/costing/mixedBom';
 import { createDrawing, lineData } from './drawings';
@@ -52,6 +53,10 @@ export interface BomLineRow {
   nonBillable: boolean;
   rateKey: string | null;
   groupId: number | null;
+  /** Fabrication category set by hand (null = auto). */
+  fabCat: string | null;
+  /** Category picked from section / description / item type (null = none matches). */
+  fabCatAuto: string | null;
 }
 
 export interface BomGroupRow {
@@ -180,6 +185,11 @@ export async function currentBom(itemId: number): Promise<ItemBomInfo | null> {
       nonBillable: l.nonBillable,
       rateKey: l.rateKey,
       groupId: l.groupId,
+      fabCat: l.fabCat,
+      fabCatAuto:
+        l.category === 'STRUCTURE'
+          ? classifyFab({ sectionKey: l.sectionKey, section: l.section, description: l.description, lengthMm: l.lengthMm, structureType: (bom.groups.length > 1 ? bom.groups.find((g) => g.id === l.groupId)?.name : null) ?? bom.structureType })
+          : null,
     })),
     groups: bom.groups.map((g) => ({
       id: g.id,
@@ -461,7 +471,7 @@ async function lockBom(tx: Tx, bomId: number) {
   return bom!;
 }
 
-const LINE_FIELDS = ['markNo', 'description', 'section', 'lengthMm', 'qtyPerSet', 'kgPerM', 'unitWtKg', 'category', 'scope', 'nonBillable', 'rateKey'] as const;
+const LINE_FIELDS = ['markNo', 'description', 'section', 'lengthMm', 'qtyPerSet', 'kgPerM', 'unitWtKg', 'category', 'scope', 'nonBillable', 'rateKey', 'fabCat'] as const;
 
 export async function updateBomLine(lineId: number, field: string, value: string, user: AuthUser) {
   if (!(LINE_FIELDS as readonly string[]).includes(field)) throw new UserError('This column cannot be edited.');
@@ -469,11 +479,15 @@ export async function updateBomLine(lineId: number, field: string, value: string
     const ref = await tx.itemBomLine.findUnique({ where: { id: lineId }, select: { bomId: true } });
     if (!ref) throw new UserError('Line not found.');
     const bom = await lockBom(tx, ref.bomId);
-    if (bom.status !== 'DRAFT') throw new UserError('This BOM is confirmed. Reopen it to edit.');
+    // The fabrication category changes the price, not the BOM: allowed on a confirmed BOM too.
+    if (bom.status !== 'DRAFT' && field !== 'fabCat') throw new UserError('This BOM is confirmed. Reopen it to edit.');
     const line = (await tx.itemBomLine.findUnique({ where: { id: lineId } }))!;
     const v = value.trim();
     const data: Prisma.ItemBomLineUpdateInput = {};
-    if (field === 'section') {
+    if (field === 'fabCat') {
+      if (v && !isFabCat(v)) throw new UserError('Unknown fabrication category.');
+      data.fabCat = v || null;
+    } else if (field === 'section') {
       data.section = v.slice(0, 200) || null;
       data.sectionKey = line.category === 'STRUCTURE' ? sectionKey(v) : null;
       if (line.category === 'NUTS_BOLTS' && !line.rateKey) data.rateKey = nbSize(v);

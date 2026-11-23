@@ -6,6 +6,7 @@ import { UserError } from '@/lib/actionResult';
 import { toNum } from '@/lib/bom/parse';
 import { normalizeDocketNo } from '@/lib/dockets';
 import { computeCosting, setsFromItem, wastageFromPlan, type BillingBasis, type CostLineInput, type CostResult } from '@/lib/costing/calc';
+import { classifyFab } from '@/lib/costing/fab';
 import { planIndent, type PlanPiece, type SectionInfo } from '@/lib/planning/cutting';
 import { getPlanSettings } from '@/modules/settings/server';
 import { cutSettingsOf } from '@/modules/rm/server/common';
@@ -113,9 +114,11 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
       rateKey: l.rateKey,
       sets,
       group: mixed ? (g ? `${g.seq}. ${g.name}` : 'No structure') : null,
+      // Fabrication category: set by hand on the line, else from section / description / item type.
+      fabCat: l.fabCat ?? classifyFab({ sectionKey: l.sectionKey, section: l.section, description: l.description, lengthMm: l.lengthMm, structureType: g?.name ?? bom.structureType }),
     };
   };
-  const base = { fabType: bom.fabType, galvanised: bom.galvanised, billingBasis: bom.billingBasis as BillingBasis, destState: docket?.deliveryLocation || docket?.state || null, quoteDate, sectionKgm, purchaseItems, rates };
+  const base = { galvanised: bom.galvanised, billingBasis: bom.billingBasis as BillingBasis, destState: docket?.deliveryLocation || docket?.state || null, quoteDate, sectionKgm, purchaseItems, rates };
   const qty = toNum(item.qty);
   let setsBasis: CostingPreview['setsBasis'];
   let lines: CostLineInput[];
@@ -166,7 +169,7 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
   }
 
   const last = await lastQuoted(bom.structureType, item.ourItemName);
-  const result = computeCosting({ ...base, lines, vaPct: opts.vaPct ?? null, planWastagePct, lastPricePerKg: last });
+  const result = computeCosting({ ...base, lines, vaPct: opts.vaPct ?? null, planWastagePct, lastPricePerKg: last, planConfirmed: settings.confirmed });
 
   // Section-wise weight (net, all supplied pieces) for checking against an independent take-off.
   const bySection = new Map<string, { label: string; kg: number; billableKg: number; inGtp: boolean; approved: boolean }>();
