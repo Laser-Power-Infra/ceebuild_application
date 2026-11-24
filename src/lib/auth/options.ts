@@ -15,13 +15,22 @@ import { isRole, type Role } from './session';
 import { CF_ACCESS_ENABLED, verifyCloudflareAccessJwt } from './cloudflareAccess';
 
 // "Sign in with Google" is on only when both are set (Google Cloud OAuth client, redirect URI
-// <NEXTAUTH_URL>/api/auth/callback/google). Optional GOOGLE_ALLOWED_DOMAINS="a.com,b.com" limits
-// which email domains may use it; empty = any verified Google email, same as the open /signup.
+// <NEXTAUTH_URL>/api/auth/callback/google). Google and Cloudflare Access sign-in are limited to the
+// company's own email domains: GOOGLE_ALLOWED_DOMAINS="a.com,b.com" (default below). It can never be
+// empty, so an outside Gmail / other-company account can never sign in or get an account this way.
 const GOOGLE_ENABLED = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-const GOOGLE_ALLOWED_DOMAINS = (process.env.GOOGLE_ALLOWED_DOMAINS || '')
+const DEFAULT_ALLOWED_DOMAINS = 'laserpowerinfra.com,ceebuildcompany.com';
+const GOOGLE_ALLOWED_DOMAINS = (process.env.GOOGLE_ALLOWED_DOMAINS || DEFAULT_ALLOWED_DOMAINS)
   .split(',')
-  .map((d) => d.trim().toLowerCase())
+  .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
   .filter(Boolean);
+
+/** True only for an email on one of the company domains (exact domain, not a look-alike suffix). */
+export function isAllowedSsoEmail(email: string) {
+  const at = email.lastIndexOf('@');
+  if (at < 1) return false;
+  return GOOGLE_ALLOWED_DOMAINS.includes(email.slice(at + 1).trim().toLowerCase());
+}
 
 /**
  * Finds the dashboard user for a verified Google / Cloudflare email, creating a User-role account
@@ -144,6 +153,11 @@ if (CF_ACCESS_ENABLED) {
           return null;
         });
         if (!email) return null;
+        // Cloudflare may let other Google accounts through (its policy is separate); the dashboard does not.
+        if (!isAllowedSsoEmail(email)) {
+          console.warn('[auth] Cloudflare Access sign-in refused for outside domain:', email.split('@')[1]);
+          return null;
+        }
         const user = await findOrCreateGoogleUser(email, email.split('@')[0], 'Cloudflare Access (Google) sign-in');
         if (!user) throw new Error('This account is disabled. Contact the administrator.');
         await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
@@ -174,9 +188,7 @@ export const authOptions: NextAuthOptions = {
       const p = profile as { email?: string; email_verified?: boolean; name?: string } | undefined;
       const email = (p?.email || '').trim().toLowerCase();
       if (!email || p?.email_verified !== true) return '/login?error=GoogleUnverified';
-      if (GOOGLE_ALLOWED_DOMAINS.length && !GOOGLE_ALLOWED_DOMAINS.includes(email.split('@')[1])) {
-        return '/login?error=GoogleDomain';
-      }
+      if (!isAllowedSsoEmail(email)) return '/login?error=GoogleDomain';
       const user = await findOrCreateGoogleUser(email, (p?.name || '').trim());
       if (!user) return '/login?error=AccountDisabled';
       await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
