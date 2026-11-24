@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { signOut } from 'next-auth/react';
+import { CF_AUTO_LOGIN_FLAG } from '@/components/CloudflareAutoLogin';
 import { ChevronDown, LogIn, LogOut, Menu, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 import { NAV_GROUPS, type NavItem, type QuotationTab } from '@/lib/navigation';
 
@@ -82,6 +83,8 @@ export function AppSidebar({
 
   const handleLogout = async () => {
     try {
+      // Stay logged out in this tab (no silent Cloudflare re-login).
+      try { sessionStorage.setItem(CF_AUTO_LOGIN_FLAG, 'off'); } catch { /* storage blocked */ }
       await signOut({ redirect: false });
     } catch (err) {
       console.error(err);

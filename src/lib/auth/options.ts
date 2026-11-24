@@ -12,6 +12,7 @@ import GoogleProvider from 'next-auth/providers/google';
 import { prisma } from '@/lib/prisma';
 import { verifyPassword, getDummyHash, hashPassword, generatePassword } from './password';
 import { isRole, type Role } from './session';
+import { CF_ACCESS_ENABLED, verifyCloudflareAccessJwt } from './cloudflareAccess';
 
 // "Sign in with Google" is on only when both are set (Google Cloud OAuth client, redirect URI
 // <NEXTAUTH_URL>/api/auth/callback/google). Optional GOOGLE_ALLOWED_DOMAINS="a.com,b.com" limits
@@ -23,11 +24,12 @@ const GOOGLE_ALLOWED_DOMAINS = (process.env.GOOGLE_ALLOWED_DOMAINS || '')
   .filter(Boolean);
 
 /**
- * Finds the dashboard user for a verified Google email, creating a User-role account on first
- * use (same policy as /signup). Returns null when the account exists but is disabled.
+ * Finds the dashboard user for a verified Google / Cloudflare email, creating a User-role account
+ * on first use (same policy as /signup). Returns null when the account exists but is disabled.
  */
-async function findOrCreateGoogleUser(email: string, name: string) {
-  const existing = await prisma.user.findUnique({ where: { email } });
+async function findOrCreateGoogleUser(email: string, name: string, source = 'Google sign-in') {
+  const existing =
+    (await prisma.user.findUnique({ where: { email } })) ?? (await prisma.user.findUnique({ where: { username: email } }));
   if (existing) return existing.isActive && isRole(existing.role) ? existing : null;
 
   // Google accounts get a random password nobody knows; an admin can set one with `users -- set-password`.
@@ -40,7 +42,7 @@ async function findOrCreateGoogleUser(email: string, name: string) {
       recordId: user.id,
       fieldName: 'ALL_FIELDS',
       oldValue: 'NONE (New Record)',
-      newValue: JSON.stringify({ email, name: user.name, role: user.role, source: 'Google sign-in' }),
+      newValue: JSON.stringify({ email, name: user.name, role: user.role, source }),
       userId: user.id,
       userName: `${user.name} (${email})`,
     },
@@ -126,6 +128,30 @@ const providers: Provider[] = [
       },
     }),
 ];
+
+// Silent sign-in for people already logged in at Cloudflare Access (see ./cloudflareAccess.ts).
+// The browser calls signIn('cloudflare-access') with no fields; the proof is the signed header.
+if (CF_ACCESS_ENABLED) {
+  providers.push(
+    CredentialsProvider({
+      id: 'cloudflare-access',
+      name: 'Cloudflare Access',
+      credentials: {},
+      async authorize(_credentials, req) {
+        const headers = (req?.headers || {}) as Record<string, string | undefined>;
+        const email = await verifyCloudflareAccessJwt(headers['cf-access-jwt-assertion']).catch((err) => {
+          console.error('[auth] Cloudflare Access check failed:', err);
+          return null;
+        });
+        if (!email) return null;
+        const user = await findOrCreateGoogleUser(email, email.split('@')[0], 'Cloudflare Access (Google) sign-in');
+        if (!user) throw new Error('This account is disabled. Contact the administrator.');
+        await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+        return { id: String(user.id), name: user.name, username: user.username, role: user.role as Role, sv: user.sessionVersion };
+      },
+    })
+  );
+}
 
 if (GOOGLE_ENABLED) {
   providers.push(

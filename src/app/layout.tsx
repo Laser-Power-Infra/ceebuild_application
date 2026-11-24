@@ -1,5 +1,6 @@
 import './globals.css';
 import { ReactNode } from 'react';
+import CloudflareAutoLogin from '@/components/CloudflareAutoLogin';
 
 export const metadata = {
   title: 'Ceebuild Items & Docket Dashboard',
@@ -20,6 +21,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <link rel="apple-touch-icon" href="/icon.png" />
       </head>
       <body className="min-h-screen bg-slate-50 antialiased text-slate-900">
+        <CloudflareAutoLogin />
         {children}
       </body>
     </html>

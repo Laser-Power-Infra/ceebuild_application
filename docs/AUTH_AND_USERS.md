@@ -31,6 +31,18 @@ redirect URIs, so use the HTTPS address (Cloudflare) as `NEXTAUTH_URL`, not the 
 - `GOOGLE_ALLOWED_DOMAINS="company.com,other.com"` limits Google sign-in to those domains.
 - Disabled accounts are refused.
 
+## One login through Cloudflare (no second login)
+
+On `https://ceebuild.gmdalui.co.in` staff already log in with Google at Cloudflare Access. The
+dashboard trusts that login: Cloudflare sends a signed token (`Cf-Access-Jwt-Assertion`), the
+dashboard checks its signature against Cloudflare's public keys and signs the person in silently
+(`src/lib/auth/cloudflareAccess.ts`, provider `cloudflare-access`, `CloudflareAutoLogin` in the root
+layout). Same account rules as Google sign-in above. On the LAN address there is no such token, so
+the normal login page is used. Logging out stops the silent login for that browser tab.
+
+Settings (defaults are already this company's): `CF_ACCESS_TEAM_DOMAIN`, `CF_ACCESS_AUD` (Access app
+AUD tag) and `CF_ACCESS_AUTO_LOGIN=off` to disable.
+
 ## Existing accounts and email
 
 Accounts created before email login have no email. Until one is set they can still sign in

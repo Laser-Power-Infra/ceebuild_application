@@ -53,6 +53,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { signOut } from 'next-auth/react';
+import { CF_AUTO_LOGIN_FLAG } from '@/components/CloudflareAutoLogin';
 import MultiSelectFilterDropdown from '@/components/MultiSelectFilterDropdown';
 import ConfirmDialog, { type ConfirmDialogOptions } from '@/components/ConfirmDialog';
 import ConditionSelect from '@/components/ConditionSelect';
@@ -745,6 +746,8 @@ export default function Dashboard() {
     try {
       // LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17):
       // await fetch('/api/auth/logout', { method: 'POST' });
+      // Stay logged out in this tab (no silent Cloudflare re-login).
+      try { sessionStorage.setItem(CF_AUTO_LOGIN_FLAG, 'off'); } catch { /* storage blocked */ }
       await signOut({ redirect: false });
     } catch (err) {
       console.error(err);
