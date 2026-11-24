@@ -17,6 +17,20 @@ and password. Everyone signs in with **email + password**. New accounts get the
 Each sign-up is recorded in the audit log (table `users`). Limit: 5 sign-ups per IP per hour.
 To remove access: `npm run users -- disable <username>` or `set-role <username> Viewer`.
 
+## Sign in with Google
+
+The login page shows a **Sign in with Google** button when `GOOGLE_CLIENT_ID` and
+`GOOGLE_CLIENT_SECRET` are set (Google Cloud OAuth client, type Web application, redirect URI
+`<NEXTAUTH_URL>/api/auth/callback/google`). Google only accepts `https://` or `localhost`
+redirect URIs, so use the HTTPS address (Cloudflare) as `NEXTAUTH_URL`, not the LAN IP.
+
+- The Google email must be verified. It is matched to `users.email`; an existing account
+  signs in with its current role.
+- No matching account: one is created with the **User** role (same as `/signup`), logged in
+  the audit log with `source: "Google sign-in"`. It gets a random password nobody knows.
+- `GOOGLE_ALLOWED_DOMAINS="company.com,other.com"` limits Google sign-in to those domains.
+- Disabled accounts are refused.
+
 ## Existing accounts and email
 
 Accounts created before email login have no email. Until one is set they can still sign in
