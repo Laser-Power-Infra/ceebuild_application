@@ -1,7 +1,8 @@
 // Attachment lists of the mail archive (threads.attach_names / attach_links): pair names with Drive
 // links and guess what each file is. Pure (unit-tested in tests/po.test.ts).
 
-export type MailFileKind = 'PO' | 'BOM' | 'DRAWING' | 'OTHER' | 'SKIP';
+/** OFFER = our own price offer / quotation (never read as the PO; prices come from the PO only). */
+export type MailFileKind = 'PO' | 'OFFER' | 'BOM' | 'DRAWING' | 'OTHER' | 'SKIP';
 
 export interface MailFile {
   name: string;
@@ -21,7 +22,11 @@ export function guessKind(name: string): MailFileKind {
   if (!['pdf', 'png', 'jpg', 'jpeg', 'webp', 'heic', 'heif', 'tif', 'tiff'].includes(ext)) return 'SKIP';
   if (/^(image\d*|icon|logo|warning_triangle|outlook|signature|banner)[\w-]*\.(png|jpe?g|gif)$/.test(n)) return 'SKIP';
   if (/\bdrg\b|drawing|dwg|\bga\b|gtp|layout|sld/.test(n)) return 'DRAWING';
-  if (/\bp\.?o\b|purchase|order|\bloa\b|award|amend|revised|work order|\bwo\b/.test(n)) return 'PO';
+  // "2PO-14(A)", "PO_123", "P.O." - a PO number in the name wins over "price" ("Revised PO price.pdf" is still the PO).
+  const poLike = /(?<![a-z])p\.?o(?![a-z])|purchase|order|(?<![a-z])loa(?![a-z])|award|amend|work order|(?<![a-z])wo(?![a-z])/.test(n);
+  // Our offer: "AKS_Revised Price.pdf", "Quotation CEE-000419.pdf", "Techno-commercial offer.pdf".
+  if (!poLike && /price|offer|quot|(?<![a-z])qtn(?![a-z])|proforma|(?<![a-z])pi(?![a-z])|techno|commercial|(?<![a-z])rates?(?![a-z])|cee-?\d{4,}/.test(n)) return 'OFFER';
+  if (poLike || /revised/.test(n)) return 'PO';
   if (ext === 'pdf') return 'PO'; // an unnamed PDF on a PO mail is most often the PO itself (e.g. "42008150 - ... - 7100.pdf")
   return 'OTHER';
 }

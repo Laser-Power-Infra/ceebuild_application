@@ -70,12 +70,12 @@ export const PO_FIELDS: PoFieldDef[] = [
   { key: 'state', label: 'State', group: 'header', type: 'text', hint: 'Indian state of the delivery site / project.' },
   { key: 'project', label: 'Project', group: 'header', type: 'text', hint: 'Project name, e.g. "Chelligada Irrigation Project", "11 kV line works".' },
   { key: 'scheme', label: 'Scheme', group: 'header', type: 'text', hint: 'Government scheme or package, e.g. RDSS, RDSS Loss Reduction, PMKSY.' },
-  { key: 'contactPerson', label: 'Contact person', group: 'header', type: 'text', hint: "Buyer's contact person for this order." },
-  { key: 'contactEmail', label: 'Contact email', group: 'header', type: 'email', hint: "Buyer's contact email." },
-  { key: 'contactPhone', label: 'Contact phone', group: 'header', type: 'text', hint: "Buyer's contact phone / mobile." },
+  { key: 'contactPerson', label: 'Contact person', group: 'header', type: 'text', hint: "The BUYER's own contact person (customer staff: PO signatory, purchase / project person in the customer's mail signature). NEVER Ceebuild's or Laser Power & Infra's people, nor the person the PO is addressed to (\"Kind Attn\" on the supplier side)." },
+  { key: 'contactEmail', label: 'Contact email', group: 'header', type: 'email', hint: "The buyer's contact email (customer domain). Never a ceebuildcompany.com / laserpowerinfra.com address." },
+  { key: 'contactPhone', label: 'Contact phone', group: 'header', type: 'text', hint: "The buyer's contact phone / mobile (from the PO or the customer's mail signature). Never Ceebuild's / Laser's own numbers or the supplier-side addressee's number." },
   // ---- commercial
   { key: 'basicValue', label: 'Basic value (Rs)', group: 'commercial', type: 'money', hint: 'Total before GST (sum of line values).' },
-  { key: 'gstPct', label: 'GST %', group: 'commercial', type: 'pct', hint: 'GST rate in % (IGST, or CGST+SGST added together).' },
+  { key: 'gstPct', label: 'GST %', group: 'commercial', type: 'pct', hint: 'GST rate in % (IGST, or CGST+SGST added together) only when a rate is printed. "Extra as applicable / at actual" without a rate: value null, note "extra at actual".' },
   { key: 'gstAmount', label: 'GST amount (Rs)', group: 'commercial', type: 'money', hint: 'Total GST amount in rupees.' },
   { key: 'totalValue', label: 'Total value incl. GST (Rs)', group: 'commercial', type: 'money', hint: 'Grand total including GST (and freight if printed in the total).' },
   { key: 'priceBasis', label: 'Price basis', group: 'commercial', type: 'text', hint: 'FOR site / FOR destination / Ex-works, with the place.' },
@@ -94,14 +94,14 @@ export const PO_FIELDS: PoFieldDef[] = [
   { key: 'galvSpec', label: 'Galvanising spec', group: 'commercial', type: 'text', hint: 'Galvanising standard and coating, e.g. "IS 2629, 610 g/m2" or "IS 4759, 86 micron".' },
   // ---- references
   { key: 'bomRef', label: 'BOM reference', group: 'references', type: 'text', hint: 'BOM / bill of quantities reference the PO is based on (number, date or "as per BOM enclosed").' },
-  { key: 'drawingRef', label: 'Drawing / GTP no.', group: 'references', type: 'text', hint: 'Drawing numbers and/or GTP references. Separate several with "; ".' },
+  { key: 'drawingRef', label: 'Drawing / GTP no.', group: 'references', type: 'text', hint: 'Drawing / GTP document NUMBERS only (e.g. "UPCL/DRG/11KV/05 R1", "GTP-AKS-03"), separated by "; ". Never a list of items, sizes or descriptions (e.g. not "G.I. Wire 4.00 mm"). null when no number is printed.' },
   { key: 'approvalLetterNo', label: 'Approval letter no.', group: 'references', type: 'text', hint: 'Letter number by which the drawing / GTP was approved by the end client, e.g. "SBPDCL letter 2333".' },
   {
     key: 'drawingStatus',
-    label: 'Drawing status (per PO)',
+    label: 'Drawing status (PO + mail)',
     group: 'references',
     type: 'drawingStatus',
-    hint: 'APPROVED if the PO says the drawing/GTP is approved or an approved drawing is enclosed; TO_BE_APPROVED if drawing / BOM approval or confirmation is still to come (also: provisionally approved, drawing or BOM on hold, awaiting client / site confirmation, to be finalised); NOT_STATED if the PO says nothing.',
+    hint: 'Status as of the LATEST message of the mail thread (or the PO when there is no mail): APPROVED only if the drawing/GTP is approved and nothing later says a confirmation is still pending; TO_BE_APPROVED if drawing / BOM / GTP approval or confirmation is still to come at the latest message (also: provisionally approved, on hold, awaiting client / site confirmation, to be finalised); NOT_STATED if neither says anything. note = which message (date) decides.',
   },
 ];
 
@@ -129,11 +129,33 @@ export interface PoLineDraft {
   lineValue: number | null;
   qtyVarPct: number | null;
   confidence: Confidence;
-  /** Filled on the server from the docket's quotation items. */
+  /** PO = printed on the PO; MASTER = filled from the HSN item master (src/lib/po/hsn.ts). */
+  hsnSource?: 'PO' | 'MASTER' | null;
+  /** Filled on the server from the docket's quotation items. quotedUom = the unit the quoted price is per. */
   quotedRate?: number | null;
   quotedItemId?: number | null;
   quotedItemName?: string | null;
   quotedUom?: string | null;
+  /** Unit weight of the quoted item (kg per `quotedWtPer`), to compare per-kg and per-piece / per-metre rates. */
+  quotedWtKg?: number | null;
+  quotedWtPer?: string | null;
+}
+
+/** What each attached document is, as the AI read it. OFFER = our own price offer (never the PO). */
+export const AI_DOC_TYPES = ['PO', 'OFFER', 'BOM', 'DRAWING', 'GTP', 'LETTER', 'OTHER'] as const;
+export interface PoDocumentRead {
+  name: string;
+  type: (typeof AI_DOC_TYPES)[number];
+  note?: string | null;
+}
+
+/** Something still open at the latest message of the mail thread (drives the hold). */
+export interface PoPendingItem {
+  item: string;
+  /** yyyy-mm-dd of the message that says it is pending. */
+  since: string | null;
+  /** Who has to act (customer name / us). */
+  by: string | null;
 }
 
 /** A BOM row read from a drawing / BOM table inside the PO documents. */
@@ -156,6 +178,12 @@ export interface PoExtraction {
   /** What the AI thinks the document is (PURCHASE_ORDER, AMENDMENT, ...) and any warnings. */
   documentType: string | null;
   warnings: string[];
+  /** Per-document type (older readings: absent). */
+  documents?: PoDocumentRead[];
+  /** Open items as of the latest mail (older readings: absent). */
+  pending?: PoPendingItem[];
+  /** One or two lines: the position at the latest message, with its date. */
+  latestPosition?: string | null;
   model: string;
   at: string;
 }

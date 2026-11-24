@@ -22,7 +22,7 @@ type Thread = {
 };
 type Pending = { id: number; status: string; subject: string | null; error: string | null; createdAt: string; poNumber: string | null; customer: string | null; totalValue: string | null };
 
-const KIND_LABEL: Record<DocKind, string> = { PO: 'PO copy', BOM: 'BOM', DRAWING: 'Drawing', OTHER: 'Other' };
+const KIND_LABEL: Record<DocKind, string> = { PO: 'PO copy', OFFER: 'Offer (ours)', BOM: 'BOM', DRAWING: 'Drawing', OTHER: 'Other' };
 const fmt = (iso: string | null) => (iso ? iso.slice(0, 16).replace('T', ' ') : '');
 
 /** PO mails n8n has read (waiting for review), plus the ones it skipped and why. */

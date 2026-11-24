@@ -7,7 +7,7 @@ import type { PoLineDraft } from './fields';
 export type CheckLevel = 'block' | 'flag' | 'info';
 export interface PoCheck {
   level: CheckLevel;
-  code: 'DUPLICATE' | 'LINE_TOTAL' | 'BASIC_TOTAL' | 'GST' | 'GRAND_TOTAL' | 'DELIVERY' | 'RATE' | 'REQUIRED' | 'NO_LINES';
+  code: 'DUPLICATE' | 'LINE_TOTAL' | 'BASIC_TOTAL' | 'GST' | 'GRAND_TOTAL' | 'DELIVERY' | 'RATE' | 'NOT_IN_OFFER' | 'HSN' | 'REQUIRED' | 'NO_LINES';
   message: string;
   /** Field key or `line:<index>` the check points at. */
   target?: string;
@@ -25,6 +25,8 @@ export interface CheckInput {
   today: string;
   leadTimeDays: number;
   duplicateOf?: { poNumber: string; orderId: number } | null;
+  /** The chosen docket (offer): lines with no matching quoted item are flagged "item not in offer". */
+  offer?: { docketNo: string | null; items: number } | null;
 }
 
 export function addDays(ymd: string, days: number) {
@@ -33,24 +35,61 @@ export function addDays(ymd: string, days: number) {
   return d.toISOString().slice(0, 10);
 }
 
-/** Per-kg rate so a PO rate per MT can be compared with a quoted rate per kg (and back). */
-export function ratePerKg(rate: number | null | undefined, unit: string | null | undefined): number | null {
+/** "68 KG/NO", "0.52 KG/Mtr", "48 KG/SET" -> { kg: 68, per: 'NOS' }; "4.45" -> { kg: 4.45, per: null }. */
+export function parseUnitWeight(v: string | null | undefined): { kg: number; per: string | null } | null {
+  if (!v) return null;
+  const m = String(v).match(/(\d+(?:\.\d+)?)\s*KGS?\s*(?:\/|PER)\s*([A-Z.]+)/i);
+  if (m) return { kg: Number(m[1]), per: normUnit(m[2]) };
+  const n = Number(String(v).replace(/[^0-9.]/g, ''));
+  return /^\s*\d+(\.\d+)?\s*(KGS?)?\s*$/i.test(String(v)) && n > 0 ? { kg: n, per: null } : null;
+}
+
+/** NOS / SETS / PCS count as the same "per piece" basis for a unit weight. */
+const pieceUnit = (u: string | null | undefined) => ['NOS', 'SETS', 'EA', 'PCS'].includes((u ?? '').toUpperCase());
+const sameBasis = (a: string | null | undefined, b: string | null | undefined) =>
+  !!a && !!b && (a.toUpperCase() === b.toUpperCase() || (pieceUnit(a) && pieceUnit(b)));
+
+/**
+ * Per-kg rate so rates in different units can be compared: per KG as is, per MT / 1000, per NOS / SET /
+ * MTR divided by the unit weight (kg per that unit) when it is known.
+ */
+export function ratePerKg(rate: number | null | undefined, unit: string | null | undefined, wt?: { kg: number; per: string | null } | null): number | null {
   if (rate === null || rate === undefined || !Number.isFinite(rate)) return null;
   const u = (unit ?? '').toUpperCase();
   if (u === 'KG' || u === 'KGS') return rate;
   // Quotation sheets often store a per-kg price against an MT quantity (e.g. "101.24 MT @ 77").
   if (u === 'MT' || u === 'MTS' || u === 'TON' || u === 'TONS') return rate >= 1000 ? rate / 1000 : rate;
+  if (wt && wt.kg > 0 && (wt.per === null || sameBasis(wt.per, u))) return rate / wt.kg;
   return null;
 }
 
-/** Compare PO rate with our quoted rate on the same basis. null when the units cannot be compared. */
-export function compareRate(line: Pick<PoLineDraft, 'unitRate' | 'unit' | 'quotedRate' | 'quotedUom'>): { diffPct: number; basis: string } | null {
-  if (line.unitRate === null || line.quotedRate === null || line.quotedRate === undefined) return null;
-  const a = ratePerKg(line.unitRate, line.unit);
-  const b = ratePerKg(line.quotedRate, line.quotedUom ?? line.unit);
-  if (a !== null && b !== null && b > 0) return { diffPct: Math.round(((a - b) / b) * 1000) / 10, basis: 'per kg' };
-  const sameUnit = (line.unit ?? '').toUpperCase() === (line.quotedUom ?? line.unit ?? '').toUpperCase();
-  if (sameUnit && line.quotedRate > 0) return { diffPct: Math.round(((line.unitRate - line.quotedRate) / line.quotedRate) * 1000) / 10, basis: `per ${line.unit ?? 'unit'}` };
+const r1 = (n: number) => Math.round(n * 10) / 10;
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Compare the PO rate with our quoted rate on the same basis. The quoted rate is per `quotedUom` (the
+ * unit the offer priced in, e.g. Rs/kg for a line counted in NOS); the unit weight converts per-piece /
+ * per-metre rates to per kg. null when the units cannot be compared.
+ */
+export function compareRate(
+  line: Pick<PoLineDraft, 'unitRate' | 'unit' | 'quotedRate' | 'quotedUom' | 'quotedWtKg' | 'quotedWtPer'>,
+): { diffPct: number; basis: string; poPerKg?: number; quotedPerKg?: number } | null {
+  if (line.unitRate === null || line.quotedRate === null || line.quotedRate === undefined || line.quotedRate <= 0) return null;
+  const qUnit = line.quotedUom ?? line.unit;
+  // Per MT is often a per-kg price against an MT quantity (77 "per MT"), so MT always goes via per kg.
+  const isMt = (u: string | null | undefined) => ['MT', 'MTS', 'TON', 'TONS'].includes((u ?? '').toUpperCase());
+  if (sameBasis(line.unit, qUnit) && !isMt(line.unit)) {
+    return { diffPct: r1(((line.unitRate - line.quotedRate) / line.quotedRate) * 100), basis: `per ${line.unit ?? 'unit'}` };
+  }
+  const wt = line.quotedWtKg ? { kg: line.quotedWtKg, per: line.quotedWtPer ?? null } : null;
+  const a = ratePerKg(line.unitRate, line.unit, wt);
+  const b = ratePerKg(line.quotedRate, qUnit, wt);
+  if (a !== null && b !== null && b > 0) {
+    const isKg = (u: string | null | undefined) => ['KG', 'KGS'].includes((u ?? '').toUpperCase());
+    const converted = !isKg(line.unit) || !isKg(qUnit);
+    if (converted && wt) return { diffPct: r1(((a - b) / b) * 100), basis: `per kg (unit wt ${wt.kg} kg/${wt.per ?? 'unit'})`, poPerKg: r2(a), quotedPerKg: r2(b) };
+    return { diffPct: r1(((a - b) / b) * 100), basis: 'per kg' };
+  }
   return null;
 }
 
@@ -74,8 +113,18 @@ export function runPoChecks(input: CheckInput): PoCheck[] {
     }
     const cmp = compareRate(l);
     if (cmp && l.quotedRate !== null && l.quotedRate !== undefined) {
-      const msg = `Line ${i + 1}: PO rate ${l.unitRate} vs our quoted ${l.quotedRate} (${cmp.diffPct > 0 ? '+' : ''}${cmp.diffPct}% ${cmp.basis}).`;
+      const per = (u: string | null | undefined) => (u ? `/${u}` : '');
+      const kg = cmp.poPerKg !== undefined && cmp.quotedPerKg !== undefined && cmp.basis.startsWith('per kg (') ? ` = ${cmp.poPerKg} vs ${cmp.quotedPerKg} per kg` : '';
+      const msg = `Line ${i + 1}: PO rate ${l.unitRate}${per(l.unit)} vs our quoted ${l.quotedRate}${per(l.quotedUom)}${kg} (${cmp.diffPct > 0 ? '+' : ''}${cmp.diffPct}% ${cmp.basis}).`;
       out.push({ level: cmp.diffPct < -0.5 ? 'flag' : 'info', code: 'RATE', target: `line:${i}`, message: cmp.diffPct < -0.5 ? `${msg} PO rate is below our quote.` : msg });
+    } else if (l.quotedRate !== null && l.quotedRate !== undefined && l.unitRate !== null) {
+      out.push({ level: 'flag', code: 'RATE', target: `line:${i}`, message: `Line ${i + 1}: PO rate ${l.unitRate}/${l.unit ?? '?'} cannot be compared with our quoted ${l.quotedRate}/${l.quotedUom ?? '?'} (no unit weight on the offer item). Check it by hand.` });
+    }
+    if (input.offer && input.offer.items > 0 && (l.quotedItemId === null || l.quotedItemId === undefined) && l.description.trim()) {
+      out.push({ level: 'flag', code: 'NOT_IN_OFFER', target: `line:${i}`, message: `Line ${i + 1}: item not in offer${input.offer.docketNo ? ` ${input.offer.docketNo}` : ''} ("${l.description.slice(0, 60)}").` });
+    }
+    if (!l.hsn && l.description.trim()) {
+      out.push({ level: 'flag', code: 'HSN', target: `line:${i}`, message: `Line ${i + 1}: HSN missing – not on the PO and not found in the item master. Enter it.` });
     }
   });
 
@@ -127,7 +176,8 @@ export function editDistance(a: string, b: string, cap = 3): number {
   return prev[b.length];
 }
 
-const tokenEq = (a: string, b: string) => a === b || (a.length >= 5 && b.length >= 5 && editDistance(a, b, 2) <= 2);
+// Typos are forgiven in words, never in sizes: "25X6MM" is not "35X6MM".
+const tokenEq = (a: string, b: string) => a === b || (a.length >= 5 && b.length >= 5 && !/\d/.test(a + b) && editDistance(a, b, 2) <= 2);
 
 /** 0..1 similarity of two company names (stop-words dropped, typo-tolerant). */
 export function nameSimilarity(a: string, b: string): number {
@@ -167,7 +217,8 @@ export interface DocketCandidate {
   party: string | null;
   utility: string | null;
   state: string | null;
-  items: { id: number; name: string | null; uom: string | null; qty: string | null; price: string | null }[];
+  /** uom = unit the quantity is in; qtnUom = unit the price is per (iteam-table.uom_of_qtn); wt = unit weight text ("68 KG/NO"). */
+  items: { id: number; name: string | null; uom: string | null; qty: string | null; price: string | null; qtnUom?: string | null; wt?: string | null }[];
   /** Confirmed item BOM / costing exists (the quotation BOM can be carried into the order). */
   hasBom: boolean;
   orders: number;
@@ -181,6 +232,10 @@ export interface DocketMatch {
   reasons: string[];
   hasBom: boolean;
   orders: number;
+  /** SAME_PARTY = an offer to this customer (shown first, latest revision pre-selected); OTHER = other parties. */
+  group: 'SAME_PARTY' | 'OTHER';
+  /** Same party AND (same utility or matching items): the offer this PO most likely answers. */
+  relevant: boolean;
 }
 
 const UTILITY_ALIASES: [RegExp, string][] = [
@@ -195,9 +250,14 @@ const utilityKey = (s: string | null | undefined) => {
   return s.toUpperCase().replace(/[^0-9A-Z]/g, '');
 };
 
+/** CEE-000419 -> 419 (newer offers / revisions have higher numbers). */
+export const docketSeq = (no: string | null | undefined) => Number(String(no ?? '').match(/(\d+)(?!.*\d)/)?.[1] ?? 0);
+
 /**
- * Rank the dockets (offers) this PO most likely answers: customer name first, then end client /
- * project, then how well the PO lines match the quoted items. Ties go to the newer docket.
+ * Rank the dockets (offers) this PO most likely answers. The customer's own offers come first
+ * (group SAME_PARTY); among them the relevant ones (same utility or items) by LATEST revision
+ * (highest docket no.) - the final revised offer, not the one with the most item hits. Other
+ * parties follow (group OTHER) by score.
  */
 export function rankDockets(
   po: { customer: string | null; endClient: string | null; project: string | null; lines: { description: string; qty: number | null; unit: string | null }[] },
@@ -231,22 +291,49 @@ export function rankDockets(
       score += 3;
       reasons.push('costed BOM on file');
     }
-    return { id: d.id, docketNo: d.docketNo, party: d.party, utility: d.utility, score: Math.round(score * 10) / 10, reasons, hasBom: d.hasBom, orders: d.orders };
+    const group: DocketMatch['group'] = nameSim >= 0.5 ? 'SAME_PARTY' : 'OTHER';
+    const relevant = group === 'SAME_PARTY' && (reasons.some((r) => r.startsWith('utility')) || best > 0.3 || !target.length);
+    return { id: d.id, docketNo: d.docketNo, party: d.party, utility: d.utility, score: Math.round(score * 10) / 10, reasons, hasBom: d.hasBom, orders: d.orders, group, relevant };
   });
-  return ranked.filter((r) => r.score >= 20).sort((a, b) => b.score - a.score || b.id - a.id);
+  const same = ranked
+    .filter((r) => r.group === 'SAME_PARTY')
+    .sort((a, b) => Number(b.relevant) - Number(a.relevant) || docketSeq(b.docketNo) - docketSeq(a.docketNo) || b.id - a.id);
+  if (same[0]?.relevant) same[0].reasons.unshift(same.filter((x) => x.relevant).length > 1 ? 'latest revision for this party' : 'offer to this party');
+  const other = ranked.filter((r) => r.group === 'OTHER' && r.score >= 20).sort((a, b) => b.score - a.score || b.id - a.id);
+  return [...same, ...other];
 }
+
+/** Item text for matching: "[Weight: 3 KG/NO]" dropped, OCR "Gl" read as "GI". */
+export const itemText = (s: string) => s.replace(/\[\s*weight[^\]]*\]/gi, ' ').replace(/\bG[lL]\b/g, 'GI').replace(/\s+/g, ' ').trim();
+
+/** Voltages named in a description ("11 kV", "33KV") - an 11 kV item never matches a 33 kV one. */
+const voltages = (s: string) => new Set([...s.matchAll(/(\d+(?:\.\d+)?)\s*K\.?V\b/gi)].map((m) => Number(m[1])));
 
 /** Best quoted item for each PO line (same docket), by description; used for the rate comparison. */
 export function matchQuotedItems(lines: PoLineDraft[], items: DocketCandidate['items']): PoLineDraft[] {
+  const named = items.filter((it) => it.name);
   return lines.map((l) => {
     let best: { it: DocketCandidate['items'][number]; s: number } | null = null;
-    for (const it of items) {
-      if (!it.name) continue;
-      const s = textSimilarity(l.description, it.name) + (items.length === 1 ? 0.3 : 0);
+    const desc = itemText(l.description);
+    const vl = voltages(desc);
+    for (const it of named) {
+      const vi = voltages(it.name as string);
+      if (vl.size && vi.size && ![...vl].some((v) => vi.has(v))) continue;
+      const s = textSimilarity(desc, itemText(it.name as string)) + (named.length === 1 ? 0.3 : 0);
       if (!best || s > best.s) best = { it, s };
     }
-    if (!best || best.s < 0.3) return { ...l, quotedRate: null, quotedItemId: null, quotedItemName: null, quotedUom: null };
+    if (!best || best.s < 0.3) return { ...l, quotedRate: null, quotedItemId: null, quotedItemName: null, quotedUom: null, quotedWtKg: null, quotedWtPer: null };
     const price = parseMoney(best.it.price);
-    return { ...l, quotedRate: price, quotedItemId: best.it.id, quotedItemName: best.it.name, quotedUom: normUnit(best.it.uom) };
+    const wt = parseUnitWeight(best.it.wt) ?? parseUnitWeight(best.it.name?.match(/\[\s*weight\s*:?\s*([^\]]+)\]/i)?.[1]);
+    return {
+      ...l,
+      quotedRate: price,
+      quotedItemId: best.it.id,
+      quotedItemName: best.it.name,
+      // The price is per the offer's price unit (uom_of_qtn), which may differ from the quantity unit.
+      quotedUom: normUnit(best.it.qtnUom) ?? normUnit(best.it.uom),
+      quotedWtKg: wt?.kg ?? null,
+      quotedWtPer: wt?.per ?? normUnit(best.it.uom),
+    };
   });
 }

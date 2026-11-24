@@ -15,6 +15,7 @@ import {
   intakeForThread,
   pendingIntakes,
   requestMailRead,
+  rereadIntake,
   searchMailArchive,
   startIntake,
   startIntakeFromMail,
@@ -23,6 +24,7 @@ import {
 } from '@/modules/poIntake/server/intake';
 import { getOrderPo, updateOrderPoField, updatePoLine } from '@/modules/poIntake/server/orderPo';
 import { runIndentJob, setHold } from '@/modules/poIntake/server/job';
+import { sheetPreview } from '@/modules/poIntake/server/sheetPreview';
 
 const obj = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
 
@@ -40,7 +42,7 @@ export async function intakeSetupAction() {
   }));
 }
 
-/** Files from the browser: FormData with `file` (repeated) and `kind` (same order: PO | BOM | DRAWING | OTHER). */
+/** Files from the browser: FormData with `file` (repeated) and `kind` (same order: PO | OFFER | BOM | DRAWING | OTHER). */
 export async function startIntakeAction(form: FormData) {
   return write(
     async (user) => {
@@ -108,6 +110,16 @@ export async function confirmIntakeAction(id: unknown, input: unknown) {
       ),
     { fallback: 'Could not save the order' },
   );
+}
+
+/** Read the PO again with the current reading rules (old reading discarded). */
+export async function rereadIntakeAction(id: unknown) {
+  return write((user) => rereadIntake(toId(id, 'intake'), user), { fallback: 'Could not read the PO again' });
+}
+
+/** Excel / CSV preview of an attached file (BOM) for the review screen. */
+export async function sheetPreviewAction(documentId: unknown) {
+  return read(() => sheetPreview(toId(documentId, 'file')));
 }
 
 export async function discardIntakeAction(id: unknown) {

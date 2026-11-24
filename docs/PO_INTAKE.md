@@ -61,6 +61,22 @@ mail sync ──> MySQL mail archive (threads; attachments on Google Drive)
    transaction. Every field the reviewer changed from the AI reading is written to the edit log
    (field, AI value, new value, user); later edits on the PO tab are logged the same way.
 
+## Reading rules (GM review of intake 3, 24-11-2026)
+
+| Rule | Where |
+|---|---|
+| Files are typed PO / **OFFER** (our own price offer, e.g. "AKS_Revised Price.pdf") / BOM / DRAWING; the AI also types each document and its word wins. Prices and terms are read from the PO only; an offer is never read as the PO. | `src/lib/mailFiles.ts`, `extract.ts` (`documents`), `intake.ts` `aiKind()` |
+| The mail thread goes to the AI oldest -> newest, each message dated, quoted text removed, newest kept when long; the LATEST message decides. Superseded statements are not flags. Open items at the latest mail come back as `pending` (with the date) and `latestPosition`. | `src/lib/mailThread.ts`, `extract.ts`; email portal returns the thread start + end (30k chars) |
+| Our own company names / mail domains (in code) and our people / phone numbers (server setting `PO_OWN_CONTACTS`) never fill customer fields: blanked and yellow. | `normalise.ts` `ownCompanyHit()` |
+| Drawing / GTP no. holds document numbers only; an item list is removed. | `normalise.ts` `drawingNumbersOnly()` |
+| Docket: the customer's own offers first, the latest revision (highest docket no.) pre-selected; other parties only under "Other matches". | `checks.ts` `rankDockets()` |
+| PO rate vs quote: quoted price is per the offer's price unit (`uom_of_qtn`); per-NOS / per-MTR rates are converted with the unit weight (`weight_per_piece`); 11 kV never matches 33 kV; sizes must match exactly; a line with no item on the offer is flagged "item not in offer". | `checks.ts` |
+| Drawing status comes from the PO and the latest mail; pending items put the order on hold with the item and the mail date. | `intake.ts` `suggestHold()` |
+| HSN from the item master when the PO has none (marked "item master", yellow); missing -> flagged. GST "extra at actual" -> 18 % as per law, GST and total calculated (yellow). | `src/lib/po/hsn.ts`, `src/lib/po/enrich.ts` |
+| No delivery date on the PO -> proposed PO date + standard lead time with an Accept button; the field stays yellow until accepted. | `enrich.ts`, review screen |
+| BOM Excel / CSV attachments have a preview (sheet tabs) in the file viewer. | `sheetPreview.ts`, `shared.tsx` |
+| **Read again** on the review screen re-reads a PO with the current rules (mail: through n8n; upload: from the stored files); the old reading is discarded and logged. | `intake.ts` `rereadIntake()` |
+
 ## Indent job (runs on Confirm, "Re-run" on the PO tab)
 
 | Step | What it does | Stops with |
@@ -91,6 +107,7 @@ N8N_API_KEY="..."       # same value as the x-api-key header in the reader workf
 MAIL_API_URL="http://192.168.1.190:6002"   # email portal (Match Emails Portal backend), LAN
 GEMINI_API_KEY=""       # leave empty: Gemini runs in n8n. Set only to call Gemini directly.
 GEMINI_MODEL=""         # optional, default gemini-2.5-flash
+PO_OWN_CONTACTS="Name One; Name Two; 98xxxxxxxx"   # our own people + phones: never filled into customer fields
 ```
 
 n8n: run `python infrastructure/cloudflare/m15_setup.py` once (creates the service token and saves it

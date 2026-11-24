@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { FileUp, Loader2, Mail, Search, CheckCircle2, PauseCircle, Paperclip } from 'lucide-react';
+import { FileUp, Loader2, Mail, Search, CheckCircle2, PauseCircle, Paperclip, RefreshCw, CalendarCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FormError, fieldCls, labelCls } from '@/components/Modal';
 import { PO_FIELDS, needsReview, type PoFieldKey, type PoLineDraft } from '@/lib/po/fields';
@@ -12,13 +12,16 @@ import {
   confirmIntakeAction,
   discardIntakeAction,
   getIntakeReviewAction,
+  intakeForThreadAction,
   intakeSetupAction,
+  rereadIntakeAction,
   searchMailboxAction,
   startIntakeAction,
   startIntakeFromMailAction,
   threadMailsAction,
 } from '@/app/actions/poIntake';
 import { searchDocketsAction } from '@/app/actions/orders';
+import { guessKind as guessFileKind } from '@/lib/mailFiles';
 import type { DocKind, IntakeReview } from '../types';
 import { ChecksPanel, DocViewer, GROUP_LABELS, PoField, PoLinesTable } from './shared';
 import { MailArchivePicker, PendingFromMail } from './MailArchive';
@@ -28,9 +31,15 @@ type MailAtt = { messageId: string; fileName: string; mimeType: string; size: nu
 type Mail = { id: string; threadId: string; subject: string; from: string; date: string; snippet: string; attachments: MailAtt[] };
 type JobOut = { status: string; note: string; steps: string[] } | null;
 
-const KIND_LABEL: Record<DocKind, string> = { PO: 'PO copy', BOM: 'BOM', DRAWING: 'Drawing', OTHER: 'Other' };
-const guessKind = (name: string, firstDoc: boolean): DocKind =>
-  /\.(xlsx|xlsm|xls|csv)$/i.test(name) ? 'BOM' : /bom|bill of mat/i.test(name) ? 'BOM' : /drg|drawing|gtp|dwg/i.test(name) ? 'DRAWING' : firstDoc ? 'PO' : 'OTHER';
+const KIND_LABEL: Record<DocKind, string> = { PO: 'PO copy', OFFER: 'Offer (ours)', BOM: 'BOM', DRAWING: 'Drawing', OTHER: 'Other' };
+/** Same typing as the mail archive (our price offer = OFFER, never the PO); an Excel file is taken as the BOM. */
+const guessKind = (name: string, firstDoc: boolean): DocKind => {
+  if (/\.(xlsx|xlsm|xls|csv)$/i.test(name)) return 'BOM';
+  const k = guessFileKind(name);
+  if (k === 'SKIP') return 'OTHER';
+  if (k === 'PO' && !firstDoc && !/(?<![a-z])p\.?o(?![a-z])|purchase|order|revised|amend/i.test(name)) return 'OTHER';
+  return k;
+};
 const kb = (n: number) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 
 function KindSelect({ value, onChange, label }: { value: DocKind; onChange: (k: DocKind) => void; label: string }) {
@@ -248,7 +257,17 @@ function AttachStep({
 
 type DocketHit = { id: number; docketNo: string | null; party: string | null; utility: string | null; orders: number };
 
-function ReviewStep({ review, onDone, onDiscard }: { review: IntakeReview; onDone: (id: number, job: JobOut, jobError?: string) => void; onDiscard: () => void }) {
+function ReviewStep({
+  review,
+  onDone,
+  onDiscard,
+  onReread,
+}: {
+  review: IntakeReview;
+  onDone: (id: number, job: JobOut, jobError?: string) => void;
+  onDiscard: () => void;
+  onReread: () => void;
+}) {
   const ex = review.extraction;
   const initial = useMemo(() => Object.fromEntries(PO_FIELDS.map((f) => [f.key, ex.fields[f.key]?.value ?? ''])) as Record<PoFieldKey, string>, [ex]);
   const [values, setValues] = useState(initial);
@@ -284,11 +303,20 @@ function ReviewStep({ review, onDone, onDiscard }: { review: IntakeReview; onDon
     return () => clearTimeout(t);
   }, [dq]);
 
-  const items = useMemo(() => review.dockets.find((d) => d.id === docketId)?.items ?? [], [review.dockets, docketId]);
+  const chosen = useMemo(() => review.dockets.find((d) => d.id === docketId) ?? null, [review.dockets, docketId]);
+  const items = useMemo(() => chosen?.items ?? [], [chosen]);
   const priced = useMemo(() => matchQuotedItems(lines, items).map((l, i) => ({ ...l, id: lines[i].id })), [lines, items]);
   const checks = useMemo(
-    () => runPoChecks({ fields: values, lines: priced, today: review.today, leadTimeDays: review.leadTimeDays, duplicateOf: dup }),
-    [values, priced, review.today, review.leadTimeDays, dup],
+    () =>
+      runPoChecks({
+        fields: values,
+        lines: priced,
+        today: review.today,
+        leadTimeDays: review.leadTimeDays,
+        duplicateOf: dup,
+        offer: chosen ? { docketNo: chosen.docketNo, items: chosen.items.length } : null,
+      }),
+    [values, priced, review.today, review.leadTimeDays, dup, chosen],
   );
   const blocked = checks.some((c) => c.level === 'block') || !docketId;
   const toReview = PO_FIELDS.filter((f) => needsReview(ex.fields[f.key]) && values[f.key] === initial[f.key]).length;
@@ -324,6 +352,26 @@ function ReviewStep({ review, onDone, onDiscard }: { review: IntakeReview; onDon
           </span>
           {review.mailSubject && <span className="text-slate-500">Mail: {review.mailSubject}</span>}
         </div>
+        {(ex.latestPosition || (ex.pending?.length ?? 0) > 0) && (
+          <div className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-900">
+            {ex.latestPosition && (
+              <p>
+                <strong>Latest position (mail thread, newest message decides):</strong> {ex.latestPosition}
+              </p>
+            )}
+            {(ex.pending?.length ?? 0) > 0 && (
+              <ul className="mt-1">
+                {ex.pending!.map((p, i) => (
+                  <li key={i}>
+                    • <strong>Pending:</strong> {p.item}
+                    {p.by ? ` – ${p.by}` : ''}
+                    {p.since ? ` (since ${p.since.slice(8, 10)}-${p.since.slice(5, 7)}-${p.since.slice(0, 4)})` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         {ex.warnings.length > 0 && (
           <ul className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             {ex.warnings.map((w, i) => (
@@ -340,20 +388,44 @@ function ReviewStep({ review, onDone, onDiscard }: { review: IntakeReview; onDon
         <section aria-label="Docket" className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold text-slate-900">Docket (our offer) this PO is for</h2>
           {review.dockets.length === 0 && !otherDocket && <p className="text-xs text-amber-800">No matching docket found automatically. Search below.</p>}
-          <ul className="flex flex-col gap-1">
-            {[...review.dockets.map((d) => ({ ...d, reasons: d.reasons })), ...(otherDocket && !review.dockets.some((d) => d.id === otherDocket.id) ? [{ ...otherDocket, score: 0, reasons: ['picked by search'], hasBom: false, items: [] }] : [])].map((d) => (
-              <li key={d.id}>
-                <label className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-xs ${docketId === d.id ? 'border-blue-400 bg-blue-50' : 'border-slate-200'}`}>
-                  <input type="radio" name="docket" checked={docketId === d.id} onChange={() => setDocketId(d.id)} className="mt-0.5" />
-                  <span>
-                    <strong>{d.docketNo}</strong> · {d.party} {d.utility ? `· ${d.utility}` : ''}
-                    {d.orders > 0 && <span className="ml-2 rounded bg-amber-100 px-1.5 text-[10px] font-bold text-amber-800">{d.orders} order(s)</span>}
-                    <span className="block text-[11px] text-slate-500">{d.reasons.join(' · ')}</span>
-                  </span>
-                </label>
-              </li>
+          {(
+            [
+              { key: 'SAME_PARTY', title: `Offers to ${values.customerName || 'this customer'} – latest revision first`, list: review.dockets.filter((d) => d.group === 'SAME_PARTY') },
+              {
+                key: 'OTHER',
+                title: 'Other matches (other parties)',
+                list: [
+                  ...review.dockets.filter((d) => d.group === 'OTHER'),
+                  ...(otherDocket && !review.dockets.some((d) => d.id === otherDocket.id)
+                    ? [{ ...otherDocket, score: 0, reasons: ['picked by search'], hasBom: false, items: [], group: 'OTHER' as const, relevant: false }]
+                    : []),
+                ],
+              },
+            ] as const
+          )
+            .filter((g) => g.list.length > 0)
+            .map((g) => (
+              <div key={g.key} className="flex flex-col gap-1">
+                <p className={`text-[11px] font-bold ${g.key === 'SAME_PARTY' ? 'text-slate-700' : 'text-slate-500'}`}>{g.title}</p>
+                <ul className="flex flex-col gap-1">
+                  {g.list.map((d) => (
+                    <li key={d.id}>
+                      <label
+                        className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-xs ${docketId === d.id ? 'border-blue-400 bg-blue-50' : g.key === 'OTHER' ? 'border-dashed border-slate-200 text-slate-600' : 'border-slate-200'}`}
+                      >
+                        <input type="radio" name="docket" checked={docketId === d.id} onChange={() => setDocketId(d.id)} className="mt-0.5" />
+                        <span>
+                          <strong>{d.docketNo}</strong> · {d.party} {d.utility ? `· ${d.utility}` : ''}
+                          {d.id === review.suggestedDocketId && <span className="ml-2 rounded bg-blue-100 px-1.5 text-[10px] font-bold text-blue-800">suggested</span>}
+                          {d.orders > 0 && <span className="ml-2 rounded bg-amber-100 px-1.5 text-[10px] font-bold text-amber-800">{d.orders} order(s)</span>}
+                          <span className="block text-[11px] text-slate-500">{d.reasons.join(' · ')}</span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
           <input className={fieldCls} placeholder="Search another docket (no, party, utility)" value={dq} onChange={(e) => setDq(e.target.value)} aria-label="Search dockets" />
           {dq.trim().length >= 2 && dHits.length > 0 && (
             <ul className="max-h-40 overflow-y-auto rounded-lg border border-slate-200">
@@ -391,6 +463,17 @@ function ReviewStep({ review, onDone, onDiscard }: { review: IntakeReview; onDon
                 />
               ))}
             </div>
+            {g === 'commercial' && review.proposedCompletion && !values.completionDate && (
+              <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <CalendarCheck className="h-4 w-4" />
+                <span>
+                  Delivery date not on the PO. Proposed: <strong>{review.proposedCompletion.date.slice(8, 10)}-{review.proposedCompletion.date.slice(5, 7)}-{review.proposedCompletion.date.slice(0, 4)}</strong> ({review.proposedCompletion.reason}).
+                </span>
+                <Button size="sm" variant="outline" onClick={() => setValues({ ...values, completionDate: review.proposedCompletion!.date })}>
+                  Accept
+                </Button>
+              </div>
+            )}
             {g === 'references' && review.libraryDrawings.length > 0 && (
               <p className="text-xs text-emerald-800">
                 In the Approved Drawing Library: {review.libraryDrawings.slice(0, 6).map((d) => `${d.drawingNo} R${d.revision}`).join(', ')}
@@ -407,6 +490,7 @@ function ReviewStep({ review, onDone, onDiscard }: { review: IntakeReview; onDon
           <h2 className="text-sm font-semibold text-slate-900">Line items ({lines.length})</h2>
           <PoLinesTable
             lines={priced}
+            offerItems={items.length}
             onChange={(next) =>
               setLines(
                 next.map((l) => {
@@ -435,6 +519,11 @@ function ReviewStep({ review, onDone, onDiscard }: { review: IntakeReview; onDon
 
         <FormError error={error} />
         <div className="flex flex-wrap justify-end gap-2">
+          {review.canReread && (
+            <Button variant="outline" onClick={onReread} disabled={saving} title="Read the PO and mail thread again with the current reading rules; this reading is discarded">
+              <RefreshCw /> Read again
+            </Button>
+          )}
           <Button variant="outline" onClick={onDiscard} disabled={saving}>Discard</Button>
           <Button onClick={() => void confirm()} disabled={saving || blocked}>
             {saving ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Confirm order
@@ -477,6 +566,41 @@ export function PoIntakePage({ initialReview }: { initialReview?: IntakeReview |
       setReview(r.data);
       window.history.replaceState(null, '', `/orders/new?intake=${r.data.intakeId}`);
     } else setError(r.error);
+  };
+
+  /** Read the open PO again (n8n for mail intakes - poll until the new reading is there). */
+  const reread = async () => {
+    if (!review || !window.confirm('Read this PO again with the current reading rules? This reading is discarded (kept in the log).')) return;
+    setBusy(true);
+    setError('');
+    setReview(null);
+    const r = await rereadIntakeAction(review.intakeId);
+    if (!r.success) {
+      setBusy(false);
+      setReview(review);
+      return setError(r.error);
+    }
+    if (r.data.mode === 'upload') {
+      setBusy(false);
+      setReview(r.data.review);
+      window.history.replaceState(null, '', `/orders/new?intake=${r.data.review.intakeId}`);
+      return;
+    }
+    if (r.data.intakeId) {
+      setBusy(false);
+      return void openIntake(r.data.intakeId);
+    }
+    const started = Date.now();
+    while (Date.now() - started < 5 * 60_000) {
+      await new Promise((res) => setTimeout(res, 4000));
+      const p = await intakeForThreadAction(r.data.threadId, r.data.since);
+      if (!p.success || !p.data) continue;
+      setBusy(false);
+      if (p.data.status === 'EXTRACTED' || p.data.status === 'CONFIRMED') return void openIntake(p.data.id);
+      return setError(`n8n could not read it again: ${p.data.error ?? p.data.status}`);
+    }
+    setBusy(false);
+    setError('n8n has not answered in 5 minutes. Check the "Ceebuild – Read PO mails" workflow executions in n8n.');
   };
 
   /** Open a PO that n8n has read (from the waiting list or the mail picker). */
@@ -535,6 +659,7 @@ export function PoIntakePage({ initialReview }: { initialReview?: IntakeReview |
           <ReviewStep
             review={review}
             onDone={(id, job, jobError) => setDone({ id, job, jobError })}
+            onReread={() => void reread()}
             onDiscard={async () => {
               if (!window.confirm('Discard this PO reading? The files stay on record.')) return;
               await discardIntakeAction(review.intakeId);

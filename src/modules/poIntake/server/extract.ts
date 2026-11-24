@@ -38,20 +38,43 @@ export const PO_SCHEMA = {
       },
     },
     warnings: { type: 'ARRAY', items: { type: 'STRING' } },
+    documents: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: { name: { type: 'STRING' }, type: { type: 'STRING', enum: ['PO', 'OFFER', 'BOM', 'DRAWING', 'GTP', 'LETTER', 'OTHER'] }, note: S },
+        required: ['name', 'type'],
+      },
+    },
+    pending: {
+      type: 'ARRAY',
+      items: { type: 'OBJECT', properties: { item: { type: 'STRING' }, since: S, by: S }, required: ['item'] },
+    },
+    latestPosition: S,
   },
-  required: ['documentType', 'fields', 'lines', 'bomPieces', 'warnings'],
+  required: ['documentType', 'fields', 'lines', 'bomPieces', 'warnings', 'documents', 'pending', 'latestPosition'],
 };
 
 export function buildPrompt(today: string) {
   const fieldList = PO_FIELDS.map((f) => `- ${f.key} (${f.label}): ${f.hint}`).join('\n');
   return `You are reading a customer's purchase order (PO) sent to CEEBUILD COMPANY (the supplier / vendor of galvanised steel
-fabricated structures). The documents may be scanned images with no text layer: read them by OCR, carefully, digit by digit.
-Several documents may be attached (the PO, its annexures, a drawing or a BOM). Today is ${today}.
+fabricated structures; its group company is LASER POWER & INFRA LIMITED - both are "us"). The documents may be scanned images
+with no text layer: read them by OCR, carefully, digit by digit. Several documents may be attached (the PO, its annexures, a
+drawing / GTP, a BOM, and sometimes OUR OWN price offer). Today is ${today}.
 
 Return JSON matching the schema.
 
+documents - one entry per attached document, by its file name as given ("Document n (KIND): name"): type PO = the customer's
+purchase / work order or its revision / corrigendum; OFFER = a price offer / quotation / revised price list made by US (Ceebuild /
+Laser letterhead or signature, addressed to the customer) - even when its file name says "revised"; BOM, DRAWING, GTP, LETTER,
+OTHER. Read EVERY PO field and EVERY PO line (prices, quantities, values, terms) ONLY from the PO document(s). Never take a
+price, quantity or term from an OFFER - it is what we quoted, not what the customer ordered.
+
 fields - one entry per key below. value = the text as printed (amounts may keep Rs/commas; dates in any printed format).
-Use value null when the PO does not state it - never guess, never copy Ceebuild's own details into customer fields.
+Use value null when the PO does not state it - never guess. Customer fields (customer, GSTIN, addresses, contact person / email /
+phone) are about the BUYER only: never put Ceebuild's or Laser Power & Infra's names, people, phone numbers or emails there. A PO
+"addressed to" / "Kind Attn." a person at Ceebuild or Laser names OUR person - not the contact. The customer's contact is their
+own signatory / purchase or project person, taken from the PO or from the customer's own mail signature in the thread.
 confidence: "high" = printed clearly and unambiguous; "medium" = readable but inferred or slightly unclear;
 "low" = hard to read (poor scan, handwriting, cut off) or worked out from other figures. note = where you found it or why
 it is uncertain (short).
@@ -67,10 +90,19 @@ bomPieces - ONLY if a document contains a bill of materials / piece list / cutti
 belongs to when the BOM is split by structure; lengthMm in millimetres; qtyPerSet = qty for one structure; sets = number
 of structures if printed; totalQty if printed. Leave bomPieces empty when there is no such table. Do not invent rows.
 
-When the text of the mail thread is attached ("Mail thread text"), use it as context only: field values come from the
-PO documents. But read it for drawingStatus and warnings - if the mail shows the drawing / GTP / BOM is only
-provisionally approved, not yet received or still to be confirmed, or the price / order is not yet agreed, set
-drawingStatus TO_BE_APPROVED and say why in its note, and add a warning.
+Mail thread ("Mail thread text"): the messages are listed OLDEST FIRST, each with its date; the message marked (LATEST) is the
+newest. Read them in that order. The LATEST message on a subject decides its status: a statement that a later message
+superseded (e.g. "we cannot accept the revised PO at the existing price" followed later by the customer issuing the revised
+PO at our re-quoted rates) is history - do NOT report it as a current problem, warning or pending item. Field values come from
+the PO documents; from the mail take only the customer's contact (signature), drawingStatus, pending and latestPosition.
+- drawingStatus: the status at the latest message that speaks about drawings / GTP / BOM. If a later mail says the customer's
+  drawing / GTP / BOM confirmation or approval is still awaited, it is TO_BE_APPROVED even if an older mail or the PO says
+  "approved". note = the date and gist of the deciding message, e.g. "16-11-2026: AKS drawing confirmation still pending".
+- pending - what is still open at the latest message (drawing / GTP / BOM confirmation, price agreement, advance, inspection
+  call ...): item = short text, since = date of the message that says it is open (dd-mm-yyyy), by = who must act. Leave out
+  anything a later message closed. Empty array when nothing is open.
+- latestPosition - one or two sentences: the position at the latest message, starting with its date (dd-mm-yyyy).
+- warnings only for CURRENT issues (not superseded ones).
 
 documentType - what the main document is. A PO issued BY Ceebuild to its own supplier (Ceebuild is the buyer), an
 invoice, a quotation or a letter is NOT_A_PO. warnings - anything the reviewer must know (illegible pages, two different

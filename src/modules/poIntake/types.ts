@@ -2,7 +2,8 @@
 import type { PoExtraction, PoFieldKey, PoLineDraft } from '@/lib/po/fields';
 import type { DocketCandidate, DocketMatch, PoCheck } from '@/lib/po/checks';
 
-export type DocKind = 'PO' | 'BOM' | 'DRAWING' | 'OTHER';
+/** OFFER = our own price offer / quotation that came with the mail (kept for reference, never read as the PO). */
+export type DocKind = 'PO' | 'OFFER' | 'BOM' | 'DRAWING' | 'OTHER';
 
 export interface IntakeDoc {
   id: number;
@@ -29,8 +30,12 @@ export interface IntakeReview {
   today: string;
   /** Drawing refs found in the Approved Drawing Library. */
   libraryDrawings: { drawingNo: string; revision: string; approvalLetterNo: string | null; itemType: string }[];
-  /** Hold suggested by the drawing check (PO does not show the drawing as approved). */
+  /** Hold suggested by the drawing check / the items still pending at the latest mail. */
   suggestedHold: { on: boolean; reason: string };
+  /** Delivery date proposal (PO date + standard lead time) when the PO gives none. */
+  proposedCompletion: { date: string; reason: string } | null;
+  /** n8n mail intakes can be read again (after a prompt fix) - the old reading is then discarded. */
+  canReread: boolean;
 }
 
 export interface ConfirmIntakeInput {

@@ -4,11 +4,12 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { UserError } from '@/lib/actionResult';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
-import { cleanFileName, putObject, s3Configured } from '@/lib/s3';
+import { cleanFileName, getObject, putObject, s3Configured } from '@/lib/s3';
 import { geminiConfigured, geminiMimeOf, geminiVia, GEMINI_MAX_INLINE_BYTES, N8N_MAX_INLINE_BYTES } from '@/lib/gemini';
 import { downloadAttachmentByName } from '@/lib/mailbox';
 import { normalizeDocketNo } from '@/lib/dockets';
-import { PO_FIELDS, type PoExtraction, type PoFieldKey, type PoLineDraft } from '@/lib/po/fields';
+import { PO_FIELDS, type PoExtraction, type PoFieldKey, type PoLineDraft, type PoPendingItem } from '@/lib/po/fields';
+import { enrichExtraction } from '@/lib/po/enrich';
 import { normaliseLine, poKey, companyTokens } from '@/lib/po/normalise';
 import { matchQuotedItems, rankDockets, runPoChecks, type DocketCandidate } from '@/lib/po/checks';
 import { getPlanSettings } from '@/modules/settings/server';
@@ -22,7 +23,20 @@ import { runIndentJob, type JobResult } from './job';
 
 const sql = Prisma.sql;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const KINDS: DocKind[] = ['PO', 'BOM', 'DRAWING', 'OTHER'];
+const KINDS: DocKind[] = ['PO', 'OFFER', 'BOM', 'DRAWING', 'OTHER'];
+
+const fileKey = (n: string) => n.toLowerCase().replace(/[^a-z0-9]/g, '');
+/**
+ * The kind to keep a file under: the AI's reading of the document wins when it says the file is OUR
+ * offer (e.g. "AKS_Revised Price.pdf" typed as PO from its name) - prices are never read from it.
+ */
+export function aiKind(name: string, kind: DocKind, ex: Pick<PoExtraction, 'documents'> | null | undefined): DocKind {
+  const d = ex?.documents?.find((x) => fileKey(x.name) === fileKey(name) || fileKey(x.name).includes(fileKey(name)) || fileKey(name).includes(fileKey(x.name)));
+  if (!d) return kind;
+  if (d.type === 'OFFER') return 'OFFER';
+  if (d.type === 'PO' && kind === 'OFFER') return 'PO';
+  return kind;
+}
 export const toKind = (v: unknown): DocKind => (KINDS.includes(String(v).toUpperCase() as DocKind) ? (String(v).toUpperCase() as DocKind) : 'OTHER');
 
 export interface IntakeFile {
@@ -56,7 +70,7 @@ export async function startIntake(files: IntakeFile[], meta: { source: 'UPLOAD' 
     if (f.buffer.length > MAX_FILE_BYTES) throw new UserError(`${f.name} is larger than 25 MB.`);
   }
   const readable = files.filter((f) => (f.kind === 'PO' || f.kind === 'DRAWING') && geminiMimeOf(f.name));
-  if (!readable.some((f) => f.kind === 'PO')) throw new UserError('Attach the PO copy as PDF or image (JPG / PNG). Mark it as "PO copy".');
+  if (!readable.some((f) => f.kind === 'PO')) throw new UserError('Attach the PO copy as PDF or image (JPG / PNG). Mark it as "PO copy" (our own offer is "Offer (ours)" and is not read).');
   // The PO pages go first; drawings only while they fit the reading limit.
   const send: typeof readable = [];
   const limit = geminiVia() === 'n8n' ? N8N_MAX_INLINE_BYTES : GEMINI_MAX_INLINE_BYTES;
@@ -141,7 +155,7 @@ async function docketCandidates(customer: string | null, endClient: string | nul
   const nos = dockets.map((d) => normalizeDocketNo(d.docket_no ?? '')).filter(Boolean);
   const items = await prisma.itemTable.findMany({
     where: { docketNoQtnNo: { in: nos, mode: 'insensitive' } },
-    select: { id: true, docketNoQtnNo: true, itemNameParty: true, uom: true, qty: true, price: true },
+    select: { id: true, docketNoQtnNo: true, itemNameParty: true, uom: true, qty: true, price: true, uomOfQtn: true, weightPerPiece: true, unitWtOfMemberKg: true },
     orderBy: { id: 'asc' },
   });
   const boms = await prisma.itemBom.findMany({ where: { docketId: { in: dockets.map((d) => d.id) }, status: 'CONFIRMED' }, select: { docketId: true } });
@@ -159,7 +173,7 @@ async function docketCandidates(customer: string | null, endClient: string | nul
       items: items
         .filter((i) => normalizeDocketNo(i.docketNoQtnNo ?? '') === no)
         .slice(0, 200)
-        .map((i) => ({ id: i.id, name: i.itemNameParty, uom: i.uom, qty: i.qty, price: i.price })),
+        .map((i) => ({ id: i.id, name: i.itemNameParty, uom: i.uom, qty: i.qty, price: i.price, qtnUom: i.uomOfQtn, wt: i.weightPerPiece || i.unitWtOfMemberKg })),
     };
   });
 }
@@ -186,11 +200,30 @@ async function libraryDrawings(drawingRef: string | null, approvalLetterNo: stri
   }).slice(0, 50);
 }
 
-/** Drawing check behind the suggested hold: approved per PO, approval letter, library hit or an attached drawing / BOM. */
-export function suggestHold(e: { drawingStatus: string | null; approvalLetterNo: string | null; hasLibrary: boolean; hasDrawingDoc: boolean; hasBomPieces: boolean }) {
-  if (e.drawingStatus === 'APPROVED') return { on: false, reason: 'PO shows the drawing / GTP as approved.' };
-  // The PO's own words win over attachments: a mail thread often carries older drawings / BOMs.
-  if (e.drawingStatus === 'TO_BE_APPROVED') return { on: true, reason: 'PO says the drawing / BOM is still to be approved / confirmed by the client.' };
+const ddmmyyyy = (ymd: string | null) => (ymd ? `${ymd.slice(8, 10)}-${ymd.slice(5, 7)}-${ymd.slice(0, 4)}` : null);
+const DRAWING_ITEM = /drawing|drg|gtp|bom|bill of material|design|approval/i;
+
+/**
+ * Hold suggestion. The latest mail decides: items still pending there (with the date of that mail)
+ * put the order on hold with exactly that reason. Otherwise the drawing check: approved per PO / mail,
+ * approval letter, library hit or an attached drawing / BOM.
+ */
+export function suggestHold(e: {
+  drawingStatus: string | null;
+  drawingNote?: string | null;
+  approvalLetterNo: string | null;
+  hasLibrary: boolean;
+  hasDrawingDoc: boolean;
+  hasBomPieces: boolean;
+  pending?: PoPendingItem[];
+}) {
+  const pend = e.pending ?? [];
+  if (pend.length) {
+    const list = pend.map((p) => `${p.item}${p.by ? ` (${p.by})` : ''}${p.since ? ` – pending since mail of ${ddmmyyyy(p.since)}` : ''}`).join('; ');
+    return { on: true, reason: `Pending at the latest mail: ${list}.` };
+  }
+  if (e.drawingStatus === 'TO_BE_APPROVED') return { on: true, reason: `Drawing / BOM confirmation pending${e.drawingNote ? `: ${e.drawingNote}` : ' (per PO / mail)'}.` };
+  if (e.drawingStatus === 'APPROVED') return { on: false, reason: `Drawing / GTP approved${e.drawingNote ? ` (${e.drawingNote})` : ' per PO / mail'}.` };
   if (e.approvalLetterNo) return { on: false, reason: `Approval letter on the PO: ${e.approvalLetterNo}.` };
   if (e.hasLibrary) return { on: false, reason: 'Drawing found in the Approved Drawing Library.' };
   if (e.hasDrawingDoc || e.hasBomPieces) return { on: false, reason: 'Drawing / BOM came with the PO.' };
@@ -203,19 +236,31 @@ export function suggestHold(e: { drawingStatus: string | null; approvalLetterNo:
 export async function getIntakeReview(intakeId: number): Promise<IntakeReview> {
   const intake = await prisma.poIntake.findUnique({ where: { id: intakeId }, include: { documents: { orderBy: { id: 'asc' } } } });
   if (!intake) throw new UserError('This PO intake was not found.');
-  const extraction = intake.extracted as unknown as PoExtraction | null;
-  if (!extraction) throw new UserError(intake.error ? `Reading failed: ${intake.error}` : 'This PO has not been read yet.');
+  const stored = intake.extracted as unknown as PoExtraction | null;
+  if (!stored) throw new UserError(intake.error ? `Reading failed: ${intake.error}` : 'This PO has not been read yet.');
+  const settings = await getPlanSettings();
+  // HSN from the item master, GST "as per law", proposed delivery date (all yellow until accepted).
+  const { extraction, proposedCompletion } = enrichExtraction(stored, { leadTimeDays: settings.leadTimeDays });
   const f = extraction.fields;
-  const [cands, duplicateOf, settings, library] = await Promise.all([
+  // The drawing status must agree with what is still pending at the latest mail.
+  const pending = extraction.pending ?? [];
+  const drawingPending = pending.filter((p) => DRAWING_ITEM.test(p.item));
+  if (drawingPending.length && f.drawingStatus.value !== 'TO_BE_APPROVED') {
+    const p = drawingPending[0];
+    f.drawingStatus = { value: 'TO_BE_APPROVED', confidence: 'low', note: `latest mail${p.since ? ` (${ddmmyyyy(p.since)})` : ''}: ${p.item} still pending${f.drawingStatus.value ? `; the PO / older mail said ${f.drawingStatus.value.replace(/_/g, ' ').toLowerCase()}` : ''}` };
+  }
+  const [cands, duplicateOf, library] = await Promise.all([
     docketCandidates(f.customerName.value, f.endClient.value),
     findDuplicate(f.customerName.value, f.poNumber.value),
-    getPlanSettings(),
     libraryDrawings(f.drawingRef.value, f.approvalLetterNo.value),
   ]);
   const ranked = rankDockets({ customer: f.customerName.value, endClient: f.endClient.value, project: f.project.value, lines: extraction.lines }, cands);
   const byId = new Map(cands.map((c) => [c.id, c]));
-  const dockets = ranked.slice(0, 6).map((r) => ({ ...r, items: byId.get(r.id)?.items ?? [] }));
-  const documents: IntakeDoc[] = intake.documents.map((d) => ({ id: d.id, kind: d.kind as DocKind, fileName: d.fileName, mimeType: d.mimeType, url: docUrl(d.s3Key) }));
+  // The customer's own offers first (latest revision pre-selected), other parties only as "other matches".
+  const same = ranked.filter((r) => r.group === 'SAME_PARTY').slice(0, 8);
+  const other = ranked.filter((r) => r.group === 'OTHER').slice(0, 4);
+  const dockets = [...same, ...other].map((r) => ({ ...r, items: byId.get(r.id)?.items ?? [] }));
+  const documents: IntakeDoc[] = intake.documents.map((d) => ({ id: d.id, kind: aiKind(d.fileName, d.kind as DocKind, extraction), fileName: d.fileName, mimeType: d.mimeType, url: docUrl(d.s3Key) }));
   return {
     intakeId: intake.id,
     status: intake.status,
@@ -224,18 +269,22 @@ export async function getIntakeReview(intakeId: number): Promise<IntakeReview> {
     documents,
     extraction,
     dockets,
-    suggestedDocketId: dockets[0]?.id ?? null,
+    suggestedDocketId: same.find((d) => d.relevant)?.id ?? same[0]?.id ?? other[0]?.id ?? null,
     duplicateOf,
     leadTimeDays: settings.leadTimeDays,
     today: today(),
     libraryDrawings: library,
     suggestedHold: suggestHold({
       drawingStatus: f.drawingStatus.value,
+      drawingNote: f.drawingStatus.note ?? null,
       approvalLetterNo: f.approvalLetterNo.value,
       hasLibrary: library.length > 0,
       hasDrawingDoc: documents.some((d) => d.kind === 'DRAWING' || d.kind === 'BOM'),
       hasBomPieces: extraction.bomPieces.length > 0,
+      pending,
     }),
+    proposedCompletion,
+    canReread: intake.status === 'EXTRACTED' && (intake.source !== 'N8N_MAIL' || String(intake.gmailMessageId ?? '').startsWith('thread:')),
   };
 }
 
@@ -273,9 +322,13 @@ export async function confirmIntake(intakeId: number, input: ConfirmIntakeInput,
   const docket = await prisma.dockerPartyName.findUnique({ where: { id: input.docketId } });
   if (!docket) throw new UserError('Choose the docket (offer) this PO is for.');
   const items = docket.docketNoQtnNo
-    ? await prisma.itemTable.findMany({ where: { docketNoQtnNo: { equals: normalizeDocketNo(docket.docketNoQtnNo), mode: 'insensitive' } }, select: { id: true, itemNameParty: true, uom: true, qty: true, price: true } })
+    ? await prisma.itemTable.findMany({
+        where: { docketNoQtnNo: { equals: normalizeDocketNo(docket.docketNoQtnNo), mode: 'insensitive' } },
+        select: { id: true, itemNameParty: true, uom: true, qty: true, price: true, uomOfQtn: true, weightPerPiece: true, unitWtOfMemberKg: true },
+        orderBy: { id: 'asc' },
+      })
     : [];
-  const priced = matchQuotedItems(lines, items.map((i) => ({ id: i.id, name: i.itemNameParty, uom: i.uom, qty: i.qty, price: i.price })));
+  const priced = matchQuotedItems(lines, items.map((i) => ({ id: i.id, name: i.itemNameParty, uom: i.uom, qty: i.qty, price: i.price, qtnUom: i.uomOfQtn, wt: i.weightPerPiece || i.unitWtOfMemberKg })));
   const hold = { on: input.hold?.on === true, reason: String(input.hold?.reason ?? '').trim().slice(0, 1000) };
   if (hold.on && !hold.reason) throw new UserError('Say what the client still has to confirm (hold reason).');
 
@@ -310,6 +363,11 @@ export async function confirmIntake(intakeId: number, input: ConfirmIntakeInput,
         });
       }
       await tx.orderDocument.updateMany({ where: { intakeId }, data: { orderId: id } });
+      // Our own offer that came with the mail is kept as OFFER, never as the PO copy.
+      for (const d of intake.documents) {
+        const k = aiKind(d.fileName, d.kind as DocKind, extraction);
+        if (k !== d.kind) await tx.orderDocument.update({ where: { id: d.id }, data: { kind: k } });
+      }
       await tx.poIntake.update({ where: { id: intakeId }, data: { status: 'CONFIRMED', orderId: id, confirmedAt: new Date() } });
 
       // Edit log: one row per field the reviewer changed from the AI reading (old = as read).
@@ -569,7 +627,7 @@ export async function pendingIntakes() {
  * base64 payload is held in n8n's memory. Only for intakes n8n created and that still wait for review.
  */
 export async function attachN8nFile(intakeId: number, meta: { name: string; kind: string; mimeType: string | null }, buffer: Buffer) {
-  const intake = await prisma.poIntake.findUnique({ where: { id: intakeId }, select: { id: true, status: true, source: true, gmailMessageId: true } });
+  const intake = await prisma.poIntake.findUnique({ where: { id: intakeId }, select: { id: true, status: true, source: true, gmailMessageId: true, extracted: true } });
   if (!intake || intake.source !== 'N8N_MAIL') throw new UserError('Intake not found.');
   if (intake.status !== 'EXTRACTED') return { skipped: true, reason: `intake is ${intake.status.toLowerCase()}` };
   const name = meta.name.slice(0, 255) || 'file';
@@ -577,10 +635,46 @@ export async function attachN8nFile(intakeId: number, meta: { name: string; kind
   if (buffer.length > MAX_FILE_BYTES) throw new UserError(`${name} is larger than 25 MB.`);
   const already = await prisma.orderDocument.findFirst({ where: { intakeId, fileName: name }, select: { id: true } });
   if (already) return { skipped: true, reason: 'already attached', documentId: already.id };
-  const f: IntakeFile = { name, type: meta.mimeType || geminiMimeOf(name) || 'application/octet-stream', buffer, kind: toKind(meta.kind) };
+  const f: IntakeFile = { name, type: meta.mimeType || geminiMimeOf(name) || 'application/octet-stream', buffer, kind: aiKind(name, toKind(meta.kind), intake.extracted as unknown as PoExtraction | null) };
   const s3Key = await storeFile(f);
   const doc = await prisma.orderDocument.create({
     data: { intakeId, kind: f.kind, fileName: name, s3Key, mimeType: f.type, sizeBytes: buffer.length, source: 'N8N_MAIL', gmailMessageId: intake.gmailMessageId, uploadedByName: N8N_USER.name },
   });
   return { documentId: doc.id, kind: f.kind };
+}
+
+/**
+ * Read a PO again (after the reading rules were improved). Mail intakes go back to n8n with the
+ * thread's files (the UI polls intakeForThread); uploads are read again from the stored files. The
+ * old reading is discarded and logged as superseded.
+ */
+export async function rereadIntake(intakeId: number, user: AuthUser) {
+  const intake = await prisma.poIntake.findUnique({ where: { id: intakeId }, include: { documents: { orderBy: { id: 'asc' } } } });
+  if (!intake) throw new UserError('This PO intake was not found.');
+  if (intake.status === 'CONFIRMED') throw new UserError(`Already confirmed as order #${intake.orderId}; edit it on the order's PO tab.`);
+  const supersede = async (by: string) => {
+    await prisma.poIntake.update({ where: { id: intakeId }, data: { status: 'DISCARDED', error: `Superseded: read again (${by}).` } });
+    await prisma.editLog.create({ data: { tableName: 'po_intakes', recordId: intakeId, fieldName: 'status', oldValue: intake.status, newValue: `DISCARDED (read again: ${by})`, ...auditUser(user) } });
+  };
+  const ref = String(intake.gmailMessageId ?? '');
+  if (intake.source === 'N8N_MAIL' && ref.startsWith('thread:')) {
+    const threadId = ref.slice('thread:'.length);
+    const t = await getMailThread(threadId);
+    if (!t) throw new UserError('Mail not found in the mail archive.');
+    const files = t.files.filter((x) => x.driveId && (x.kind === 'PO' || x.kind === 'BOM' || x.kind === 'DRAWING')).map((x) => ({ name: x.name, kind: x.kind as DocKind }));
+    if (!files.some((x) => x.kind === 'PO')) throw new UserError('No PO copy found in the mail any more.');
+    await supersede('n8n');
+    const r = await requestMailRead(threadId, files, user);
+    return { mode: 'mail' as const, threadId, ...r };
+  }
+  const files: IntakeFile[] = [];
+  for (const d of intake.documents) {
+    if (!d.s3Key) continue;
+    const obj = await getObject(d.s3Key);
+    if (obj) files.push({ name: d.fileName, type: d.mimeType ?? geminiMimeOf(d.fileName) ?? 'application/octet-stream', buffer: Buffer.from(obj.body), kind: d.kind as DocKind });
+  }
+  if (!files.some((x) => x.kind === 'PO')) throw new UserError('The stored PO copy was not found; attach it again.');
+  await supersede('upload');
+  const review = await startIntake(files, { source: intake.source === 'MAILBOX' ? 'MAILBOX' : 'UPLOAD', gmailMessageId: intake.gmailMessageId, mailSubject: intake.mailSubject }, user);
+  return { mode: 'upload' as const, review };
 }

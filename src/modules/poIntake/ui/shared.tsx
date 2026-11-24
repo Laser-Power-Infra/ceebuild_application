@@ -1,9 +1,11 @@
 'use client';
 
-import { AlertTriangle, Ban, Info, Trash2, Plus } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Ban, Info, Loader2, Trash2, Plus } from 'lucide-react';
 import { fieldCls } from '@/components/Modal';
 import { DRAWING_STATUSES, type PoFieldDef, type PoFieldValue, type PoLineDraft } from '@/lib/po/fields';
 import { compareRate, type PoCheck } from '@/lib/po/checks';
+import { sheetPreviewAction } from '@/app/actions/poIntake';
 import type { IntakeDoc } from '../types';
 
 export const GROUP_LABELS = { header: 'Header', commercial: 'Commercial', references: 'References (drive the BOM and drawing steps)' } as const;
@@ -116,11 +118,14 @@ export function PoLinesTable({
   onChange,
   onCell,
   readOnly,
+  offerItems = 0,
 }: {
   lines: (PoLineDraft & { id?: number })[];
   onChange?: (lines: PoLineDraft[]) => void;
   onCell?: (index: number, key: LineKey, value: string) => void;
   readOnly?: boolean;
+  /** Items on the chosen offer: when > 0, a line with no matching item shows "not in offer". */
+  offerItems?: number;
 }) {
   const set = (i: number, key: LineKey, v: string) => {
     if (onCell) return onCell(i, key, v);
@@ -167,20 +172,41 @@ export function PoLinesTable({
                         onBlur={(e) => e.target.value !== l.description && set(i, c.key, e.target.value)}
                       />
                     ) : (
-                      <input
-                        aria-label={`Line ${i + 1} ${c.label}`}
-                        className={`w-full rounded border px-1.5 py-1 ${c.num ? 'text-right tabular-nums' : ''} ${yellow && (l[c.key] === null || l[c.key] === '') ? 'border-amber-400 bg-amber-100' : 'border-slate-200'}`}
-                        defaultValue={s(l[c.key] as number | string | null)}
-                        onBlur={(e) => e.target.value !== s(l[c.key] as number | string | null) && set(i, c.key, e.target.value)}
-                      />
+                      <>
+                        <input
+                          key={c.key === 'hsn' ? `hsn-${s(l.hsn)}` : undefined}
+                          aria-label={`Line ${i + 1} ${c.label}`}
+                          title={c.key === 'hsn' && l.hsnSource === 'MASTER' ? 'Not on the PO: filled from the HSN item master – check it' : undefined}
+                          className={`w-full rounded border px-1.5 py-1 ${c.num ? 'text-right tabular-nums' : ''} ${
+                            (yellow && (l[c.key] === null || l[c.key] === '')) || (c.key === 'hsn' && (!l.hsn || l.hsnSource === 'MASTER')) ? 'border-amber-400 bg-amber-100' : 'border-slate-200'
+                          }`}
+                          defaultValue={s(l[c.key] as number | string | null)}
+                          onBlur={(e) => e.target.value !== s(l[c.key] as number | string | null) && set(i, c.key, e.target.value)}
+                        />
+                        {c.key === 'hsn' && l.hsnSource === 'MASTER' && <span className="block text-[10px] font-bold text-amber-800">item master</span>}
+                      </>
                     )}
                   </td>
                 ))}
                 <td className="px-2 py-1 text-right tabular-nums" title={l.quotedItemName ?? undefined}>
-                  {l.quotedRate !== null && l.quotedRate !== undefined ? `${l.quotedRate}${l.quotedUom ? ` /${l.quotedUom}` : ''}` : '–'}
+                  {l.quotedRate !== null && l.quotedRate !== undefined ? (
+                    <>
+                      {l.quotedRate}
+                      {l.quotedUom ? ` /${l.quotedUom}` : ''}
+                      {l.quotedWtKg ? <span className="block text-[10px] font-normal text-slate-500">{l.quotedWtKg} kg/{l.quotedWtPer ?? 'unit'}</span> : null}
+                    </>
+                  ) : offerItems > 0 && l.description.trim() ? (
+                    <span className="text-[11px] font-bold text-rose-700">item not in offer</span>
+                  ) : (
+                    '–'
+                  )}
                 </td>
-                <td className={`px-2 py-1 text-right font-bold tabular-nums ${cmp ? (cmp.diffPct < -0.5 ? 'text-rose-700' : 'text-emerald-700') : 'text-slate-400'}`}>
+                <td
+                  className={`px-2 py-1 text-right font-bold tabular-nums ${cmp ? (cmp.diffPct < -0.5 ? 'text-rose-700' : 'text-emerald-700') : 'text-slate-400'}`}
+                  title={cmp ? `${cmp.basis}${cmp.poPerKg !== undefined ? `: PO ${cmp.poPerKg} vs quote ${cmp.quotedPerKg} Rs/kg` : ''}` : undefined}
+                >
                   {cmp ? `${cmp.diffPct > 0 ? '+' : ''}${cmp.diffPct}%` : '–'}
+                  {cmp && cmp.basis !== `per ${l.unit ?? 'unit'}` && <span className="block text-[10px] font-normal text-slate-500">{cmp.basis.startsWith('per kg') ? 'per kg' : cmp.basis}</span>}
                 </td>
                 {onChange && !readOnly && (
                   <td className="px-1 py-1">
@@ -226,7 +252,9 @@ export function DocViewer({ docs, active, onActive, tall }: { docs: IntakeDoc[];
           </button>
         ))}
       </div>
-      {d && viewable ? (
+      {d && d.url && SHEET_FILE.test(d.fileName) ? (
+        <SheetPreviewView docId={d.id} url={d.url} tall={tall} />
+      ) : d && viewable ? (
         /\.pdf$/i.test(d.fileName) ? (
           <iframe title={d.fileName} src={d.url as string} className={`w-full rounded-lg border border-slate-200 bg-slate-100 ${tall ? 'h-[80vh]' : 'h-[60vh]'}`} />
         ) : (
@@ -246,3 +274,82 @@ export function DocViewer({ docs, active, onActive, tall }: { docs: IntakeDoc[];
     </div>
   );
 }
+
+const SHEET_FILE = /\.(xlsx|xlsm|xls|csv)$/i;
+type Sheets = { fileName: string; sheets: { name: string; rows: string[][]; totalRows: number; totalCols: number }[] };
+
+/** Excel / CSV attachment (BOM) shown as a table, one tab per sheet, so it can be checked before Confirm. */
+function SheetPreviewView({ docId, url, tall }: { docId: number; url: string; tall?: boolean }) {
+  const [data, setData] = useState<{ id: number; sheets: Sheets } | null>(null);
+  const [err, setErr] = useState<{ id: number; msg: string } | null>(null);
+  const [tab, setTab] = useState(0);
+  useEffect(() => {
+    let live = true;
+    void sheetPreviewAction(docId).then((r) => {
+      if (!live) return;
+      if (r.success) {
+        setData({ id: docId, sheets: r.data });
+        setTab(0);
+      } else setErr({ id: docId, msg: r.error });
+    });
+    return () => {
+      live = false;
+    };
+  }, [docId]);
+  const download = (
+    <a className="font-bold text-blue-700 hover:underline" href={`${url}?download=1`}>
+      Download
+    </a>
+  );
+  if (err?.id === docId) return <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-4 text-center text-xs text-rose-800">Preview failed: {err.msg} {download}</p>;
+  if (!data || data.id !== docId)
+    return (
+      <p className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-6 text-xs text-slate-600">
+        <Loader2 className="h-4 w-4 animate-spin" /> Opening the sheet…
+      </p>
+    );
+  const sh = data.sheets.sheets[tab] ?? data.sheets.sheets[0];
+  if (!sh) return <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-600">The workbook has no sheets. {download}</p>;
+  const cols = Math.min(sh.totalCols, 40);
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-1 text-[11px]">
+        {data.sheets.sheets.map((x, i) => (
+          <button key={x.name} type="button" onClick={() => setTab(i)} className={`rounded px-2 py-0.5 font-bold ${i === tab ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+            {x.name}
+          </button>
+        ))}
+        <span className="ml-auto text-slate-500">
+          {sh.totalRows} rows{sh.totalRows > sh.rows.length ? ` (first ${sh.rows.length} shown)` : ''} · {download}
+        </span>
+      </div>
+      <div className={`overflow-auto rounded-lg border border-slate-200 bg-white ${tall ? 'h-[76vh]' : 'h-[56vh]'}`}>
+        <table className="min-w-full border-collapse text-[11px]">
+          <thead className="sticky top-0 bg-slate-100 text-slate-500">
+            <tr>
+              <th className="border border-slate-200 px-1.5 py-0.5" />
+              {Array.from({ length: cols }, (_, c) => (
+                <th key={c} className="border border-slate-200 px-1.5 py-0.5 font-bold">{XLSX_COL(c)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sh.rows.map((r, i) => (
+              <tr key={i}>
+                <td className="border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-right text-slate-400">{i + 1}</td>
+                {Array.from({ length: cols }, (_, c) => (
+                  <td key={c} className="max-w-[14rem] truncate border border-slate-200 px-1.5 py-0.5" title={r[c] || undefined}>
+                    {r[c] ?? ''}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** 0 -> A, 25 -> Z, 26 -> AA. */
+const XLSX_COL = (i: number): string => (i < 26 ? String.fromCharCode(65 + i) : XLSX_COL(Math.floor(i / 26) - 1) + String.fromCharCode(65 + (i % 26)));

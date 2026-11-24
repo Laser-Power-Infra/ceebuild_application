@@ -3,16 +3,19 @@
 // keeps the raw text but drops to "low" confidence so it is highlighted for the user.
 
 import {
+  AI_DOC_TYPES,
   DRAWING_STATUSES,
   PO_FIELDS,
   PO_FIELD_KEYS,
   type Confidence,
   type PoBomPiece,
+  type PoDocumentRead,
   type PoExtraction,
   type PoFieldKey,
   type PoFieldType,
   type PoFieldValue,
   type PoLineDraft,
+  type PoPendingItem,
 } from './fields';
 
 const MONTHS: Record<string, number> = {
@@ -213,7 +216,84 @@ export interface RawExtraction {
   lines?: RawLine[];
   bomPieces?: RawPiece[];
   warnings?: unknown[];
+  documents?: { name?: unknown; type?: unknown; note?: unknown }[];
+  pending?: { item?: unknown; since?: unknown; by?: unknown }[];
+  latestPosition?: unknown;
 }
+
+// ------------------------------------------------------------------ our own details (never customer data)
+
+/** Ceebuild / Laser Power & Infra company names and mail domains (public). A customer field holding one was misread. */
+export const OWN_COMPANY = {
+  names: [/\bCEE\s*BUILD\b/i, /\bLASER\s+POWER\b/i],
+  domains: ['ceebuildcompany.com', 'laserpowerinfra.com'],
+};
+
+/**
+ * Our own people and phone numbers (personal data, so not in the code): server setting
+ * PO_OWN_CONTACTS = "Name One; Name Two; 98xxxxxxxx; ..." - entries with 10+ digits are phones,
+ * the rest are names (matched ignoring case, dots, "Miss/Mr/Ms" and spaces).
+ */
+export interface OwnContacts {
+  people: string[];
+  phones: string[];
+}
+const digits = (s: string) => s.replace(/\D/g, '');
+const personKey = (s: string) =>
+  s
+    .toUpperCase()
+    .replace(/\b(MISS|MRS|MR|MS|DR|SHRI|SMT)\b\.?/g, ' ')
+    .replace(/[^A-Z]+/g, ' ')
+    .trim();
+
+export function ownContactsFromEnv(raw = typeof process !== 'undefined' ? process.env.PO_OWN_CONTACTS : undefined): OwnContacts {
+  const parts = String(raw ?? '')
+    .split(/[;,\n]/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return {
+    phones: parts.filter((p) => digits(p).length >= 10).map((p) => digits(p).slice(-10)),
+    people: parts.filter((p) => digits(p).length < 10).map(personKey).filter((p) => p.length >= 3),
+  };
+}
+
+/** Why a value is ours (shown as the note), or null when it is not. */
+export function ownCompanyHit(value: string | null | undefined, own: OwnContacts = ownContactsFromEnv()): string | null {
+  if (!value) return null;
+  if (OWN_COMPANY.names.some((r) => r.test(value))) return 'that is our own company';
+  const pk = ` ${personKey(value)} `;
+  if (own.people.some((p) => pk.includes(` ${p} `))) return 'that is our own person (the PO is addressed to us)';
+  const d = digits(value);
+  if (d.length >= 10 && own.phones.some((p) => d.includes(p))) return 'that is our own phone number';
+  const low = value.toLowerCase();
+  if (OWN_COMPANY.domains.some((dm) => low.includes(`@${dm}`))) return 'that is our own email address';
+  return null;
+}
+
+// Customer-side fields that must never hold our own details.
+const CUSTOMER_FIELDS: PoFieldKey[] = ['customerName', 'customerGstin', 'billingAddress', 'contactPerson', 'contactEmail', 'contactPhone'];
+
+/**
+ * Drawing / GTP field: keep only drawing or GTP numbers. An item list ("G.I. Wire 4.00 mm; Danger sign
+ * plate ...") is not a drawing number. Returns the kept numbers, or null.
+ */
+export function drawingNumbersOnly(v: string | null): { value: string | null; dropped: string[] } {
+  if (!v) return { value: null, dropped: [] };
+  const parts = v.split(/\s*[;\n]\s*/).map((x) => x.trim()).filter(Boolean);
+  const kept: string[] = [];
+  const dropped: string[] = [];
+  for (const p of parts) {
+    const hasCode = /[A-Z]{1,}[\s/-]*\d|\d+\s*[/-]\s*[A-Z0-9]|(DRG|DWG|GTP|DRAWING)\s*(NO\.?)?\s*[:#-]?\s*[A-Z0-9]/i.test(p);
+    const looksLikeItem =
+      /\b\d+(\.\d+)?\s*(MM|M|MTR|KV|SWG)\b|\bWIRE\b|\bDANGER\b|\bEARTHING\b|\bCHANNEL\b|\bSTRIP\b|\bRISER\b|\bCLAMP\b|\bPLATE\b|\bSPIKE\b/i.test(p) &&
+      !/(DRG|DWG|GTP|DRAWING)\s*(NO\b|#|:|\/|-)|\/(DRG|DWG|GTP)\b/i.test(p);
+    if (hasCode && !looksLikeItem) kept.push(p);
+    else dropped.push(p);
+  }
+  return { value: kept.length ? kept.join('; ').slice(0, 1000) : null, dropped };
+}
+
+const DOC_TYPES = new Set<string>(AI_DOC_TYPES);
 
 export function normaliseLine(l: RawLine): PoLineDraft | null {
   const description = str(l.description);
@@ -227,6 +307,7 @@ export function normaliseLine(l: RawLine): PoLineDraft | null {
   return {
     description: description.slice(0, 2000),
     hsn: hsn && hsn.length >= 4 && hsn.length <= 8 ? hsn : null,
+    hsnSource: hsn && hsn.length >= 4 && hsn.length <= 8 ? 'PO' : null,
     unit: normUnit(str(l.unit)),
     qty,
     unitRate,
@@ -262,6 +343,21 @@ export function normaliseExtraction(raw: RawExtraction, model: string, at = new 
   const fields = {} as Record<PoFieldKey, PoFieldValue>;
   for (const f of PO_FIELDS) fields[f.key] = normaliseField(f.type, rawFields[f.key]);
 
+  // Our own name / person / phone / email in a customer field: blank it and show it yellow.
+  for (const k of CUSTOMER_FIELDS) {
+    const why = ownCompanyHit(fields[k].value);
+    if (why) fields[k] = { value: null, confidence: 'missing', note: `AI read "${fields[k].value}" – ${why}; enter the customer's own` };
+  }
+  // Drawing / GTP no.: numbers only, never an item list.
+  if (fields.drawingRef.value) {
+    const d = drawingNumbersOnly(fields.drawingRef.value);
+    if (d.dropped.length) {
+      fields.drawingRef = d.value
+        ? { value: d.value, confidence: 'low', note: `item names removed (not drawing numbers): ${d.dropped.join('; ').slice(0, 300)}` }
+        : { value: null, confidence: 'missing', note: `AI put an item list here, not drawing / GTP numbers: ${d.dropped.join('; ').slice(0, 300)}` };
+    }
+  }
+
   // State from the GSTIN when the AI left it out (the first two digits are the state code).
   const g = fields.customerGstin.value;
   if (!fields.state.value && g && GST_STATE_CODES[g.slice(0, 2)]) {
@@ -278,7 +374,23 @@ export function normaliseExtraction(raw: RawExtraction, model: string, at = new 
   const lines = (Array.isArray(raw.lines) ? raw.lines : []).map(normaliseLine).filter((l): l is PoLineDraft => !!l).slice(0, 500);
   const bomPieces = (Array.isArray(raw.bomPieces) ? raw.bomPieces : []).map(normalisePiece).filter((p): p is PoBomPiece => !!p).slice(0, 3000);
   const warnings = (Array.isArray(raw.warnings) ? raw.warnings : []).map(str).filter((w): w is string => !!w).slice(0, 20);
-  return { fields, lines, bomPieces, documentType: str(raw.documentType), warnings, model, at };
+  const documents: PoDocumentRead[] = (Array.isArray(raw.documents) ? raw.documents : [])
+    .map((d): PoDocumentRead | null => {
+      const name = str(d?.name);
+      const type = String(d?.type ?? '').toUpperCase();
+      return name ? { name: name.slice(0, 255), type: (DOC_TYPES.has(type) ? type : 'OTHER') as PoDocumentRead['type'], note: str(d?.note)?.slice(0, 300) ?? null } : null;
+    })
+    .filter((d): d is PoDocumentRead => !!d)
+    .slice(0, 20);
+  const pending: PoPendingItem[] = (Array.isArray(raw.pending) ? raw.pending : [])
+    .map((p): PoPendingItem | null => {
+      const item = str(p?.item);
+      return item ? { item: item.slice(0, 300), since: parseDate(str(p?.since)), by: str(p?.by)?.slice(0, 120) ?? null } : null;
+    })
+    .filter((p): p is PoPendingItem => !!p)
+    .slice(0, 10);
+  const latestPosition = str(raw.latestPosition)?.slice(0, 1000) ?? null;
+  return { fields, lines, bomPieces, documentType: str(raw.documentType), warnings, documents, pending, latestPosition, model, at };
 }
 
 /** Customer + PO no. key for the duplicate check: case, spaces and punctuation ignored. */

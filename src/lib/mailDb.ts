@@ -1,5 +1,6 @@
 import 'server-only';
 import { pairFiles, type MailFile } from '@/lib/mailFiles';
+import { threadForAi } from '@/lib/mailThread';
 
 export type { MailFile, MailFileKind } from '@/lib/mailFiles';
 
@@ -25,7 +26,7 @@ export interface MailThread {
   company: string | null;
   msgCount: number;
   files: MailFile[];
-  /** Start of the thread text, for the AI as context. */
+  /** The thread for the AI: messages in date order, quoted replies removed, newest kept (about 5.9k chars). */
   text: string;
 }
 
@@ -50,7 +51,8 @@ const toThread = (r: Row): MailThread => ({
   msgCount: r.msg_count ?? 1,
   files: pairFiles(r.attach_names, r.attach_links),
   // The sync stores line breaks as the two characters backslash + n.
-  text: (r.body_head ?? '').replace(/\\r/g, '').replace(/\r/g, '').replace(/\\n/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim(),
+  // The latest message decides the status: messages go to the AI in date order, newest kept.
+  text: threadForAi((r.body_head ?? '').replace(/\\r/g, '').replace(/\r/g, '').replace(/\\n/g, '\n').replace(/[ \t]+\n/g, '\n'), r.date, r.msg_count),
 });
 
 async function fetchThreads(params: Record<string, string | number>): Promise<MailThread[]> {
