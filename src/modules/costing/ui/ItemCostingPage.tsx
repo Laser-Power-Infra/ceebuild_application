@@ -25,7 +25,7 @@ import {
   updateBomLineAction,
   updateBomMetaAction,
 } from '@/app/actions/costing';
-import { CATEGORIES, CATEGORY_LABELS, SCOPES, SCOPE_LABELS, type Category, type Scope } from '@/lib/costing/calc';
+import { CATEGORIES, CATEGORY_LABELS, DISCOUNT_LABELS, DISCOUNT_MODES, SCOPES, SCOPE_LABELS, type Category, type Scope } from '@/lib/costing/calc';
 import { FAB_CATS, FAB_CAT_BY_CODE, fabCatLabel } from '@/lib/costing/fab';
 import { MATCH_LABELS, type BomLineDraft, type MatchLevel } from '@/lib/costing/drawings';
 import type { BomGroupRow, BomLineRow, DocketInfo, DrawingSuggestion, ItemBomInfo, ItemInfo } from '../server/itemBom';
@@ -538,12 +538,17 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
   const [p, setP] = useState<CostingPreview | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
+  // Rev 2 §7 discount (Admin only, with a reason).
+  const [discMode, setDiscMode] = useState('PCT');
+  const [discVal, setDiscVal] = useState('');
+  const [discReason, setDiscReason] = useState('');
+  const discount = discVal.trim() === '' ? null : { mode: discMode, value: discVal, reason: discReason };
 
   const run = useCallback(async () => {
-    const r = await previewCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date });
+    const r = await previewCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date, discount: discVal.trim() === '' ? null : { mode: discMode, value: discVal, reason: discReason } });
     if (!r.success) return onError(r.error);
     setP(r.data);
-  }, [bom.id, va, date, onError]);
+  }, [bom.id, va, date, discMode, discVal, discReason, onError]);
   // Re-run whenever the BOM (lines/choices) or the inputs change.
   const sig = JSON.stringify([bom.lines, bom.fabType, bom.galvanised, bom.billingBasis, bom.status]);
   useEffect(() => {
@@ -559,7 +564,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
 
   const save = async (apply: boolean) => {
     setBusy(true);
-    const r = await saveCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date, apply });
+    const r = await saveCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date, apply, discount });
     setBusy(false);
     if (!r.success) return onError(r.error);
     setMsg(apply ? 'Saved and applied: the price is now on the docket item and the offer PDF.' : 'Costing saved.');
@@ -593,7 +598,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
           </select>
         </div>
         <div>
-          <label className={labelCls} htmlFor="c-va">VA % (blank = minimum)</label>
+          <label className={labelCls} htmlFor="c-va">VA % (blank = default {res ? `${res.vaPct}%` : '12%'})</label>
           <input id="c-va" className={fieldCls} inputMode="decimal" placeholder={res?.minVaPct !== null && res?.minVaPct !== undefined ? String(res.minVaPct) : ''} value={va} onChange={(e) => setVa(e.target.value)} />
         </div>
         <div>
@@ -610,6 +615,26 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
           </div>
         </div>
       </div>
+      {role === 'Admin' && (
+        <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div>
+            <label className={labelCls} htmlFor="c-dm">Discount (Admin)</label>
+            <select id="c-dm" className={fieldCls} value={discMode} onChange={(e) => setDiscMode(e.target.value)}>
+              {DISCOUNT_MODES.map((m) => (
+                <option key={m} value={m}>{DISCOUNT_LABELS[m]}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className={labelCls} htmlFor="c-dv">Discount value (blank = none)</label>
+            <input id="c-dv" className={fieldCls} inputMode="decimal" value={discVal} onChange={(e) => setDiscVal(e.target.value)} />
+          </div>
+          <div className="col-span-2">
+            <label className={labelCls} htmlFor="c-dr">Discount reason (required)</label>
+            <input id="c-dr" className={fieldCls} value={discReason} onChange={(e) => setDiscReason(e.target.value)} />
+          </div>
+        </div>
+      )}
 
       {res && (
         <>
@@ -634,6 +659,20 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
             )}
             <Stat label="N&B + bought-out (separate)" value={`Rs ${inr(res.nutsBolts.sell + res.boughtOut.sell, 0)}`} />
             <Stat label="Item total (all sets)" value={`Rs ${inr(res.grandSell, 0)}`} strong />
+          </div>
+          {/* Rev 2 §7 build-up: cost base -> VA -> price before discount -> discount -> final -> effective VA */}
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+            <Stat label="Total cost (base)" value={`Rs ${inr(res.costTotal, 0)}`} />
+            <Stat label={`VA ${res.vaPct}%`} value={`Rs ${inr(res.vaAmount, 0)}`} />
+            <Stat label="Price before discount" value={`Rs ${inr(res.grandSell, 0)}`} />
+            <Stat label="Discount" value={res.discount ? `– Rs ${inr(res.discount.amount, 0)}` : '–'} />
+            <Stat label="Final price (before GST)" value={`Rs ${inr(res.discount ? res.discount.finalPrice : res.grandSell, 0)}`} strong />
+            <Stat
+              label="Effective VA %"
+              value={`${inr(res.discount ? res.discount.effectiveVaPct : res.vaPct)}%`}
+              strong
+              tone={(res.discount ? res.discount.belowMinVa : res.checks.belowMinVa) ? 'red' : undefined}
+            />
           </div>
 
           <div className="mt-3 flex flex-col gap-1">
@@ -674,7 +713,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
                   <th className={`${th} text-right`}>Galv</th>
                   <th className={`${th} text-right`}>Freight</th>
                   <th className={`${th} text-right`}>Insp+pack</th>
-                  <th className={`${th} text-right`}>Commercial</th>
+                  <th className={`${th} text-right`} title="LC/BG + interest (credit days ÷ 30 × % of the selling value)">Interest / finance cost</th>
                   <th className={`${th} text-right`}>Cost</th>
                   <th className={`${th} text-right`}>Selling</th>
                 </tr>

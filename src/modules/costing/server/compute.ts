@@ -5,7 +5,7 @@ import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
 import { toNum } from '@/lib/bom/parse';
 import { normalizeDocketNo } from '@/lib/dockets';
-import { computeCosting, setsFromItem, wastageFromPlan, type BillingBasis, type CostLineInput, type CostResult } from '@/lib/costing/calc';
+import { computeCosting, setsFromItem, wastageFromPlan, type BillingBasis, type CostLineInput, type CostResult, type DiscountInput } from '@/lib/costing/calc';
 import { classifyFab } from '@/lib/costing/fab';
 import { planIndent, type PlanPiece, type SectionInfo } from '@/lib/planning/cutting';
 import { getPlanSettings } from '@/modules/settings/server';
@@ -75,7 +75,7 @@ async function lastQuoted(structureType: string | null, ourItemName: string | nu
 }
 
 /** Everything the calculator needs, from the BOM, the masters and the docket. */
-export async function previewCosting(bomId: number, opts: { vaPct?: number | null; quoteDate?: string | null }): Promise<CostingPreview> {
+export async function previewCosting(bomId: number, opts: { vaPct?: number | null; quoteDate?: string | null; discount?: DiscountInput | null }): Promise<CostingPreview> {
   const bom = await prisma.itemBom.findUnique({ where: { id: bomId }, include: { lines: { orderBy: { rowNo: 'asc' } }, groups: { orderBy: { seq: 'asc' } } } });
   if (!bom) throw new UserError('BOM not found.');
   const { item, docket } = await loadItem(bom.itemId);
@@ -169,7 +169,7 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
   }
 
   const last = await lastQuoted(bom.structureType, item.ourItemName);
-  const result = computeCosting({ ...base, lines, vaPct: opts.vaPct ?? null, planWastagePct, lastPricePerKg: last, planConfirmed: settings.confirmed });
+  const result = computeCosting({ ...base, lines, vaPct: opts.vaPct ?? null, planWastagePct, lastPricePerKg: last, planConfirmed: settings.confirmed, discount: opts.discount ?? null });
 
   // Section-wise weight (net, all supplied pieces) for checking against an independent take-off.
   const bySection = new Map<string, { label: string; kg: number; billableKg: number; inGtp: boolean; approved: boolean }>();
@@ -246,9 +246,21 @@ export async function costingDetail(id: number) {
  * quotation item so it flows into the offer PDF: per kg for KG/MT items, per set otherwise.
  * Applying needs a confirmed BOM and no blank weight/rate; below-minimum VA needs an Admin.
  */
-export async function saveCosting(bomId: number, opts: { vaPct?: number | null; quoteDate?: string | null; apply: boolean; note?: string }, user: AuthUser) {
+export async function saveCosting(
+  bomId: number,
+  opts: { vaPct?: number | null; quoteDate?: string | null; apply: boolean; note?: string; discount?: DiscountInput | null },
+  user: AuthUser,
+) {
+  // Rev 2 §7: discount is Admin only and needs a reason.
+  if (opts.discount) {
+    if (user.role !== 'Admin') throw new UserError('Only an Admin can give a discount.');
+    if (!opts.discount.reason?.trim()) throw new UserError('Give the reason for the discount.');
+  }
   const p = await previewCosting(bomId, opts);
   const r = p.result;
+  // Discount scales every price (per kg, per set, N&B, bought-out) to the final price.
+  const f = r.discount ? r.discount.factor : 1;
+  if (opts.apply && r.discount?.belowMinVa && user.role !== 'Admin') throw new UserError('Effective VA after discount is below the minimum VA.');
   if (opts.apply) {
     if (p.bomStatus !== 'CONFIRMED') throw new UserError('Confirm the BOM before applying the price.');
     if (!r.checks.ok) throw new UserError(`Cannot apply: ${r.checks.messages.join(' ')}`);
@@ -263,7 +275,7 @@ export async function saveCosting(bomId: number, opts: { vaPct?: number | null; 
     const perKg = p.setsBasis === 'WEIGHT' || p.setsBasis === 'STRUCTURES' || !r.perSet;
     const billed = r.perSet && !perKg ? (r.groups[0]?.billedWtPerSet ?? 0) : r.perSet ? (r.groups[0]?.billedWtPerSet ?? 0) : r.structure.billedWtKg;
     return {
-      price: String(perMt ? r2(r.structure.sellPerKg * 1000) : perKg ? r.structure.sellPerKg : r2(r.perSet!.sell)),
+      price: String(perMt ? r2(r.structure.sellPerKg * f * 1000) : perKg ? r2(r.structure.sellPerKg * f) : r2(r.perSet!.sell * f)),
       uomOfQtn: perMt ? 'MT' : perKg ? 'KG' : 'SET',
       weightPerPiece: String(billed),
     };
@@ -282,11 +294,12 @@ export async function saveCosting(bomId: number, opts: { vaPct?: number | null; 
         blackWtKg: r.structure.blackWtKg,
         galvWtKg: r.structure.galvWtKg,
         costTotal: r2(r.structure.cost + r.nutsBolts.cost + r.boughtOut.cost),
-        sellTotal: r.grandSell,
-        sellPerKg: r.structure.sellPerKg,
-        sellPerSet: r.perSet?.sell ?? 0,
-        nbSellTotal: r.nutsBolts.sell,
-        boSellTotal: r.boughtOut.sell,
+        // Final (after discount) prices; the detail JSON keeps the price before discount and the discount.
+        sellTotal: r.discount ? r.discount.finalPrice : r.grandSell,
+        sellPerKg: r2(r.structure.sellPerKg * f),
+        sellPerSet: r2((r.perSet?.sell ?? 0) * f),
+        nbSellTotal: r2(r.nutsBolts.sell * f),
+        boSellTotal: r2(r.boughtOut.sell * f),
         detail: { ...p, ratesUsed: r.ratesUsed } as unknown as Prisma.InputJsonValue,
         flags: r.checks as unknown as Prisma.InputJsonValue,
         applied: !!priceFields,
@@ -301,7 +314,15 @@ export async function saveCosting(bomId: number, opts: { vaPct?: number | null; 
         recordId: c.id,
         fieldName: 'ALL_FIELDS',
         oldValue: 'NONE (New Record)',
-        newValue: JSON.stringify({ bomId, quoteDate: p.quoteDate, vaPct: r.vaPct, sellPerKg: r.structure.sellPerKg, sellTotal: r.grandSell, applied: !!priceFields }),
+        newValue: JSON.stringify({
+          bomId,
+          quoteDate: p.quoteDate,
+          vaPct: r.vaPct,
+          sellPerKg: r2(r.structure.sellPerKg * f),
+          sellTotal: r.discount ? r.discount.finalPrice : r.grandSell,
+          discount: r.discount ? { mode: r.discount.mode, value: r.discount.value, amount: r.discount.amount, reason: r.discount.reason, effectiveVaPct: r.discount.effectiveVaPct } : null,
+          applied: !!priceFields,
+        }),
         ...auditUser(user),
       },
     });

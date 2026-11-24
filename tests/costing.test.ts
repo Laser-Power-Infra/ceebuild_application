@@ -14,6 +14,7 @@ const baseRates = (): RateRow[] => [
   rate('FAB_RATE', 6, 'Rs/kg', 'CH_ANG'),
   rate('GALV_RATE', 20, 'Rs/kg black'),
   rate('ZINC_PCT', 5, '%'),
+  rate('ZINC_RATE', 100, 'Rs/kg'),
   rate('GALV_TRANSPORT', 1, 'Rs/kg'),
   rate('FREIGHT_MT', 2000, 'Rs/MT', 'BIHAR'),
   rate('INTEREST_PCT', 0, '%'),
@@ -78,7 +79,8 @@ test('structure line: weights, RM with cutting-plan wastage, fab, galv, freight,
   assert.equal(l.blackWtKg, 38.24); // 2 x 2.0 m x 9.56, per set
   assert.equal(l.galvWtKg, 40.152);
   assert.equal(l.wastageSource, 'CUTTING_PLAN');
-  const cost = 38.24 * 55 * 1.04 + 38.24 * 6 + 38.24 * 21 + (40.152 / 1000) * 2000;
+  // GI = labour 20 + 5% x zinc 100 + transport 1 = Rs 26/kg black
+  const cost = 38.24 * 55 * 1.04 + 38.24 * 6 + 38.24 * 26 + (40.152 / 1000) * 2000;
   assert.ok(Math.abs(l.cost - cost) < 0.01);
   assert.equal(r.vaPct, 10); // minimum VA used when none given
   assert.ok(Math.abs(l.sell - cost * 1.1) < 0.02);
@@ -120,9 +122,86 @@ test('purchase scope; N&B and bought-out at their own margin, kept out of the st
 
 test('interest applies to N&B too', () => {
   const rs = baseRates().filter((x) => !['INTEREST_PCT', 'CREDIT_DAYS'].includes(x.kind));
-  rs.push(rate('INTEREST_PCT', 12, '%'), rate('CREDIT_DAYS', 73, 'days'));
+  rs.push(rate('INTEREST_PCT', 1, '%'), rate('CREDIT_DAYS', 45, 'days'));
   const r = computeCosting(input({ rates: rs, lines: [line({ rowNo: 3, markNo: null, description: 'Bolt', section: null, sectionKey: null, lengthMm: null, qtyPerSet: 10, category: 'NUTS_BOLTS', rateKey: 'M16X40', unitWtKg: 0.1 })] }));
-  assert.ok(Math.abs(r.lines[0].commercial - 10 * 0.1 * 110 * 0.12 * 0.2) < 0.01);
+  const l = r.lines[0];
+  // 45 days / 30 x 1% = 1.5% of the selling value; N&B margin 5%
+  assert.ok(Math.abs(l.interest - 0.015 * l.sell) < 0.01);
+  assert.ok(Math.abs(l.sell - (110 * 1.05) / (1 - 0.015 * 1.05)) < 0.01);
+  assert.ok(Math.abs(l.sell - l.cost * 1.05) < 0.02);
+});
+
+test('Rev 2: GI example 3.80 + 3.8% x 379 + 0.70 = Rs 18.90/kg black', () => {
+  const rs = baseRates().filter((x) => !['GALV_RATE', 'ZINC_PCT', 'ZINC_RATE', 'GALV_TRANSPORT'].includes(x.kind));
+  rs.push(rate('GALV_RATE', 3.8, 'Rs/kg black'), rate('ZINC_PCT', 3.8, '%'), rate('ZINC_RATE', 379, 'Rs/kg'), rate('GALV_TRANSPORT', 0.7, 'Rs/kg'));
+  const r = computeCosting(input({ rates: rs }));
+  assert.ok(Math.abs(r.lines[0].galv / 38.24 - 18.902) < 0.001);
+});
+
+test('Rev 2: default VA % from VA_PCT; N&B / bought-out use VA % when no own margin', () => {
+  const rs = baseRates().filter((x) => !['NB_MARGIN_PCT', 'BO_MARGIN_PCT'].includes(x.kind));
+  rs.push(rate('VA_PCT', 12, '%'));
+  const r = computeCosting(
+    input({
+      rates: rs,
+      lines: [line(), line({ rowNo: 3, markNo: null, description: 'Bolt', section: null, sectionKey: null, lengthMm: null, qtyPerSet: 8, unitWtKg: 0.12, category: 'NUTS_BOLTS', rateKey: 'M16X40' })],
+    }),
+  );
+  assert.equal(r.vaPct, 12);
+  assert.equal(r.lines[1].marginPct, 12);
+  assert.ok(Math.abs(r.lines[0].sell - r.lines[0].cost * 1.12) < 0.02);
+  // docket override still wins
+  assert.equal(computeCosting(input({ rates: rs, vaPct: 15 })).vaPct, 15);
+});
+
+test('Rev 2: ex-works (no destination) = no freight and no freight master needed', () => {
+  const r = computeCosting(input({ destState: null, rates: baseRates().filter((x) => x.kind !== 'FREIGHT_MT') }));
+  assert.equal(r.lines[0].freight, 0);
+  assert.equal(r.checks.ok, true);
+  assert.ok(r.checks.messages.some((m) => /ex-works/.test(m)));
+});
+
+test('Rev 2: RM lookup size row -> family row; off-list size costed at the family rate', () => {
+  const rs = [...baseRates(), rate('RM_RATE', 50, 'Rs/kg', 'ANGLE'), rate('FAB_RATE', 1.6, 'Rs/kg', 'CH_ANG')];
+  const r = computeCosting(
+    input({
+      rates: rs,
+      sectionKgm: { ISMC100X50: 9.56, ISA65X65X6: 5.8 },
+      lines: [line(), line({ rowNo: 2, markNo: 'X', section: 'ISA 65x65x6', sectionKey: 'ISA65X65X6', lengthMm: 1000, qtyPerSet: 1 })],
+    }),
+  );
+  assert.equal(r.lines[0].rmRate, 55); // size row wins
+  assert.equal(r.lines[1].status, 'COSTED');
+  assert.equal(r.lines[1].rmRate, 50); // family row
+  assert.equal(r.checks.outsidePurchaseList.length, 0);
+  assert.ok(r.checks.messages.some((m) => /family RM rate/.test(m)));
+  // no family rate either -> still flagged
+  const none = computeCosting(input({ sectionKgm: { ISMC100X50: 9.56, ISA65X65X6: 5.8 }, lines: [line({ section: 'ISA 65x65x6', sectionKey: 'ISA65X65X6' })] }));
+  assert.equal(none.lines[0].status, 'FLAGGED');
+});
+
+test('Rev 2 §7: discount -> final price and effective VA (red below minimum VA)', () => {
+  const base = computeCosting(input({ vaPct: 12 }));
+  assert.equal(base.discount, null);
+  assert.ok(Math.abs(base.vaAmount - (base.grandSell - base.costTotal)) < 0.01);
+  const pct = computeCosting(input({ vaPct: 12, discount: { mode: 'PCT', value: 1, reason: 'L1 match' } }));
+  assert.ok(Math.abs(pct.discount!.amount - base.grandSell * 0.01) < 0.01);
+  assert.ok(Math.abs(pct.discount!.effectiveVaPct - ((base.grandSell * 0.99 - base.costTotal) / base.costTotal) * 100) < 0.01);
+  assert.equal(pct.discount!.belowMinVa, false); // 1% off 12% VA leaves ~10.9%, above the 10% minimum
+  const perKg = computeCosting(input({ vaPct: 12, discount: { mode: 'RS_PER_KG', value: 1, reason: 'x' } }));
+  assert.ok(Math.abs(perKg.discount!.amount - perKg.structure.billedWtKg) < 0.01);
+  const big = computeCosting(input({ vaPct: 12, discount: { mode: 'LUMP', value: base.grandSell * 0.05, reason: 'x' } }));
+  assert.equal(big.discount!.belowMinVa, true); // ~6.4% < 10%
+  assert.ok(big.checks.messages.some((m) => /below the minimum/.test(m)));
+});
+
+test('Rev 2: pending masters (min VA, LC/BG, inspection, packing) are flagged but do not block', () => {
+  const rs = baseRates().filter((x) => !['MIN_VA_PCT', 'LC_BG_PCT', 'INSPECTION', 'PACKING'].includes(x.kind));
+  rs.push(rate('VA_PCT', 12, '%'));
+  const r = computeCosting(input({ rates: rs, planConfirmed: false }));
+  assert.equal(r.checks.pendingMasters.length, 5);
+  assert.deepEqual(r.checks.missingMasters, []);
+  assert.equal(r.checks.ok, true);
 });
 
 test('non-billable: costed, weight not billed, cost carried on the billable kg', () => {
@@ -311,6 +390,7 @@ test('masters left blank are listed and block Apply; interim RM rate is marked b
 
   const noFreight = computeCosting(input({ rates: full.filter((x) => x.kind !== 'FREIGHT_MT' && x.kind !== 'INTEREST_PCT'), planConfirmed: false }));
   assert.equal(noFreight.checks.ok, false);
-  assert.equal(noFreight.checks.missingMasters.length, 3); // freight, interest, end allowance / kerf
-  assert.ok(noFreight.checks.missingMasters.some((m) => /End allowance/.test(m)));
+  assert.equal(noFreight.checks.missingMasters.length, 2); // freight (Bihar), interest
+  // Rev 2: kerf / end allowance not confirmed is pending (0 used), not blocking
+  assert.ok(noFreight.checks.pendingMasters.some((m) => /End allowance/.test(m)));
 });

@@ -845,6 +845,15 @@ model CostRate {
   unit          String
   effectiveFrom DateTime @map("effective_from") @db.Date
   source        String?
+  // Rev 2 §4.1: ESTIMATE | QUOTE | PO | GRN | ACTUAL (null = not stated; legacy "INTERIM" source = ESTIMATE)
+  rateType      String?   @map("rate_type")
+  supplier      String?
+  // Optional end of validity; the next version's effective date ends it anyway.
+  validTo       DateTime? @map("valid_to") @db.Date
+  // Update frequency set by Puja (days, e.g. 7 weekly, 30 monthly); overdue = effective_from + freq < today.
+  updateFreqDays Int?     @map("update_freq_days")
+  // Who keeps the rate up to date (e.g. Purchase – Baptu).
+  owner         String?
   createdById   Int?     @map("created_by_id")
   createdByName String?  @map("created_by_name")
   createdAt     DateTime @default(now()) @map("created_at")

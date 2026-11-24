@@ -5,7 +5,7 @@ import { History, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { FormError, Modal, fieldCls, labelCls } from '@/components/Modal';
 import { addRateAction, costingMasterAction, deleteRateAction, upsertPurchaseItemAction } from '@/app/actions/costing';
-import { RATE_KINDS, RATE_META, isInterim, type RateKind } from '@/lib/costing/calc';
+import { RATE_KINDS, RATE_META, RATE_TYPES, isInterim, type RateKind } from '@/lib/costing/calc';
 import { FAB_CATS, FAB_CAT_BY_CODE, fabCatLabel } from '@/lib/costing/fab';
 import type { PurchaseItemRow, RateListRow } from '../server/master';
 import { Badge, card, inr, td, th } from './shared';
@@ -16,11 +16,26 @@ const today = () => new Date().toISOString().slice(0, 10);
 const GROUPS: { title: string; kinds: RateKind[] }[] = [
   { title: 'Raw material', kinds: ['RM_RATE', 'WASTAGE_PCT'] },
   { title: 'Fabrication / conversion', kinds: ['FAB_RATE'] },
-  { title: 'Galvanising (GI cost master)', kinds: ['GALV_RATE', 'ZINC_PCT', 'GALV_TRANSPORT'] },
-  { title: 'Freight (FOR, by destination state)', kinds: ['FREIGHT_MT'] },
-  { title: 'Commercial', kinds: ['INTEREST_PCT', 'CREDIT_DAYS', 'LC_BG_PCT', 'INSPECTION', 'PACKING', 'MIN_VA_PCT'] },
-  { title: 'Nuts & bolts and bought-out items (separate offer lines, own margin %)', kinds: ['NB_RATE', 'NB_MARGIN_PCT', 'BOUGHT_OUT', 'BO_MARGIN_PCT'] },
+  { title: 'Galvanising (GI cost master): labour + zinc issue % x zinc rate + transport', kinds: ['GALV_RATE', 'ZINC_PCT', 'ZINC_RATE', 'GALV_TRANSPORT'] },
+  { title: 'Freight (FOR, by destination state; no destination = ex-works)', kinds: ['FREIGHT_MT'] },
+  { title: 'Finance and VA (interest = credit days ÷ 30 × % of selling value)', kinds: ['VA_PCT', 'MIN_VA_PCT', 'INTEREST_PCT', 'CREDIT_DAYS', 'LC_BG_PCT', 'INSPECTION', 'PACKING'] },
+  { title: 'Nuts & bolts and bought-out items (separate offer lines; own margin %, else VA %)', kinds: ['NB_RATE', 'NB_MARGIN_PCT', 'BOUGHT_OUT', 'BO_MARGIN_PCT'] },
 ];
+
+interface RateForm {
+  kind: RateKind;
+  subject: string;
+  value: string;
+  unit: string;
+  effectiveFrom: string;
+  source: string;
+  rateType: string;
+  supplier: string;
+  owner: string;
+  updateFreqDays: string;
+  validTo: string;
+}
+const blankMeta = { rateType: '', supplier: '', owner: '', updateFreqDays: '', validTo: '' };
 
 export function CostingMasterPage({ role }: { role: string }) {
   const isAdmin = role === 'Admin';
@@ -28,7 +43,7 @@ export function CostingMasterPage({ role }: { role: string }) {
   const [rates, setRates] = useState<RateListRow[]>([]);
   const [error, setError] = useState('');
   const [showHistory, setShowHistory] = useState(false);
-  const [rateForm, setRateForm] = useState<null | { kind: RateKind; subject: string; value: string; unit: string; effectiveFrom: string; source: string }>(null);
+  const [rateForm, setRateForm] = useState<null | RateForm>(null);
   const [itemForm, setItemForm] = useState<null | { label: string; category: string; sortOrder: string; active: boolean }>(null);
 
   const load = useCallback(async () => {
@@ -45,7 +60,7 @@ export function CostingMasterPage({ role }: { role: string }) {
   const labelOf = (kind: string, subject: string) =>
     kind === 'RM_RATE' || kind === 'WASTAGE_PCT' ? items.find((i) => i.sectionKey === subject)?.label ?? subject : kind === 'FAB_RATE' ? fabCatLabel(subject) : subject;
 
-  const openRate = (kind: RateKind, subject = '') => setRateForm({ kind, subject, value: '', unit: RATE_META[kind].units[0], effectiveFrom: today(), source: '' });
+  const openRate = (kind: RateKind, subject = '') => setRateForm({ kind, subject, value: '', unit: RATE_META[kind].units[0], effectiveFrom: today(), source: '', ...blankMeta });
 
   const missing = useMemo(() => {
     const has = (k: string, s?: string) => rates.some((r) => r.kind === k && r.current && (s === undefined || r.subject === s));
@@ -55,7 +70,7 @@ export function CostingMasterPage({ role }: { role: string }) {
       if (!i.inGtp) out.push(`kg/m for ${i.label} (GTP Sections)`);
     }
     for (const f of FAB_CATS) if (!has('FAB_RATE', f.code)) out.push(`Fabrication rate – ${f.label}`);
-    for (const k of ['GALV_RATE', 'ZINC_PCT', 'GALV_TRANSPORT', 'MIN_VA_PCT', 'FREIGHT_MT', 'INTEREST_PCT', 'CREDIT_DAYS', 'LC_BG_PCT', 'INSPECTION', 'PACKING', 'NB_MARGIN_PCT', 'BO_MARGIN_PCT'] as const) if (!has(k)) out.push(RATE_META[k].label);
+    for (const k of ['GALV_RATE', 'ZINC_PCT', 'ZINC_RATE', 'GALV_TRANSPORT', 'VA_PCT', 'MIN_VA_PCT', 'FREIGHT_MT', 'INTEREST_PCT', 'CREDIT_DAYS', 'LC_BG_PCT', 'INSPECTION', 'PACKING'] as const) if (!has(k)) out.push(RATE_META[k].label);
     return out;
   }, [items, rates]);
 
@@ -187,12 +202,16 @@ export function CostingMasterPage({ role }: { role: string }) {
                     <td className={`${td} text-right font-semibold`}>{inr(r.value, r.unit === 'days' ? 0 : 2)}</td>
                     <td className={td}>{r.unit}</td>
                     <td className={td}>{r.effectiveFrom}</td>
-                    <td className={td}>{isInterim(r) && <Badge tone="amber">Interim</Badge>} {r.source ?? ''}</td>
+                    <td className={td}>
+                      {r.rateType ? <Badge tone={r.rateType === 'ESTIMATE' || r.rateType === 'QUOTE' ? 'amber' : 'green'}>{r.rateType}</Badge> : isInterim(r) && <Badge tone="amber">ESTIMATE</Badge>}{' '}
+                      {r.overdue && <Badge tone="red">update overdue{r.owner ? ` – ${r.owner}` : ''}</Badge>} {r.supplier ? `${r.supplier} · ` : ''}
+                      {r.source ?? ''}
+                    </td>
                     <td className={td}>{r.createdByName ?? ''}</td>
                     {isAdmin && (
                       <td className={td}>
                         <div className="flex gap-1">
-                          <button type="button" className="text-xs font-semibold text-blue-800 hover:underline" onClick={() => setRateForm({ kind: r.kind as RateKind, subject: r.kind === 'RM_RATE' || r.kind === 'WASTAGE_PCT' ? (r.subject === 'DEFAULT' ? '' : labelOf(r.kind, r.subject)) : r.subject === 'DEFAULT' ? '' : r.subject, value: String(r.value), unit: r.unit, effectiveFrom: today(), source: '' })}>
+                          <button type="button" className="text-xs font-semibold text-blue-800 hover:underline" onClick={() => setRateForm({ kind: r.kind as RateKind, subject: r.kind === 'RM_RATE' || r.kind === 'WASTAGE_PCT' ? (r.subject === 'DEFAULT' ? '' : labelOf(r.kind, r.subject)) : r.subject === 'DEFAULT' ? '' : r.subject, value: String(r.value), unit: r.unit, effectiveFrom: today(), source: '', rateType: r.rateType ?? '', supplier: r.supplier ?? '', owner: r.owner ?? '', updateFreqDays: r.updateFreqDays ? String(r.updateFreqDays) : '', validTo: '' })}>
                             new version
                           </button>
                           <button
@@ -281,6 +300,33 @@ export function CostingMasterPage({ role }: { role: string }) {
             <div>
               <label className={labelCls} htmlFor="r-src">Source / reference</label>
               <input id="r-src" className={fieldCls} placeholder={rateForm.kind === 'RM_RATE' ? 'PO 1234 / GRN 567 dt 15-11-2026' : 'GI cost master Nov-2026'} value={rateForm.source} onChange={(e) => setRateForm({ ...rateForm, source: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={labelCls} htmlFor="r-type">Rate type</label>
+                <select id="r-type" className={fieldCls} value={rateForm.rateType} onChange={(e) => setRateForm({ ...rateForm, rateType: e.target.value })}>
+                  <option value="">Not stated</option>
+                  {RATE_TYPES.map((t) => (
+                    <option key={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="r-sup">Supplier</label>
+                <input id="r-sup" className={fieldCls} value={rateForm.supplier} onChange={(e) => setRateForm({ ...rateForm, supplier: e.target.value })} />
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="r-freq">Update every (days)</label>
+                <input id="r-freq" inputMode="numeric" className={fieldCls} placeholder="7 = weekly, 30 = monthly" value={rateForm.updateFreqDays} onChange={(e) => setRateForm({ ...rateForm, updateFreqDays: e.target.value })} />
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="r-own">Owner</label>
+                <input id="r-own" className={fieldCls} placeholder="Purchase – Baptu" value={rateForm.owner} onChange={(e) => setRateForm({ ...rateForm, owner: e.target.value })} />
+              </div>
+              <div>
+                <label className={labelCls} htmlFor="r-vto">Valid to (optional)</label>
+                <input id="r-vto" type="date" className={fieldCls} value={rateForm.validTo} onChange={(e) => setRateForm({ ...rateForm, validTo: e.target.value })} />
+              </div>
             </div>
             <p className="text-xs text-slate-700">The previous value is kept; quotations dated before the effective date keep using it.</p>
             <FormError error={error} />

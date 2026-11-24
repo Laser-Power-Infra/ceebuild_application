@@ -4,6 +4,7 @@ import { read, write, toId, UserError } from '@/lib/actionResult';
 import { ADMIN_ROLES } from '@/lib/auth/server';
 import { archiveFile } from '@/lib/s3';
 import { toNum } from '@/lib/bom/parse';
+import { DISCOUNT_MODES, type DiscountInput } from '@/lib/costing/calc';
 import { addRate, deleteRate, listPurchaseItems, listRates, upsertPurchaseItem } from '@/modules/costing/server/master';
 import {
   approveDrawing,
@@ -204,14 +205,26 @@ export async function addBomToLibraryAction(bomId: unknown, header: unknown) {
   return write((user) => addBomToLibrary(toId(bomId, 'BOM'), obj(header), user));
 }
 
+/** Rev 2 §7 discount from the form: { mode, value, reason } or null. */
+function optDiscount(v: unknown): DiscountInput | null {
+  if (!v || typeof v !== 'object') return null;
+  const d = v as Record<string, unknown>;
+  const mode = String(d.mode ?? '').toUpperCase();
+  const value = optNum(d.value);
+  if (!(DISCOUNT_MODES as readonly string[]).includes(mode) || value === null || !(value > 0)) return null;
+  return { mode: mode as DiscountInput['mode'], value, reason: typeof d.reason === 'string' ? d.reason.slice(0, 300) : null };
+}
+
 export async function previewCostingAction(bomId: unknown, opts: unknown) {
   const o = obj(opts);
-  return read(() => previewCosting(toId(bomId, 'BOM'), { vaPct: optNum(o.vaPct), quoteDate: typeof o.quoteDate === 'string' ? o.quoteDate : null }));
+  return read(() => previewCosting(toId(bomId, 'BOM'), { vaPct: optNum(o.vaPct), quoteDate: typeof o.quoteDate === 'string' ? o.quoteDate : null, discount: optDiscount(o.discount) }));
 }
 
 export async function saveCostingAction(bomId: unknown, opts: unknown) {
   const o = obj(opts);
-  return write((user) => saveCosting(toId(bomId, 'BOM'), { vaPct: optNum(o.vaPct), quoteDate: typeof o.quoteDate === 'string' ? o.quoteDate : null, apply: o.apply === true }, user));
+  return write((user) =>
+    saveCosting(toId(bomId, 'BOM'), { vaPct: optNum(o.vaPct), quoteDate: typeof o.quoteDate === 'string' ? o.quoteDate : null, apply: o.apply === true, discount: optDiscount(o.discount) }, user),
+  );
 }
 
 export async function costingDetailAction(id: unknown) {

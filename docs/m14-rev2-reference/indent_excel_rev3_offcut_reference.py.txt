@@ -1,0 +1,110 @@
+import json,sys
+from openpyxl import Workbook
+from openpyxl.styles import Font,PatternFill,Alignment,Border,Side
+from openpyxl.utils import get_column_letter
+d=json.load(open(sys.argv[1]));HOLD=()
+SPEC={'ISMC 100X50':'ISMC 100x50 (IS 2062 E250A)','ISMC 75X40':'ISMC 75x40 (IS 2062 E250A)','L50X50X6':'Angle 50x50x6 (IS 2062 E250A)','FL 50X8':'Flat 50x8 (IS 2062 E250A)','FL 65X6':'Flat 65x6 (IS 2062 E250A)','FL 50X6':'Flat 50x6 (IS 2062 E250A)','RD 16':'Round bar 16 mm dia (IS 2062 E250A)','FL 30X3':'Flat 30x3 (IS 2062 E250A)','FL 45X5':'Flat 45x5 (IS 2062 E250A) ? in lieu of 40x5','L75X75X6':'Angle 75x75x6 (IS 2062 E250A) ? in lieu of 65x65x6'}
+F='Arial';b=Side(style='thin',color='BBBBBB');BR=Border(left=b,right=b,top=b,bottom=b)
+H=Font(name=F,bold=True,color='FFFFFF');HF=PatternFill('solid',fgColor='1F5F8B');N=Font(name=F,size=10);BL=Font(name=F,size=10,color='0000FF');BD=Font(name=F,size=10,bold=True)
+wb=Workbook();ws=wb.active;ws.title='INDENT'
+ws['A1']='CEEBUILD COMPANY PVT. LTD. ? RAW MATERIAL INDENT';ws['A1'].font=Font(name=F,bold=True,size=13)
+ws['A2']='Order: Lanarsy Infra Ltd PO No. LIL/SBPDCL/RDSS/GI Fabrication Material/2026-27/112 dt 13-11-2026 · SBPDCL-RDSS · 100 MT 11 kV GI fabrication material';ws['A2'].font=N
+ws['A3']='REV 3 · Indent date: 23-11-2026 · Supersedes Rev 1 & Rev 2 · Includes Flat 45x5 & Angle 75x75x6 (Lanarsy mail 21-11-2026) · Store offcuts/stock (Satya, 23-11-2026) deducted ? see OFFCUT USED tab · Custom lengths: +0 / +20 mm only, NO negative tolerance';ws['A3'].font=Font(name=F,size=10,bold=True,color='B3261E')
+hdr=['Sl','Section / Specification','Section code','Length type','Order length (mm)','Length tolerance','Bars required','Buffer bars','Bars to order','kg/m','Weight (kg)','Weight (MT)','Cut into','Remarks']
+r0=5
+for i,t in enumerate(hdr,1):
+    c=ws.cell(r0,i,t);c.font=H;c.fill=HF;c.alignment=Alignment(wrap_text=True,vertical='center');c.border=BR
+ws.row_dimensions[r0].height=32
+r=r0+1;sl=1
+for x in d['rows']:
+    if x['sec'] in HOLD: continue
+    wt=d['secs'][x['sec']]['wt']
+    cut=f"{x['n']} × {x['L']} mm ? {x['desc']}" if x['n'] else x['desc']
+    rem=''
+    if x['kind']=='Custom': rem='Exact multiple length; reject any bar below ordered length'
+    if x['sec']=='ISMC 100X50' and x['len']==6600: rem='3 × 2200 top channel; any bar < 6600 gives only 2 pcs ? reject'
+    if x['sec']=='FL 65X6': rem='Only 2 pcs × 338 mm needed ? take from stock/offcut if available'
+    if x['sec'] in ('FL 45X5','L75X75X6'): rem='NEW in Rev 2 ? substitute section accepted by Lanarsy 21-11-2026; cut lengths as per BOM, Satya to confirm no change for wider section'
+    if x['sec']=='RD 16': rem='Eye bolts Ø16 ? confirm in scope (bolts & nuts excluded)'
+    if x.get('off'): rem=(rem+' | ' if rem else '')+x['off']
+    vals=[sl,SPEC[x['sec']],x['sec'],'Custom (cut length)' if x['kind']=='Custom' else 'Standard',x['len'],'+0 / +20 mm' if x['kind']=='Custom' else 'Standard mill',x['bars'],x['ind']-x['bars'],f'=G{r}+H{r}',wt,f'=E{r}/1000*I{r}*J{r}',f'=K{r}/1000',cut,rem]
+    for i,v in enumerate(vals,1):
+        c=ws.cell(r,i,v);c.font=BL if i in (5,7,8,10) else N;c.border=BR;c.alignment=Alignment(vertical='top',wrap_text=i in (2,13,14))
+    for col,fmt in ((5,'#,##0'),(7,'#,##0'),(8,'#,##0'),(9,'#,##0'),(10,'0.00'),(11,'#,##0'),(12,'0.000')): ws.cell(r,col).number_format=fmt
+    r+=1;sl+=1
+last=r-1
+ws.cell(r,2,'TOTAL').font=BD
+for col,fmt in ((9,'#,##0'),(11,'#,##0'),(12,'0.000')):
+    L=get_column_letter(col);c=ws.cell(r,col,f'=SUM({L}{r0+1}:{L}{last})');c.font=BD;c.number_format=fmt;c.border=BR
+widths=[5,30,13,17,12,13,10,9,10,7,11,10,46,40]
+for i,w in enumerate(widths,1): ws.column_dimensions[get_column_letter(i)].width=w
+ws.freeze_panes=f'A{r0+1}'
+ws.cell(r+2,1,'Blue = input values (edit to change order); weights recalculate. No buffer ? bars = exact requirement. kg/m are standard sectional weights used in the BOM.').font=Font(name=F,size=9,italic=True)
+# summary
+s=wb.create_sheet('SECTION SUMMARY')
+sh=['Section code','Net BOM weight (kg)','Indent weight (kg)','Indent weight (MT)','Cut-end loss %','Pieces in BOM','Status']
+for i,t in enumerate(sh,1):
+    c=s.cell(1,i,t);c.font=H;c.fill=HF;c.border=BR;c.alignment=Alignment(wrap_text=True)
+rr=2
+for sec,v in d['secs'].items():
+    net=round(v['need']/1000*v['wt'],1)
+    s.cell(rr,1,sec);s.cell(rr,2,net).font=BL
+    if sec in HOLD:
+        s.cell(rr,3,0);s.cell(rr,7,'')
+    else:
+        s.cell(rr,3,f'=SUMIFS(INDENT!$K${r0+1}:$K${last},INDENT!$C${r0+1}:$C${last},A{rr})');s.cell(rr,7,'Indent raised'+(' ? NEW in Rev 2 (substitute)' if sec in ('FL 45X5','L75X75X6') else ''))
+    s.cell(rr,4,f'=C{rr}/1000');s.cell(rr,5,f'=IF(OR(B{rr}=0,C{rr}=0),"-",C{rr}/B{rr}-1)');s.cell(rr,6,v['pieces'])
+    for i,fmt in ((2,'#,##0'),(3,'#,##0'),(4,'0.000'),(5,'0.0%'),(6,'#,##0')): s.cell(rr,i).number_format=fmt
+    for i in range(1,8):
+        s.cell(rr,i).border=BR
+        if s.cell(rr,i).font!=BL: s.cell(rr,i).font=N
+    rr+=1
+s.cell(rr,1,'TOTAL').font=BD
+for i,fmt in ((2,'#,##0'),(3,'#,##0'),(4,'0.000'),(6,'#,##0')):
+    L=get_column_letter(i);c=s.cell(rr,i,f'=SUM({L}2:{L}{rr-1})');c.font=BD;c.number_format=fmt
+for i,w in enumerate([14,16,16,14,14,12,58],1): s.column_dimensions[get_column_letter(i)].width=w
+# rev changes
+o=wb.create_sheet('REV 2 CHANGES')
+oh=['BOM section','Replaced by','Pieces','Bars to order','Indent weight (MT)','Used for','Basis']
+for i,t in enumerate(oh,1):
+    c=o.cell(1,i,t);c.font=H;c.fill=HF;c.border=BR
+rr=2
+for old,new in (('Flat 40x5','FL 45X5'),('Angle 65x65x6','L75X75X6')):
+    v=d['secs'][new];bars=sum(x['bars'] for x in d['rows'] if x['sec']==new);mt=sum(x['len']/1000*x['bars'] for x in d['rows'] if x['sec']==new)*v['wt']/1000
+    vals=[old,SPEC[new],v['pieces'],bars,round(mt,3),', '.join(v['lines'][:6]),'Lanarsy mail 21-11-2026: 45x5 flat and 75x75x6 angle acceptable instead of 40x5 flat and 65x65x6 angle (approved GTP sections)']
+    for i,x in enumerate(vals,1):
+        c=o.cell(rr,i,x);c.font=N;c.border=BR;c.alignment=Alignment(wrap_text=True,vertical='top')
+    o.cell(rr,3).number_format='#,##0';o.cell(rr,4).number_format='#,##0';o.cell(rr,5).number_format='0.000';rr+=1
+for i,w in enumerate([16,34,9,11,12,46,50],1): o.column_dimensions[get_column_letter(i)].width=w
+# offcut used
+u=wb.create_sheet('OFFCUT USED')
+uh=['Section','Indent line','Store material (Satya 23-11-2026)','Pieces obtained','Bars before','Bars now','Saved (kg)']
+for i,t in enumerate(uh,1):
+    c=u.cell(1,i,t);c.font=H;c.fill=HF;c.border=BR;c.alignment=Alignment(wrap_text=True)
+OU=[('L50X50X6','3 × 1737 (5211 mm)','9 × 1850 mm offcut',9,159,156),('FL 50X8','7 × 761 (5327 mm)','10 × 6000 mm full bars',70,68,58),('ISMC 75X40','4 × 1476 (5904 mm)','1 × 1700 mm offcut',1,651,650),('FL 50X6','120 × 50 (6000 mm)','20 × 6000 mm full bars',2400,86,66),('FL 30X3','Nested 6 m bars','12 × 5000 mm offcut',None,34,24),
+('ISMC 100X50','3 × 2200 (6600 mm)','1 × 2200 mm offcut',1,266,266),('ISMC 75X40','15 × 385 (5775 mm)','385, 400 & 3 × 550 mm offcuts',5,173,173)]
+LEN={'L50X50X6':5.211,'FL 50X8':5.327,'ISMC 75X40':5.904,'FL 50X6':6.0,'FL 30X3':6.0,'ISMC 100X50':6.6}
+for i,(sec,line,mat,pc,b0,b1) in enumerate(OU,2):
+    vals=[sec,line,mat,pc if pc else 'nested',b0,b1,round((b0-b1)*LEN[sec]*d['secs'][sec]['wt'])]
+    for j,v in enumerate(vals,1):
+        c=u.cell(i,j,v);c.font=N;c.border=BR
+u.cell(len(OU)+2,1,'Last two: offcut pieces used, but bar count unchanged (requirement still needs the same number of full bars; balance pieces go to nesting).').font=Font(name=F,size=9,italic=True)
+u.cell(len(OU)+3,1,'Store to reserve the listed offcuts/bars for this order. No offcuts listed for 45x5 / 75x75x6 (new sections).').font=Font(name=F,size=9,italic=True)
+for i,w in enumerate([13,20,30,14,11,10,11],1): u.column_dimensions[get_column_letter(i)].width=w
+# notes
+n=wb.create_sheet('NOTES')
+notes=['Basis: Lanarsy BOM "Cee Build BOM 11Kv Fab SBPDCL.xlsx" (14-11-2026), BOM qty accepted excluding nuts & bolts (mail 16-11-2026).',
+'Material: IS 2062 E250A with mill test certificate; galvanising later to IS 2629, 610 g/m² (approved GTP, SBPDCL letter 2333).',
+'Standard length 6000 mm. Custom lengths = exact multiple of one piece length, max 6000 mm (ISMC 100x50: 6600 mm = 3 × 2200).',
+'Custom lengths: tolerance +0 / +20 mm only. No negative tolerance accepted ? any bar below ordered length to be rejected / debit note.',
+'End-squaring allowance not added (pending plant confirmation). If plant needs end trim, add it to custom order lengths before releasing.',
+'9 m PSC single pole in-line structure: client BOM set count is a balancing (fractional) figure ? rounded up; actual pole count awaited from Lanarsy (PO allows ±25% quantity variation).',
+'BOM corrections applied: welded flat ISMC 75x40 weight, barbed-wire clamp row 50 taken as FL 40x5, welded flat row 198 taken as FL 50x6; two lines with blank qty excluded.',
+'Rev 2 (23-11-2026): Flat 40x5 replaced by Flat 45x5 and Angle 65x65x6 replaced by Angle 75x75x6 as accepted by Lanarsy (mail 21-11-2026). Piece counts and cut lengths kept as per BOM; heavier section raises weight (~2.1 MT net extra).',
+'Rev 3 (23-11-2026): store offcuts and full bars listed by Satya deducted (OFFCUT USED tab) ? 44 bars less, about 0.6 MT. Store must reserve them for this order.',
+'No indent buffer (bars = exact requirement). On receipt, enter actual lengths in the planning tool to finalise the cutting plan.']
+n['A1']='NOTES & ASSUMPTIONS';n['A1'].font=Font(name=F,bold=True,size=12)
+for i,t in enumerate(notes,3):
+    c=n.cell(i,1,f'{i-2}. {t}');c.font=N;c.alignment=Alignment(wrap_text=True)
+n.column_dimensions['A'].width=130
+wb.save(sys.argv[2])

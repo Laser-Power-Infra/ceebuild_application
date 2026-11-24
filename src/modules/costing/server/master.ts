@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
 import { sectionKey, toNum } from '@/lib/bom/parse';
-import { RATE_KINDS, RATE_META, normSubject, type RateKind, type RateRow } from '@/lib/costing/calc';
+import { RATE_KINDS, RATE_META, RATE_TYPES, RM_FAMILIES, normSubject, type RateKind, type RateRow } from '@/lib/costing/calc';
 import { FAB_CAT_BY_CODE } from '@/lib/costing/fab';
 
 // Costing Master (Administration). Admin only: every change is a new, dated row plus an audit entry.
@@ -23,11 +23,20 @@ export interface PurchaseItemRow {
 
 export interface RateListRow extends RateRow {
   source: string | null;
+  rateType: string | null;
+  supplier: string | null;
+  validTo: string | null;
+  updateFreqDays: number | null;
+  owner: string | null;
+  /** Current row whose update is due (effective date + update frequency < today), or past valid-to. */
+  overdue: boolean;
   createdByName: string | null;
   createdAt: string;
   /** In force today (latest effective <= today for its kind + subject). */
   current: boolean;
 }
+
+const addDays = (ymdStr: string, days: number) => new Date(Date.parse(`${ymdStr}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
 
 const today = () => new Date().toISOString().slice(0, 10);
 const ymd = (d: Date) => d.toISOString().slice(0, 10);
@@ -90,24 +99,36 @@ export async function listRates(): Promise<RateListRow[]> {
     seen.add(k);
     currentIds.add(r.id);
   }
-  return rows.map((r) => ({
-    id: r.id,
-    kind: r.kind,
-    subject: r.subject,
-    value: r.value.toNumber(),
-    unit: r.unit,
-    effectiveFrom: ymd(r.effectiveFrom),
-    source: r.source,
-    createdByName: r.createdByName,
-    createdAt: r.createdAt.toISOString(),
-    current: currentIds.has(r.id),
-  }));
+  return rows.map((r) => {
+    const eff = ymd(r.effectiveFrom);
+    const validTo = r.validTo ? ymd(r.validTo) : null;
+    const current = currentIds.has(r.id);
+    const overdue = current && ((r.updateFreqDays != null && r.updateFreqDays > 0 && addDays(eff, r.updateFreqDays) < t) || (validTo !== null && validTo < t));
+    return {
+      id: r.id,
+      kind: r.kind,
+      subject: r.subject,
+      value: r.value.toNumber(),
+      unit: r.unit,
+      effectiveFrom: eff,
+      source: r.source,
+      rateType: r.rateType,
+      supplier: r.supplier,
+      validTo,
+      updateFreqDays: r.updateFreqDays,
+      owner: r.owner,
+      overdue,
+      createdByName: r.createdByName,
+      createdAt: r.createdAt.toISOString(),
+      current,
+    };
+  });
 }
 
 /** All rates as plain rows for the calculator. */
 export async function allRates(): Promise<RateRow[]> {
   const rows = await prisma.costRate.findMany();
-  return rows.map((r) => ({ id: r.id, kind: r.kind, subject: r.subject, value: r.value.toNumber(), unit: r.unit, effectiveFrom: ymd(r.effectiveFrom), source: r.source }));
+  return rows.map((r) => ({ id: r.id, kind: r.kind, subject: r.subject, value: r.value.toNumber(), unit: r.unit, effectiveFrom: ymd(r.effectiveFrom), source: r.source, rateType: r.rateType }));
 }
 
 /** New version of a rate. Old versions are kept untouched. */
@@ -117,8 +138,10 @@ export async function addRate(input: Record<string, unknown>, user: AuthUser) {
   const meta = RATE_META[kind];
   let subject = meta.perSubject ? normSubject(String(input.subject ?? '')) : 'DEFAULT';
   // RM rates / wastage are keyed by the purchase item section key.
-  if ((kind === 'RM_RATE' || kind === 'WASTAGE_PCT') && subject !== 'DEFAULT') subject = sectionKey(subject) ?? subject;
-  if (kind === 'RM_RATE') {
+  // RM rate for a whole section family (CHANNEL / ANGLE / FLAT / ROD): used when the size has no row.
+  const isFamily = kind === 'RM_RATE' && (RM_FAMILIES as readonly string[]).includes(subject);
+  if ((kind === 'RM_RATE' || kind === 'WASTAGE_PCT') && subject !== 'DEFAULT' && !isFamily) subject = sectionKey(subject) ?? subject;
+  if (kind === 'RM_RATE' && !isFamily) {
     const item = await prisma.rmPurchaseItem.findUnique({ where: { sectionKey: subject } });
     if (!item) throw new UserError('RM rate must be for an item on the RM purchase list. Add the item first.');
   }
@@ -137,11 +160,34 @@ export async function addRate(input: Record<string, unknown>, user: AuthUser) {
   const eff = String(input.effectiveFrom ?? '').trim() || today();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(eff) || Number.isNaN(Date.parse(eff))) throw new UserError('Effective date must be a date.');
   const source = String(input.source ?? '').trim().slice(0, 300) || null;
+  const rateTypeIn = String(input.rateType ?? '').trim().toUpperCase();
+  if (rateTypeIn && !(RATE_TYPES as readonly string[]).includes(rateTypeIn)) throw new UserError(`Rate type must be one of ${RATE_TYPES.join(', ')}.`);
+  const rateType = rateTypeIn || null;
+  const supplier = String(input.supplier ?? '').trim().slice(0, 150) || null;
+  const owner = String(input.owner ?? '').trim().slice(0, 100) || null;
+  const validToIn = String(input.validTo ?? '').trim();
+  if (validToIn && (!/^\d{4}-\d{2}-\d{2}$/.test(validToIn) || validToIn < eff)) throw new UserError('Valid-to must be a date on or after the effective date.');
+  const freq = input.updateFreqDays === undefined || input.updateFreqDays === '' || input.updateFreqDays === null ? null : Number(input.updateFreqDays);
+  if (freq !== null && !(Number.isInteger(freq) && freq > 0 && freq <= 3660)) throw new UserError('Update frequency must be a whole number of days.');
 
   return prisma.$transaction(async (tx) => {
     const prev = await tx.costRate.findFirst({ where: { kind, subject, effectiveFrom: { lte: new Date(`${eff}T00:00:00Z`) } }, orderBy: [{ effectiveFrom: 'desc' }, { id: 'desc' }] });
     const row = await tx.costRate.create({
-      data: { kind, subject, value, unit, effectiveFrom: new Date(`${eff}T00:00:00Z`), source, createdById: user.id, createdByName: user.name },
+      data: {
+        kind,
+        subject,
+        value,
+        unit,
+        effectiveFrom: new Date(`${eff}T00:00:00Z`),
+        source,
+        rateType,
+        supplier,
+        owner,
+        validTo: validToIn ? new Date(`${validToIn}T00:00:00Z`) : null,
+        updateFreqDays: freq,
+        createdById: user.id,
+        createdByName: user.name,
+      },
     });
     await tx.editLog.create({
       data: {
@@ -149,7 +195,7 @@ export async function addRate(input: Record<string, unknown>, user: AuthUser) {
         recordId: row.id,
         fieldName: `${kind} ${subject}`,
         oldValue: prev ? `${prev.value.toString()} ${prev.unit} from ${ymd(prev.effectiveFrom)}` : 'NONE (New Record)',
-        newValue: `${value} ${unit} from ${eff}${source ? ` (${source})` : ''}`,
+        newValue: `${value} ${unit} from ${eff}${rateType ? ` [${rateType}]` : ''}${supplier ? ` ${supplier}` : ''}${source ? ` (${source})` : ''}`,
         ...auditUser(user),
       },
     });

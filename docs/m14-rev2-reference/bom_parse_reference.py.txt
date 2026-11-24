@@ -1,0 +1,37 @@
+import openpyxl,math,collections,json,re,sys
+v=openpyxl.load_workbook(sys.argv[1],data_only=True).active
+WT={'ISMC 100X50':9.56,'ISMC 75X40':7.14,'L65X65X6':5.8,'L50X50X6':4.5,'FL 50X8':3.14,'FL 50X6':2.36,'FL 40X5':1.57,'FL 30X3':0.70,'FL 65X6':3.06,'RD 16':1.58}
+def norm(s,row):
+    s=s.upper().replace(' ','')
+    if s.startswith('ISMC100'): return 'ISMC 100X50'
+    if s in('FT75X40','ISMC75X40'): return 'ISMC 75X40'
+    if s.startswith('L65'): return 'L65X65X6'
+    if s.startswith('L50'): return 'L50X50X6'
+    if s.startswith('16'): return 'RD 16'
+    m=re.match(r'F[LT]\.?(\d+)X(\d+)',s)
+    if m: return 'FL %sX%s'%m.groups()
+    return s
+pieces=[];issues=[];struct=None;dwg=None
+for r in range(6,213):
+    c=[v.cell(r,k).value for k in range(1,20)]
+    if c[3] and c[6] is None and c[11] is not None and c[4] is None:
+        struct=c[3].strip(); sets=c[17]; dwg=None
+        if sets and abs(sets-round(sets))>1e-6: issues.append((r,struct,'Set count is fractional (%s); balancing figure to reach 100 MT. Rounded up for cutting.'%round(sets,2)))
+        continue
+    if c[1]: dwg=c[1]
+    if not c[3] or c[7] is None: continue
+    sec=norm(str(c[7]),r); L=c[8]; q=c[17] or 0; wtm=c[9]
+    if c[6] in (None,0) or not q:
+        if c[6] is None: issues.append((r,c[3],'Qty per set is blank, so excluded. Confirm whether the part is needed.'))
+        continue
+    if sec=='FL 50X8' and abs(wtm-1.6)<0.05: issues.append((r,c[3],'Section given as FL 50X8 but weighed at 1.6 kg/m (that is FL 40X5). Treated as FL 40X5 like the other barbed wire clamps.')); sec='FL 40X5'
+    if sec=='FL 50X8' and abs(wtm-2.36)<0.05: issues.append((r,c[3],'Welded flat given as FL 50X8 but weighed at 2.36 kg/m (FL 50X6). Treated as FL 50X6.')); sec='FL 50X6'
+    if sec=='ISMC 75X40' and abs(wtm-3.14)<0.05: issues.append((r,c[3],'Weighed at 3.14 kg/m instead of 7.14 for ISMC 75X40, so the client sheet understates weight.'))
+    if sec=='FL 50X6' and abs(wtm-2.4)<0.05: pass
+    pieces.append(dict(row=r,struct=struct,dwg=dwg,code=str(c[2]).strip() if c[2] is not None else '',desc=c[3].strip(),bill=c[5],sec=sec,L=int(L),qty=math.ceil(q-1e-9),qty_raw=q,wt_client=c[18]))
+json.dump(dict(pieces=pieces,issues=issues),open('parsed.json','w'),indent=0,default=str)
+print(len(pieces),'pieces');[print(i) for i in issues]
+agg=collections.defaultdict(int)
+for p in pieces: agg[p['sec']]+=p['qty']*p['L']
+for s,mm in agg.items(): print(s, round(mm/1000,1),'m', round(mm/1000*WT[s]),'kg')
+print('total kg',round(sum(mm/1000*WT[s] for s,mm in agg.items())))

@@ -1,0 +1,85 @@
+# M14 – Rev 2 implementation plan (24-11-2026)
+
+Source: Puja's mail chain of 24-11-2026, 16:12 → 17:54 IST. The last mail, "CONSOLIDATED DEV BLOCK Rev 2",
+supersedes all earlier M14 mails and addenda. The Rev 2 file and its reference files are in
+`docs/m14-rev2-reference/`, together with the KESCo BOM and indent sent separately.
+
+Mails covered (all from Puja, cc Asmita):
+16:12 Order intake review: 11 points (answered by Minmoy 17:35, all fixed) · 16:16 dev instructions + current RM rates ·
+Addendum 1 (Base RM Rates, GI from the AD report, no Google Sheets) · Addendum 2/3 + correction (freight, vehicle based, trucks only, FREIGHT HISTORY RECORD) ·
+Nuts & bolts rate · Finance 45 days LC / MSME VBD · Addendum 4 (Power BI / ERP interlinks) · Pending offers (4 dockets, drafts only) ·
+KESCo BOM + indent · Enquiry automation · Default VA 12% · VA base includes zinc · Date-wise rates + docket discount + snapshot ·
+E5 correction (every enquiry must get an offer) · **CONSOLIDATED DEV BLOCK Rev 2** (17:54).
+
+Ground rules from Rev 2: back up the database before every migration (pg_dump -Fc into `backups/`). Never hard-code a rate:
+every value lives in the dated `cost_rates` master. Log every change in `edit-logs`. Send nothing to a customer and fill no
+Quotation No. without Puja's approval.
+
+## What exists today (code map)
+| Rev 2 § | Area | State | Where |
+|---|---|---|---|
+| 1 | PO intake + the 11 fixes | live | `src/modules/poIntake/*`, `src/lib/po/*` |
+| 2 | Enquiry automation | **absent** (dockets are entered by hand) | `src/modules/dockets`, `src/app/api/dockets` |
+| 3 | Costing formula | exists, differs from Rev 2 | `src/lib/costing/calc.ts` |
+| 4 | Costing Master | `cost_rates` is dated. It has no rate type, supplier, valid-to, update frequency or owner | `src/modules/costing/server/master.ts` |
+| 5 | Freight Master | Rs/MT per state only | `FREIGHT_MT` kind |
+| 6 | Effective-dated masters | `cost_rates` only | `pickRate` |
+| 7 | Docket discount | **absent** | – |
+| 8 | ERP / Power BI | **absent** | – |
+| 9 | AD report import | **absent** | – |
+| 10 | Order → BOM → indent, machine master | exists. Indent is CSV, not Excel | `src/lib/planning/cutting.ts`, `src/modules/rm/*`, `src/modules/production/server/machines.ts` |
+| 11 | Costing snapshot / history | partial (`item_costings` has a detail JSON) | `src/modules/costing/server/compute.ts` |
+
+## Phases (in deadline order)
+
+### Phase 1 – due 25-11 11:00: §3 formula + §4 masters seeded + intake re-runs
+1. **Formula changes in `calc.ts`** (§3, §4.5, §4.6), with unit tests:
+   - Interest = credit days ÷ 30 × monthly % (1%) **of the selling value before GST**, shown as its own line. Solved in closed form:
+     P = B·(1+VA) / (1 − i·(1+VA)), where B is the base without interest and i = days/30 × %.
+   - VA: the default comes from a new `VA_PCT` master (12%). The docket override stays. N&B and bought-out lines use VA% unless their own margin is set.
+   - GI cost/kg black = labour (`GALV_RATE`) + zinc issue % (`ZINC_PCT`) × zinc rate (new `ZINC_RATE`) + transport (`GALV_TRANSPORT`). Zinc is inside the VA base.
+   - Pending masters no longer block costing. Minimum VA, LC/BG, inspection and packing are flagged "pending – 0 used". With no destination the docket is **ex-works** (freight 0), not "missing".
+2. **Migration** `cost_rates` + columns `rate_type` (ESTIMATE/QUOTE/PO/GRN/ACTUAL), `supplier`, `valid_to`, `update_freq_days`, `owner`.
+   The UI shows the rate type and marks overdue rates red. **Backup first.**
+3. **Seed script** `scripts/m14_load_rev2_masters.ts` (idempotent, `--dry`):
+   - RM: Anchal Ispat L1, 20-11 ESTIMATE (already loaded on 23-11; the script tags it with the rate type)
+   - GI: Solitare labour 3.80, zinc 3.8% IS, zinc Rs 379, transport 0.70 ESTIMATE
+   - N&B 93.50 Rs/kg PO (R G International), interest 1%/30 days, credit 45 days, VA 12%
+   - Kerf, end allowance and minimum VA stay pending
+4. Re-run intake 3 (AKS), Lanarsy (SBPDCL) and LCC (Chelligada) on the live app and take screenshots. *Manual step, in the browser.*
+
+### Phase 2 – due 25-11 13:00: §12 the 4 pending offers (drafts only)
+CEE-000535 Laser 2,550 kg · CEE-000534 NKC Sasaram (re-cost and show VA % of the manual prices 89/kg, 1,950/set, 115/kg, 650/no) ·
+CEE-000533 JSW Mahanadi pipe earthing 36 sets · KESCo DTR fencing (new docket from the 18-09 enquiry and Puja's BOM; per sqm, 1 enclosure = 28.8 sqm).
+For each: BOM → costing → cost sheet with ESTIMATE flags → offer (Quotation No. blank) → Gmail **draft** reply. Nothing is sent.
+
+### Phase 3 – plan + dates to Puja on 25-11: §2, §6, §7, §10, §11
+- §7 Docket discount: % or Rs (per kg / unit / lump sum), item-wise or whole docket, Admin only, with a reason. Effective VA after discount, red when below minimum VA. *(~1 day)*
+- §6 Effective-dated masters for sections, machines and settings. "Re-cost as on <date>". Back-dated changes never touch snapshots. *(~1 day)*
+- §11 Immutable quotation snapshot when an offer is approved or sent, plus "Costing history" (Rev 0, 1 …, live vs quoted). *(~1 day)*
+- §10 Indent: Excel output (INDENT / SECTION SUMMARY / CHANGES-HOLD / OFFCUT USED / NOTES) to the reference `indent_excel_rev3_offcut_reference.py`.
+  Acceptance: Lanarsy Rev 3 = 4,267 bars, 101.40 MT. Then LCC vs INDT/2627/0001, AKS drawing hold, and the machine master updated to the Rev 2 list. *(~2 days)*
+- §2 Enquiry automation: n8n classifier (ENQUIRY / PO / AMENDMENT / CLARIFICATION / OTHER) on info@, Gemini read, auto docket, BOM fallback chain, auto-cost + draft offer, tracker, escalations (WhatsApp via the notifier), 90-day backfill. *(~4–5 days)*
+
+### Phase 4 – 26-11 / 28-11: §5, §8, §9 (needs Vikas)
+- §5 Freight Master sync from the ERP freight-order tables (or Power BI executeQueries with a service principal):
+  vehicle and PIN masters, lane rate rules, trucks only for Ceebuild, full-load Rs/kg, alerts.
+- §8 ERP interlinks: indent → PO → GRN, PO/GRN rates feeding §4.1, stock, receivables and payables, order to execution.
+- §9 AD report one-time import with an exception list, then GI history (§4.3).
+- Blocked on table names and access from Vikas (mapping 26-11, first sync 28-11).
+
+## Blocked / pending inputs (shown blank-flagged)
+- Accounts: LC/BG charges, inspection, packing, minimum VA %
+- Satya ji: kerf / end allowance, 40 NB tube rate (16 vs 100), eye-bolt threading rate
+- Puja: galvaniser choice, GI transport rate, HSN 8310
+- Vikas: ERP / Power BI access
+
+## Status log
+- 24-11 evening – plan written. Phase 1 code done locally, 79/79 tests pass, typecheck clean (outside scratch/):
+  - `src/lib/costing/calc.ts`: Rev 2 interest (days/30 × % of selling value, closed form), `VA_PCT` default, GI = labour + zinc% × `ZINC_RATE` + transport, ex-works with no destination, pending masters non-blocking, N&B / bought-out margin falls back to VA %.
+  - `prisma/migrations/20261124180000_m14_rev2_rate_meta`: `cost_rates.rate_type`, `supplier`, `valid_to`, `update_freq_days`, `owner`. Tags the INTERIM rows as ESTIMATE.
+  - `master.ts` + `CostingMasterPage.tsx`: new fields, rate-type badge, "update overdue" in red.
+  - `scripts/m14_load_rev2_masters.ts`: GI, zinc, N&B, finance and VA seeds.
+  - Live check (read-only): live has only RM (12 rows, 20-11 Anchal) and FAB (14 rows). No N&B margin, so N&B takes VA 12%.
+- **Waiting for go-ahead:** pg_dump → `prisma migrate deploy` → seed `--dry` then real → commit and push (CI deploys to the server).
+- Still to do in Phase 1: RM family fallback (size row → family row, e.g. all angles 50.00 when the size is not on the purchase list); intake re-run screenshots.
