@@ -4,6 +4,8 @@ When an offer (docket) becomes a PO, an **order** is created from it. The order 
 snapshot of the docket's quotation lines, the client BOM (piece list) and the after-fabrication
 registers. Screens: `/orders`, `/orders/<id>`, `/execution`, `/admin/sections`.
 
+PO intake (Add Order = attach PO copy, M15): see `docs/PO_INTAKE.md`.
+
 Built now: step 0 (order from PO), step 1 (BOM import + check) and step 5 (galvanising,
 inspection/MC, DI, dispatch). **Not built yet:** step 2 (RM indent / cutting plan), step 3 (RM
 receipt + re-plan) and step 4 (machine production plan). They wait for Puja's prototype, the

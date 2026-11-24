@@ -24,6 +24,8 @@ export async function proxy(req: NextRequest) {
 
   // NextAuth's own endpoints (sign-in, sign-out, session) do their own CSRF checks.
   if (pathname.startsWith('/api/auth/')) return NextResponse.next();
+  // n8n endpoints check their own API key (src/lib/n8n.ts).
+  if (pathname.startsWith('/api/n8n/')) return NextResponse.next();
 
   const session = await getToken({ req, secret: process.env.AUTH_SECRET });
 
@@ -60,7 +62,9 @@ export async function proxy(req: NextRequest) {
 
 export const config = {
   // Everything except Next.js internals and static files in /public.
-  matcher: ['/((?!_next/static|_next/image|favicon\\.ico|icon\\.png|ceebuild-logo\\.png|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|woff2?)$).*)'],
+  // /api/n8n/* is left out: n8n calls it with its own API key (checked in the route), and its PO
+  // payloads (base64 files) are larger than the proxy body limit.
+  matcher: ['/((?!api/n8n/|_next/static|_next/image|favicon\\.ico|icon\\.png|ceebuild-logo\\.png|.*\\.(?:png|jpg|jpeg|gif|svg|ico|webp|woff2?)$).*)'],
 };
 
 // LEGACY (custom cookie auth, replaced by NextAuth on 2026-11-17). Kept for reference only; not used.

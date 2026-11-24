@@ -32,6 +32,7 @@ export const initialTable: TableState = {
 /** Tabs of the order page, in business-process order (see src/modules/orders/ui/OrderPage.tsx). */
 export type OrderTab =
   | 'summary'
+  | 'po'
   | 'bom'
   | 'indent'
   | 'receipt'

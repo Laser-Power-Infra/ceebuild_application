@@ -27,6 +27,7 @@ const ALERTS: Field[] = [
   { key: 'diAlertDays', label: 'DI alert after MC', unit: 'days', help: 'Flag an inspected order with no DI this long after the MC.' },
   { key: 'paymentTermsDays', label: 'Payment terms', unit: 'days', help: 'Default invoice due date = invoice date + this.' },
   { key: 'workDaysPerWeek', label: 'Working days per week', unit: 'days', help: 'Used to turn machine load into calendar days.' },
+  { key: 'leadTimeDays', label: 'Standard lead time', unit: 'days', help: 'New PO check: a delivery date earlier than today + this is flagged.' },
 ];
 
 /** Admin form for plan_settings; read-only for everyone else. */

@@ -13,6 +13,8 @@ export interface PlanSettingsValues {
   diAlertDays: number;
   paymentTermsDays: number;
   workDaysPerWeek: number;
+  /** M15: standard lead time (days); a PO delivery date earlier than today + this is flagged. */
+  leadTimeDays: number;
   /** False until the plant signs the values off; UI shows "to confirm". */
   confirmed: boolean;
   updatedByName: string | null;

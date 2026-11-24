@@ -145,6 +145,60 @@ model Order {
   createdAt     DateTime        @default(now()) @map("created_at")
   updatedAt     DateTime        @updatedAt @map("updated_at")
 
+  // ---- M15: read from the PO copy (Add Order = attach PO copy). All optional; see docs/PO_INTAKE.md.
+  // PO_COPY (read from the attached PO) | MANUAL (typed, older orders)
+  poSource         String?   @map("po_source")
+  customerGstin    String?   @map("customer_gstin")
+  billingAddress   String?   @map("billing_address")
+  deliveryAddress  String?   @map("delivery_address")
+  amendmentNo      String?   @map("amendment_no")
+  amendmentDate    DateTime? @map("amendment_date") @db.Date
+  endClient        String?   @map("end_client")
+  state            String?
+  project          String?
+  scheme           String?
+  contactPerson    String?   @map("contact_person")
+  contactEmail     String?   @map("contact_email")
+  contactPhone     String?   @map("contact_phone")
+  basicValue       Decimal?  @map("basic_value") @db.Decimal(16, 2)
+  gstPct           Decimal?  @map("gst_pct") @db.Decimal(6, 2)
+  gstAmount        Decimal?  @map("gst_amount") @db.Decimal(16, 2)
+  // Total value incl. GST as printed on the PO (contractValue is set from it on Confirm).
+  totalValue       Decimal?  @map("total_value") @db.Decimal(16, 2)
+  priceBasis       String?   @map("price_basis")
+  freight          String?
+  paymentTerms     String?   @map("payment_terms")
+  advancePct       Decimal?  @map("advance_pct") @db.Decimal(6, 2)
+  creditDays       Int?      @map("credit_days")
+  // Delivery schedule / phasing as written; the completion date goes to deliveryDue.
+  deliverySchedule String?   @map("delivery_schedule")
+  ldPenalty        String?   @map("ld_penalty")
+  pbgPct           Decimal?  @map("pbg_pct") @db.Decimal(6, 2)
+  sdPct            Decimal?  @map("sd_pct") @db.Decimal(6, 2)
+  warranty         String?
+  inspection       String?
+  testCertificates String?   @map("test_certificates")
+  galvSpec         String?   @map("galv_spec")
+  bomRef           String?   @map("bom_ref")
+  drawingRef       String?   @map("drawing_ref")
+  approvalLetterNo String?   @map("approval_letter_no")
+  // What the PO says about the drawing: APPROVED | TO_BE_APPROVED | NOT_STATED
+  drawingStatus    String?   @map("drawing_status")
+  // AI reading kept as read: {model, at, fields: {key: {value, confidence, note}}, lines: [...]}.
+  poExtract        Json?     @map("po_extract")
+  // Hold: BOM/drawing waits for client confirmation. The indent job stops while it is set.
+  onHold           Boolean   @default(false) @map("on_hold")
+  holdReason       String?   @map("hold_reason")
+  holdSince        DateTime? @map("hold_since")
+  holdByName       String?   @map("hold_by_name")
+  // Indent job (BOM -> drawing -> indent) started on Confirm: last result.
+  // ON_HOLD | BOM_NEEDED | BOM_FLAGS | DRAWING_PENDING | INDENT_DRAFTED | FAILED
+  jobStatus        String?   @map("job_status")
+  jobNote          String?   @map("job_note")
+  jobAt            DateTime? @map("job_at")
+
+  poLines              OrderPoLine[]
+  documents            OrderDocument[]
   lines                OrderLine[]
   rmIndents            RmIndent[]
   rmReceipts           RmReceipt[]
@@ -182,6 +236,77 @@ model OrderLine {
 
   @@index([orderId])
   @@map("order_lines")
+}
+
+// M15: one line of the PO as printed (kept apart from order_lines, the quotation snapshot).
+model OrderPoLine {
+  id           Int      @id @default(autoincrement())
+  orderId      Int      @map("order_id")
+  order        Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  lineNo       Int      @map("line_no")
+  description  String
+  hsn          String?
+  // MT | KG | NOS | SETS | KM | MTR | ... (normalised)
+  unit         String?
+  qty          Decimal? @db.Decimal(16, 3)
+  unitRate     Decimal? @map("unit_rate") @db.Decimal(16, 2)
+  lineValue    Decimal? @map("line_value") @db.Decimal(16, 2)
+  // Allowed quantity variation, e.g. 25 for +/-25 %.
+  qtyVarPct    Decimal? @map("qty_var_pct") @db.Decimal(6, 2)
+  // Our quoted rate for the matching docket item (quotation module), when one matched.
+  quotedRate   Decimal? @map("quoted_rate") @db.Decimal(16, 2)
+  quotedItemId Int?     @map("quoted_item_id")
+
+  @@index([orderId])
+  @@map("order_po_lines")
+}
+
+// M15: a file kept against an order (PO copy, BOM, drawing). intakeId is set while it is
+// still being reviewed; orderId once the order is confirmed.
+model OrderDocument {
+  id             Int       @id @default(autoincrement())
+  orderId        Int?      @map("order_id")
+  order          Order?    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  intakeId       Int?      @map("intake_id")
+  intake         PoIntake? @relation(fields: [intakeId], references: [id], onDelete: SetNull)
+  // PO | BOM | DRAWING | OTHER
+  kind           String
+  fileName       String    @map("file_name")
+  s3Key          String?   @map("s3_key")
+  mimeType       String?   @map("mime_type")
+  sizeBytes      Int?      @map("size_bytes")
+  // UPLOAD | MAILBOX
+  source         String    @default("UPLOAD")
+  gmailMessageId String?   @map("gmail_message_id")
+  uploadedByName String?   @map("uploaded_by_name")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@index([orderId])
+  @@index([intakeId])
+  @@map("order_documents")
+}
+
+// M15: one "Add Order" attempt: the attached PO copy, what the AI read, and its outcome.
+model PoIntake {
+  id             Int       @id @default(autoincrement())
+  // EXTRACTED | CONFIRMED | DISCARDED | FAILED
+  status         String    @default("EXTRACTED")
+  // UPLOAD | MAILBOX
+  source         String    @default("UPLOAD")
+  gmailMessageId String?   @map("gmail_message_id")
+  mailSubject    String?   @map("mail_subject")
+  model          String?
+  extracted      Json?
+  error          String?
+  orderId        Int?      @map("order_id")
+  createdById    Int?      @map("created_by_id")
+  createdByName  String?   @map("created_by_name")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  confirmedAt    DateTime? @map("confirmed_at")
+
+  documents OrderDocument[]
+
+  @@map("po_intakes")
 }
 
 // One uploaded client BOM file. The order's current BOM is its latest upload.
@@ -395,6 +520,8 @@ model PlanSettings {
   diAlertDays      Int      @default(7) @map("di_alert_days")
   paymentTermsDays Int      @default(30) @map("payment_terms_days")
   workDaysPerWeek  Int      @default(6) @map("work_days_per_week")
+  // M15: standard lead time; a PO delivery date earlier than today + this is flagged.
+  leadTimeDays     Int      @default(45) @map("lead_time_days")
   confirmed        Boolean  @default(false)
   updatedByName    String?  @map("updated_by_name")
   updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")

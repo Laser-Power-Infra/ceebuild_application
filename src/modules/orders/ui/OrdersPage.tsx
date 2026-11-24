@@ -45,9 +45,17 @@ export function OrdersPage({ role }: { role: string }) {
         )}
         toolbar={
           canEditRole(role) ? (
-            <Button onClick={() => setCreating(true)}>
-              <Plus /> New order
-            </Button>
+            <div className="flex gap-2">
+              {/* M15: an order is added by attaching the PO copy; typed entry stays for Admins (old POs, no copy). */}
+              <Button onClick={() => router.push('/orders/new')}>
+                <Plus /> Add order (attach PO)
+              </Button>
+              {role === 'Admin' && (
+                <Button variant="outline" onClick={() => setCreating(true)}>
+                  Manual entry
+                </Button>
+              )}
+            </div>
           ) : (
             <span className="text-xs text-slate-500">Sign in to create orders</span>
           )

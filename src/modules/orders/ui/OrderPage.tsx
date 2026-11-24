@@ -18,11 +18,13 @@ import { ReceiptTab } from '@/modules/rm/ui/ReceiptTab';
 import { OrderProductionTab } from '@/modules/production/ui/OrderProductionTab';
 import { BillingTab } from '@/modules/billing/ui/BillingTab';
 import type { OrderDetail } from '../server/query';
-import { ORDER_STATUSES } from '../columns';
+import { HOLD_STATUS, ORDER_STATUSES } from '../columns';
+import { OrderPoTab } from '@/modules/poIntake/ui/OrderPoTab';
 
 // Business-process order: plan -> make -> inspect/galvanise -> ship -> bill.
 const TABS: { key: OrderTab; label: string }[] = [
   { key: 'summary', label: 'Summary' },
+  { key: 'po', label: 'PO details' },
   { key: 'bom', label: 'BOM' },
   { key: 'indent', label: 'RM Indent' },
   { key: 'receipt', label: 'RM Receipt & Re-plan' },
@@ -58,6 +60,8 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
   }, [dispatch]);
 
   const step = ORDER_STATUSES.indexOf(order.status as (typeof ORDER_STATUSES)[number]);
+  // The hold is a pause, not a step: shown in the bar only while the order is on hold.
+  const steps = ORDER_STATUSES.map((s, i) => ({ s, i })).filter(({ s }) => s !== HOLD_STATUS || order.status === HOLD_STATUS);
 
   return (
     <div className="flex flex-col gap-4">
@@ -93,16 +97,35 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
       <FormError error={error} />
 
       <ol className="flex flex-wrap gap-1" aria-label="Order status">
-        {ORDER_STATUSES.map((s, i) => (
+        {steps.map(({ s, i }) => (
           <li
             key={s}
             aria-current={i === step ? 'step' : undefined}
-            className={`rounded-full px-3 py-1 text-[11px] font-bold ${i < step ? 'bg-emerald-100 text-emerald-800' : i === step ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500'}`}
+            className={`rounded-full px-3 py-1 text-[11px] font-bold ${i < step ? 'bg-emerald-100 text-emerald-800' : i === step ? (s === HOLD_STATUS ? 'bg-amber-500 text-white' : 'bg-blue-600 text-white') : 'bg-slate-100 text-slate-500'}`}
           >
             {s}
           </li>
         ))}
       </ol>
+
+      {order.onHold && (
+        <button
+          type="button"
+          onClick={() => dispatch(opsActions.setOrderTab('po'))}
+          className="rounded-lg border border-amber-400 bg-amber-50 px-3 py-2 text-left text-xs font-bold text-amber-900"
+        >
+          {HOLD_STATUS}{order.holdReason ? `: ${order.holdReason}` : ''} (open PO details to release)
+        </button>
+      )}
+      {!order.onHold && order.jobStatus && order.jobStatus !== 'INDENT_DRAFTED' && (
+        <button
+          type="button"
+          onClick={() => dispatch(opsActions.setOrderTab('po'))}
+          className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-left text-xs text-slate-700"
+        >
+          Indent job: {order.jobNote?.split(/\r?\n/)[0]}
+        </button>
+      )}
 
       <div className="flex flex-wrap gap-3">
         <Kpi label="Quoted MT" value={fmtNum(order.quotedMt, 3)} />
@@ -127,6 +150,7 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
 
       <div role="tabpanel">
         {tab === 'summary' && <OrderSummaryTab order={order} role={role} onChanged={reloadOrder} />}
+        {tab === 'po' && <OrderPoTab orderId={order.id} role={role} onChanged={reloadOrder} />}
         {tab === 'bom' && <BomTab orderId={order.id} role={role} quotedMt={order.quotedMt} onChanged={reloadOrder} />}
         {tab === 'indent' && <IndentTab orderId={order.id} role={role} onChanged={reloadOrder} />}
         {tab === 'receipt' && <ReceiptTab orderId={order.id} role={role} onChanged={reloadOrder} />}

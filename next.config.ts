@@ -11,7 +11,9 @@ const nextConfig: NextConfig = {
     // Client BOM workbooks are sent to Server Actions (limit checked again in modules/bom/server/workbook.ts).
     serverActions: { bodySizeLimit: '21mb' },
     // proxy.ts buffers matched request bodies; keep its limit in line with the Server Action limit.
-    proxyClientMaxBodySize: '21mb',
+    // Next 16.4.6 reads `proxyClientMaxBodySize` (the old `middlewareClientMaxBodySize` is deprecated)
+    // but its type file still only lists the old name, so the key is spread in to pass `next build`.
+    ...({ proxyClientMaxBodySize: '21mb' } as object),
   },
 };
 

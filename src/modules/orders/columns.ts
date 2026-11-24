@@ -26,9 +26,13 @@ export interface OrdersMeta {
   outstandingRs: number;
 }
 
+/** M15: BOM/drawing waits for the client; set on the order (hold flag), shown instead of the BOM steps. */
+export const HOLD_STATUS = 'BOM/drawing on hold – awaiting client confirmation';
+
 /** Order lifecycle, in sequence (derived in SQL: src/modules/orders/server/query.ts). */
 export const ORDER_STATUSES = [
   'PO received',
+  HOLD_STATUS,
   'BOM uploaded',
   'BOM correct',
   'RM indented',

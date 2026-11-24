@@ -20,6 +20,7 @@ const DEFAULTS: PlanSettingsValues = {
   diAlertDays: 7,
   paymentTermsDays: 30,
   workDaysPerWeek: 6,
+  leadTimeDays: 45,
   confirmed: false,
   updatedByName: null,
   updatedAt: null,
@@ -43,6 +44,7 @@ export async function getPlanSettings(): Promise<PlanSettingsValues> {
     diAlertDays: row.diAlertDays,
     paymentTermsDays: row.paymentTermsDays,
     workDaysPerWeek: row.workDaysPerWeek,
+    leadTimeDays: row.leadTimeDays,
     confirmed: row.confirmed,
     updatedByName: row.updatedByName,
     updatedAt: row.updatedAt.toISOString(),
@@ -62,6 +64,7 @@ const INT_FIELDS: { key: keyof PlanSettingsValues; label: string; min: number; m
   { key: 'diAlertDays', label: 'DI alert (days after MC)', min: 1, max: 365 },
   { key: 'paymentTermsDays', label: 'Payment terms (days)', min: 0, max: 365 },
   { key: 'workDaysPerWeek', label: 'Working days per week', min: 1, max: 7 },
+  { key: 'leadTimeDays', label: 'Standard lead time (days)', min: 1, max: 365 },
 ];
 
 /** Admin-only update; every changed value goes to the audit log. */

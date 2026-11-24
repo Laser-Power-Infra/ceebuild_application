@@ -1,4 +1,5 @@
 import 'server-only';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
@@ -18,10 +19,18 @@ export async function createOrder(input: NewOrderInput, user: AuthUser) {
   const poNumber = input.poNumber.trim();
   if (!poNumber || poNumber.length > 100) throw new UserError('PO number is required (max 100 characters).');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.poDate) || Number.isNaN(Date.parse(input.poDate))) throw new UserError('PO date is required.');
+  return prisma.$transaction((tx) => createOrderInTx(tx, { ...input, poNumber }, user), { timeout: 30_000 });
+}
+
+/**
+ * The order + quotation snapshot + quotation BOM, inside the caller's transaction. Shared by the
+ * typed form (createOrder) and the PO-copy intake (M15), which adds the PO fields afterwards.
+ */
+export async function createOrderInTx(tx: Prisma.TransactionClient, input: NewOrderInput & { poSource?: string }, user: AuthUser) {
+  const poNumber = input.poNumber.trim();
   const client = input.client?.trim().slice(0, 200) || null;
   const remarks = input.remarks?.trim().slice(0, 1000) || null;
-
-  return prisma.$transaction(async (tx) => {
+  {
     const docket = await tx.dockerPartyName.findUnique({ where: { id: input.docketId } });
     if (!docket) throw new UserError('Docket not found.');
     if (await tx.order.findUnique({ where: { poNumber } })) throw new UserError(`PO ${poNumber} already has an order.`);
@@ -38,6 +47,7 @@ export async function createOrder(input: NewOrderInput, user: AuthUser) {
         poDate: new Date(`${input.poDate}T00:00:00Z`),
         client: client ?? docket.partyName,
         remarks,
+        poSource: input.poSource ?? 'MANUAL',
         createdById: user.id,
         createdByName: user.name,
         lines: {
@@ -67,7 +77,7 @@ export async function createOrder(input: NewOrderInput, user: AuthUser) {
     // M14: the BOM the quotation was costed on becomes the order's first BOM (draft, re-checked).
     const bom = await copyQuotationBomToOrder(tx, order.id, items.map((i) => i.id), user);
     return { id: order.id, quotationBom: bom };
-  });
+  }
 }
 
 /** Admin only (checked by the action). Deletes the order and everything under it; the audit row keeps a snapshot. */

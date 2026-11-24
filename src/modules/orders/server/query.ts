@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { fetchFacet, fetchPage, num, plain, type TableSpec } from '@/lib/serverTable';
 import type { TablePage, TableQuery } from '@/components/data-table/types';
-import type { OrderRow, OrdersMeta } from '../columns';
+import { HOLD_STATUS, type OrderRow, type OrdersMeta } from '../columns';
 
 const sql = Prisma.sql;
 
@@ -60,6 +60,7 @@ export const STATUS_SQL = sql`(CASE
   WHEN s.in_production THEN 'In production'
   WHEN s.rm_received THEN 'RM received'
   WHEN s.indent_issued THEN 'RM indented'
+  WHEN o.on_hold THEN ${Prisma.raw(`'${HOLD_STATUS.replace(/'/g, "''")}'`)}
   WHEN s.bom_status = 'CORRECT' THEN 'BOM correct'
   WHEN s.bom_status IS NOT NULL THEN 'BOM uploaded'
   ELSE 'PO received' END)`;
@@ -124,6 +125,12 @@ export interface OrderDetail {
   deliveryDue: string | null;
   createdByName: string | null;
   createdAt: string;
+  /** M15: PO_COPY when the order was read from the attached PO. */
+  poSource: string | null;
+  onHold: boolean;
+  holdReason: string | null;
+  jobStatus: string | null;
+  jobNote: string | null;
   lines: { id: number; itemName: string | null; ourItemName: string | null; uom: string | null; qty: string | null; price: string | null; weightPerPiece: string | null }[];
 }
 
@@ -135,7 +142,9 @@ export async function getOrder(id: number): Promise<OrderDetail | null> {
       round(s.quoted_mt::numeric, 3)::float AS "quotedMt", round((s.bom_wt / 1000)::numeric, 3)::float AS "bomMt",
       round((s.disp_wt / 1000)::numeric, 3)::float AS "dispatchedMt", s.bom_status AS "bomStatus",
       o.contract_value::float AS "contractValue", to_char(o.delivery_due, 'YYYY-MM-DD') AS "deliveryDue",
-      o.created_by_name AS "createdByName", o.created_at AS "createdAt"
+      o.created_by_name AS "createdByName", o.created_at AS "createdAt",
+      o.po_source AS "poSource", o.on_hold AS "onHold", o.hold_reason AS "holdReason",
+      o.job_status AS "jobStatus", o.job_note AS "jobNote"
     FROM orders o JOIN "docket-party-name" d ON d.id = o.docket_id ${ORDER_STATS}
     WHERE o.id = ${id}`);
   if (!rows[0]) return null;
