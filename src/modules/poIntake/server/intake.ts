@@ -10,7 +10,7 @@ import { downloadAttachmentByName } from '@/lib/mailbox';
 import { normalizeDocketNo } from '@/lib/dockets';
 import { PO_FIELDS, type PoExtraction, type PoFieldKey, type PoLineDraft, type PoPendingItem } from '@/lib/po/fields';
 import { enrichExtraction } from '@/lib/po/enrich';
-import { normaliseLine, poKey, companyTokens } from '@/lib/po/normalise';
+import { guardOwnFields, normaliseLine, poKey, companyTokens } from '@/lib/po/normalise';
 import { matchQuotedItems, rankDockets, runPoChecks, type DocketCandidate } from '@/lib/po/checks';
 import { getPlanSettings } from '@/modules/settings/server';
 import { createOrderInTx } from '@/modules/orders/server/mutations';
@@ -241,7 +241,7 @@ export async function getIntakeReview(intakeId: number): Promise<IntakeReview> {
   const settings = await getPlanSettings();
   // HSN from the item master, GST "as per law", proposed delivery date (all yellow until accepted).
   const { extraction, proposedCompletion } = enrichExtraction(stored, { leadTimeDays: settings.leadTimeDays });
-  const f = extraction.fields;
+  const f = guardOwnFields(extraction.fields); // also cleans readings saved before the guard existed
   // The drawing status must agree with what is still pending at the latest mail.
   const pending = extraction.pending ?? [];
   const drawingPending = pending.filter((p) => DRAWING_ITEM.test(p.item));

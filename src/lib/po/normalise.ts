@@ -276,6 +276,18 @@ export function ownCompanyHit(value: string | null | undefined, own: OwnContacts
 const CUSTOMER_FIELDS: PoFieldKey[] = ['customerName', 'customerGstin', 'billingAddress', 'contactPerson', 'contactEmail', 'contactPhone'];
 
 /**
+ * Blank (and mark yellow) every customer field that holds our own company / person / phone / email.
+ * Runs when a PO is read AND when a saved reading is opened, so older readings are cleaned too.
+ */
+export function guardOwnFields(fields: Record<PoFieldKey, PoFieldValue>, own: OwnContacts = ownContactsFromEnv()) {
+  for (const k of CUSTOMER_FIELDS) {
+    const why = fields[k] ? ownCompanyHit(fields[k].value, own) : null;
+    if (why) fields[k] = { value: null, confidence: 'missing', note: `AI read "${fields[k].value}" – ${why}; enter the customer's own` };
+  }
+  return fields;
+}
+
+/**
  * Drawing / GTP field: keep only drawing or GTP numbers. An item list ("G.I. Wire 4.00 mm; Danger sign
  * plate ...") is not a drawing number. Returns the kept numbers, or null.
  */
@@ -346,10 +358,7 @@ export function normaliseExtraction(raw: RawExtraction, model: string, at = new 
   for (const f of PO_FIELDS) fields[f.key] = normaliseField(f.type, rawFields[f.key]);
 
   // Our own name / person / phone / email in a customer field: blank it and show it yellow.
-  for (const k of CUSTOMER_FIELDS) {
-    const why = ownCompanyHit(fields[k].value);
-    if (why) fields[k] = { value: null, confidence: 'missing', note: `AI read "${fields[k].value}" – ${why}; enter the customer's own` };
-  }
+  guardOwnFields(fields);
   // Drawing / GTP no.: numbers only, never an item list.
   if (fields.drawingRef.value) {
     const d = drawingNumbersOnly(fields.drawingRef.value);
