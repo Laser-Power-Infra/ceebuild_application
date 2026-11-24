@@ -355,3 +355,20 @@ test('GM #8/#9/#11: HSN from the item master, GST 18% as per law, proposed deliv
   const hsn = runPoChecks({ fields: { customerName: 'A', poNumber: 'P', poDate: '2026-09-29' }, lines: e.lines, today: '2026-09-29', leadTimeDays: 45 }).filter((c) => c.code === 'HSN');
   assert.deepEqual(hsn.map((c) => c.target), ['line:1']);
 });
+
+test('Gemini schema stays at its size limit: document types / pending / latest come back as tagged warnings', () => {
+  const e = normaliseExtraction(
+    {
+      documentType: 'REVISED_OR_AMENDED_PO',
+      fields: {},
+      lines: [],
+      bomPieces: [],
+      warnings: ['DOC: OFFER | Revised Price.pdf', 'DOC: PO | Buyer PO 14(A).pdf', 'PENDING: Drawing confirmation | 16-11-2026 | Buyer', 'LATEST: 16-11-2026: revised PO issued; drawing pending', 'Total differs by Rs 1'],
+    },
+    'test',
+  );
+  assert.deepEqual(e.documents?.map((d) => [d.type, d.name]), [['OFFER', 'Revised Price.pdf'], ['PO', 'Buyer PO 14(A).pdf']]);
+  assert.deepEqual(e.pending, [{ item: 'Drawing confirmation', since: '2026-11-16', by: 'Buyer' }]);
+  assert.equal(e.latestPosition, '16-11-2026: revised PO issued; drawing pending');
+  assert.deepEqual(e.warnings, ['Total differs by Rs 1']);
+});

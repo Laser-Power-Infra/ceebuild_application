@@ -38,21 +38,11 @@ export const PO_SCHEMA = {
       },
     },
     warnings: { type: 'ARRAY', items: { type: 'STRING' } },
-    documents: {
-      type: 'ARRAY',
-      items: {
-        type: 'OBJECT',
-        properties: { name: { type: 'STRING' }, type: { type: 'STRING', enum: ['PO', 'OFFER', 'BOM', 'DRAWING', 'GTP', 'LETTER', 'OTHER'] }, note: S },
-        required: ['name', 'type'],
-      },
-    },
-    pending: {
-      type: 'ARRAY',
-      items: { type: 'OBJECT', properties: { item: { type: 'STRING' }, since: S, by: S }, required: ['item'] },
-    },
-    latestPosition: S,
+    // Do NOT add properties: this schema is exactly at Gemini's size limit ("too many states for
+    // serving" with even one more string, tested 24-11-2026). Document types, pending items and the
+    // latest position come back as tagged warnings ("DOC: ", "PENDING: ", "LATEST: "), split in normalise.ts.
   },
-  required: ['documentType', 'fields', 'lines', 'bomPieces', 'warnings', 'documents', 'pending', 'latestPosition'],
+  required: ['documentType', 'fields', 'lines', 'bomPieces', 'warnings'],
 };
 
 export function buildPrompt(today: string) {
@@ -64,7 +54,13 @@ drawing / GTP, a BOM, and sometimes OUR OWN price offer). Today is ${today}.
 
 Return JSON matching the schema.
 
-documents - one entry per attached document, by its file name as given ("Document n (KIND): name"): type PO = the customer's
+Besides real warnings, the "warnings" array carries tagged lines (exact prefixes, one per line item):
+- "DOC: TYPE | file name" - one per attached document (file name exactly as given in "Document n (KIND): name"),
+  e.g. "DOC: OFFER | AKS_Revised Price.pdf".
+- "PENDING: item | dd-mm-yyyy | who must act" - see pending below.
+- "LATEST: dd-mm-yyyy: ..." - see latestPosition below (one line at most).
+
+Document TYPE is one of: PO = the customer's
 purchase / work order or its revision / corrigendum; OFFER = a price offer / quotation / revised price list made by US (Ceebuild /
 Laser letterhead or signature, addressed to the customer) - even when its file name says "revised"; BOM, DRAWING, GTP, LETTER,
 OTHER. Read EVERY PO field and EVERY PO line (prices, quantities, values, terms) ONLY from the PO document(s). Never take a
@@ -98,11 +94,12 @@ the PO documents; from the mail take only the customer's contact (signature), dr
 - drawingStatus: the status at the latest message that speaks about drawings / GTP / BOM. If a later mail says the customer's
   drawing / GTP / BOM confirmation or approval is still awaited, it is TO_BE_APPROVED even if an older mail or the PO says
   "approved". note = the date and gist of the deciding message, e.g. "16-11-2026: AKS drawing confirmation still pending".
-- pending - what is still open at the latest message (drawing / GTP / BOM confirmation, price agreement, advance, inspection
-  call ...): item = short text, since = date of the message that says it is open (dd-mm-yyyy), by = who must act. Leave out
-  anything a later message closed. Empty array when nothing is open.
-- latestPosition - one or two sentences: the position at the latest message, starting with its date (dd-mm-yyyy).
-- warnings only for CURRENT issues (not superseded ones).
+- pending ("PENDING: " lines) - what is still open at the latest message (drawing / GTP / BOM confirmation, price agreement, advance, inspection
+  call ...), one line each: "PENDING: item | dd-mm-yyyy | who must act" (the date of the message that says it is open),
+  e.g. "PENDING: Drawing confirmation | 16-11-2026 | AKS". Leave out anything a later message closed. None when nothing is open.
+- latestPosition ("LATEST: " line) - one or two sentences: the position at the latest message, starting with its date
+  (dd-mm-yyyy). None when there is no mail thread.
+- other (untagged) warnings only for CURRENT issues (not superseded ones).
 
 documentType - what the main document is. A PO issued BY Ceebuild to its own supplier (Ceebuild is the buyer), an
 invoice, a quotation or a letter is NOT_A_PO. warnings - anything the reviewer must know (illegible pages, two different

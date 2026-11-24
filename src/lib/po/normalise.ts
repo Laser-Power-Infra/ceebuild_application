@@ -216,8 +216,10 @@ export interface RawExtraction {
   lines?: RawLine[];
   bomPieces?: RawPiece[];
   warnings?: unknown[];
-  documents?: { name?: unknown; type?: unknown; note?: unknown }[];
-  pending?: { item?: unknown; since?: unknown; by?: unknown }[];
+  /** "TYPE | file name" strings (or objects from older readings). */
+  documents?: (string | { name?: unknown; type?: unknown; note?: unknown })[];
+  /** "item | dd-mm-yyyy | who" strings (or objects). */
+  pending?: (string | { item?: unknown; since?: unknown; by?: unknown })[];
   latestPosition?: unknown;
 }
 
@@ -373,23 +375,39 @@ export function normaliseExtraction(raw: RawExtraction, model: string, at = new 
 
   const lines = (Array.isArray(raw.lines) ? raw.lines : []).map(normaliseLine).filter((l): l is PoLineDraft => !!l).slice(0, 500);
   const bomPieces = (Array.isArray(raw.bomPieces) ? raw.bomPieces : []).map(normalisePiece).filter((p): p is PoBomPiece => !!p).slice(0, 3000);
-  const warnings = (Array.isArray(raw.warnings) ? raw.warnings : []).map(str).filter((w): w is string => !!w).slice(0, 20);
-  const documents: PoDocumentRead[] = (Array.isArray(raw.documents) ? raw.documents : [])
+  // Tagged warning lines carry the document types, pending items and latest position (the Gemini
+  // schema has no room for more properties - see extract.ts).
+  const allWarnings = (Array.isArray(raw.warnings) ? raw.warnings : []).map(str).filter((w): w is string => !!w);
+  const tagged = (tag: string) => allWarnings.filter((w) => w.toUpperCase().startsWith(`${tag}:`)).map((w) => w.slice(tag.length + 1).trim());
+  const warnings = allWarnings.filter((w) => !/^(DOC|PENDING|LATEST):/i.test(w)).slice(0, 20);
+  const rawDocs = [...(Array.isArray(raw.documents) ? raw.documents : []), ...tagged('DOC')];
+  const rawPending = [...(Array.isArray(raw.pending) ? raw.pending : []), ...tagged('PENDING')];
+  const documents: PoDocumentRead[] = rawDocs
     .map((d): PoDocumentRead | null => {
-      const name = str(d?.name);
-      const type = String(d?.type ?? '').toUpperCase();
-      return name ? { name: name.slice(0, 255), type: (DOC_TYPES.has(type) ? type : 'OTHER') as PoDocumentRead['type'], note: str(d?.note)?.slice(0, 300) ?? null } : null;
+      let name: string | null;
+      let type: string;
+      let note: string | null = null;
+      if (typeof d === 'string') {
+        const [t, ...rest] = d.split('|');
+        type = t.trim().toUpperCase();
+        name = str(rest.join('|'));
+      } else {
+        name = str(d?.name);
+        type = String(d?.type ?? '').toUpperCase();
+        note = str(d?.note);
+      }
+      return name ? { name: name.slice(0, 255), type: (DOC_TYPES.has(type) ? type : 'OTHER') as PoDocumentRead['type'], note: note?.slice(0, 300) ?? null } : null;
     })
     .filter((d): d is PoDocumentRead => !!d)
     .slice(0, 20);
-  const pending: PoPendingItem[] = (Array.isArray(raw.pending) ? raw.pending : [])
+  const pending: PoPendingItem[] = rawPending
     .map((p): PoPendingItem | null => {
-      const item = str(p?.item);
-      return item ? { item: item.slice(0, 300), since: parseDate(str(p?.since)), by: str(p?.by)?.slice(0, 120) ?? null } : null;
+      const [item, since, by] = typeof p === 'string' ? p.split('|').map((x) => str(x)) : [str(p?.item), str(p?.since), str(p?.by)];
+      return item ? { item: item.slice(0, 300), since: parseDate(since), by: by?.slice(0, 120) ?? null } : null;
     })
     .filter((p): p is PoPendingItem => !!p)
     .slice(0, 10);
-  const latestPosition = str(raw.latestPosition)?.slice(0, 1000) ?? null;
+  const latestPosition = (str(raw.latestPosition) ?? tagged('LATEST')[0] ?? null)?.slice(0, 1000) ?? null;
   return { fields, lines, bomPieces, documentType: str(raw.documentType), warnings, documents, pending, latestPosition, model, at };
 }
 
