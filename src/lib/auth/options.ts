@@ -15,20 +15,20 @@ import { isRole, type Role } from './session';
 import { CF_ACCESS_ENABLED, verifyCloudflareAccessJwt } from './cloudflareAccess';
 
 // "Sign in with Google" is on only when both are set (Google Cloud OAuth client, redirect URI
-// <NEXTAUTH_URL>/api/auth/callback/google). Google and Cloudflare Access sign-in are limited to the
-// company's own email domains: GOOGLE_ALLOWED_DOMAINS="a.com,b.com" (default below). It can never be
-// empty, so an outside Gmail / other-company account can never sign in or get an account this way.
+// <NEXTAUTH_URL>/api/auth/callback/google). Any verified Google account may sign in (outside
+// domains too, like the open /signup); a new email gets a User-role account. Optional
+// GOOGLE_ALLOWED_DOMAINS="a.com,b.com" limits Google and Cloudflare Access sign-in to those domains.
 const GOOGLE_ENABLED = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-const DEFAULT_ALLOWED_DOMAINS = 'laserpowerinfra.com,ceebuildcompany.com';
-const GOOGLE_ALLOWED_DOMAINS = (process.env.GOOGLE_ALLOWED_DOMAINS || DEFAULT_ALLOWED_DOMAINS)
+const GOOGLE_ALLOWED_DOMAINS = (process.env.GOOGLE_ALLOWED_DOMAINS || '')
   .split(',')
   .map((d) => d.trim().toLowerCase().replace(/^@/, ''))
   .filter(Boolean);
 
-/** True only for an email on one of the company domains (exact domain, not a look-alike suffix). */
+/** True for any email when no domain list is set; else only for the listed domains (exact match). */
 export function isAllowedSsoEmail(email: string) {
   const at = email.lastIndexOf('@');
   if (at < 1) return false;
+  if (!GOOGLE_ALLOWED_DOMAINS.length) return true;
   return GOOGLE_ALLOWED_DOMAINS.includes(email.slice(at + 1).trim().toLowerCase());
 }
 
