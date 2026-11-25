@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import { enquiryTracker } from '@/modules/enquiry/server/intake';
 import { Badge, card, td, th } from '@/modules/costing/ui/shared';
+import { currentRole } from '@/lib/useCanEdit';
+import { EnquiryActions } from '@/modules/enquiry/ui/EnquiryActions';
 
 export const metadata = { title: 'Enquiries · Ceebuild' };
 export const dynamic = 'force-dynamic';
@@ -9,7 +11,8 @@ const fmt = (d: string | null) => (d ? `${d.slice(8, 10)}-${d.slice(5, 7)}-${d.s
 
 /** Rev 2 §2 E6: every enquiry read from info@ and where it stands (received -> docket -> BOM -> costed -> offer -> sent -> PO). */
 export default async function Page() {
-  const rows = await enquiryTracker();
+  const [rows, role] = await Promise.all([enquiryTracker(), currentRole()]);
+  const isAdmin = role === 'Admin';
   const open = rows.filter((r) => !r.outcome && !r.ordered && !r.sentOn);
   const late = open.filter((r) => r.daysToDue !== null && r.daysToDue <= 2);
   return (
@@ -34,12 +37,13 @@ export default async function Page() {
               <th className={`${th} text-right`}>Items · BOM · costed</th>
               <th className={th}>Offer</th>
               <th className={th}>Stage</th>
+              <th className={th} />
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={9} className={`${td} py-6 text-center text-slate-700`}>No enquiry read yet. The n8n workflow &quot;Ceebuild – Read enquiry mails&quot; fills this list.</td>
+                <td colSpan={10} className={`${td} py-6 text-center text-slate-700`}>No enquiry read yet. The n8n workflow &quot;Ceebuild – Read enquiry mails&quot; fills this list.</td>
               </tr>
             )}
             {rows.map((r) => {
@@ -78,6 +82,12 @@ export default async function Page() {
                   </td>
                   <td className={td}>
                     <Badge tone={r.ordered ? 'green' : r.sentOn ? 'blue' : urgent ? 'red' : 'amber'}>{r.stage}</Badge>
+                  </td>
+                  <td className={td}>
+                    <Link className="mb-1 block text-[11px] text-blue-800 hover:underline" href={`/costing/enquiries/${r.id}/offer`}>
+                      Draft offer
+                    </Link>
+                    {isAdmin && <EnquiryActions id={r.id} status={r.status} outcome={r.outcome} />}
                   </td>
                 </tr>
               );

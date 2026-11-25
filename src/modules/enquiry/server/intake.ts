@@ -313,6 +313,20 @@ export async function ingestEnquiry(p: N8nEnquiryPayload) {
   }
 
   // New docket "Enquiry – to cost", items from the BOQ.
+  const row = await prisma.enquiryIntake.create({ data: { ...common, status: 'BACKLOG' } });
+  return createDocketForIntake(row.id, 'n8n enquiry intake');
+}
+
+/**
+ * Docket + items for an enquiry row (new mail, or a BACKLOG enquiry approved by an Admin), then the
+ * same-day draft prices. The docket number is the Quotation No., so this runs only for a new
+ * enquiry or on approval.
+ */
+export async function createDocketForIntake(intakeId: number, byName: string) {
+  const intake = await prisma.enquiryIntake.findUnique({ where: { id: intakeId } });
+  if (!intake) throw new UserError('Enquiry not found.');
+  if (intake.docketId) return { id: intake.id, status: intake.status, docketId: intake.docketId, docketNo: intake.docketNo };
+  const e = (intake.extracted ?? {}) as RawEnquiry;
   const items = (e.items ?? []).filter((i) => str(i.description)).slice(0, 200);
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -340,18 +354,18 @@ export async function ingestEnquiry(p: N8nEnquiryPayload) {
               ourItemName: str(i.ourItem, 100),
             })),
           });
-        const row = await tx.enquiryIntake.create({ data: { ...common, status: 'CREATED', docketId: d.id, docketNo: nextDocketNo } });
+        await tx.enquiryIntake.update({ where: { id: intakeId }, data: { status: 'CREATED', docketId: d.id, docketNo: nextDocketNo } });
         await tx.editLog.create({
           data: {
             tableName: 'docket-party-name',
             recordId: d.id,
             fieldName: 'ALL_FIELDS',
             oldValue: 'NONE (New Record)',
-            newValue: JSON.stringify({ docketNo: nextDocketNo, source: 'Enquiry intake (n8n)', enquiryIntakeId: row.id, subject: base.subject, items: items.length }),
-            userName: 'n8n enquiry intake',
+            newValue: JSON.stringify({ docketNo: nextDocketNo, source: 'Enquiry intake', enquiryIntakeId: intakeId, subject: intake.subject, items: items.length, by: byName }),
+            userName: byName,
           },
         });
-        return { id: row.id, status: row.status, docketId: d.id, docketNo: nextDocketNo };
+        return { id: intakeId, status: 'CREATED', docketId: d.id, docketNo: nextDocketNo };
       });
       // Stage 2: draft prices the same day (best effort; the docket is kept even if costing fails).
       await autoCostEnquiry(out.id).catch((err) => console.error('[enquiry auto-cost]', out.id, err));
@@ -361,6 +375,67 @@ export async function ingestEnquiry(p: N8nEnquiryPayload) {
     }
   }
   throw new Error('Could not get a docket number.');
+}
+
+export const OUTCOMES = ['PO', 'LOST', 'REGRET'] as const;
+type Actor = { id: number; name: string; role: string };
+
+/**
+ * E5 exits: an enquiry is closed only by "PO received", "Lost" or a "Regret" with a reason approved
+ * by an Admin (Puja). Reopen (outcome null) clears it. Every change is in the edit log.
+ */
+export async function setEnquiryOutcome(intakeId: number, outcome: string | null, note: string | null, user: Actor) {
+  if (user.role !== 'Admin') throw new UserError('Only an Admin can close or reopen an enquiry.');
+  const r = await prisma.enquiryIntake.findUnique({ where: { id: intakeId } });
+  if (!r) throw new UserError('Enquiry not found.');
+  const o = outcome && (OUTCOMES as readonly string[]).includes(outcome) ? outcome : null;
+  if (outcome && !o) throw new UserError('Outcome is PO, LOST or REGRET.');
+  const reason = String(note ?? '').trim().slice(0, 500) || null;
+  if ((o === 'REGRET' || o === 'LOST') && !reason) throw new UserError(`Give the reason for ${o === 'REGRET' ? 'the regret' : 'losing it'}.`);
+  const stamp = `${user.name} ${new Date().toISOString().slice(0, 10)}`;
+  await prisma.enquiryIntake.update({ where: { id: intakeId }, data: { outcome: o, outcomeNote: o ? (reason ? `${reason} – ${stamp}` : stamp) : null } });
+  await prisma.editLog.create({
+    data: { tableName: 'enquiry_intakes', recordId: intakeId, fieldName: 'outcome', oldValue: r.outcome ?? '', newValue: o ? `${o}${reason ? `: ${reason}` : ''}` : 'reopened', userId: user.id, userName: user.name },
+  });
+  return { id: intakeId, outcome: o };
+}
+
+/** Admin approves a BACKLOG enquiry: it gets its docket (Quotation No.) and draft prices. */
+export async function approveBacklog(intakeId: number, user: Actor) {
+  if (user.role !== 'Admin') throw new UserError('Only an Admin can give an enquiry its docket number.');
+  const r = await prisma.enquiryIntake.findUnique({ where: { id: intakeId } });
+  if (!r || r.status !== 'BACKLOG') throw new UserError('Only a backlog enquiry can be approved.');
+  return createDocketForIntake(intakeId, user.name);
+}
+
+export interface ReminderRow {
+  id: number;
+  partyName: string | null;
+  subject: string | null;
+  docketNo: string | null;
+  dueDate: string | null;
+  daysToDue: number | null;
+  reason: string;
+  severity: 'RED' | 'AMBER' | 'INFO';
+}
+
+/** E5 escalation list for the daily n8n mail: due date passed, due within 2 days, drafts waiting, backlog. */
+export async function enquiryReminders(): Promise<{ rows: ReminderRow[]; red: number; text: string }> {
+  const rows = (await enquiryTracker()).filter((r) => !r.outcome && !r.ordered && !r.sentOn);
+  const out: ReminderRow[] = [];
+  for (const r of rows) {
+    const base = { id: r.id, partyName: r.partyName, subject: r.subject, docketNo: r.docketNo, dueDate: r.dueDate, daysToDue: r.daysToDue };
+    if (r.daysToDue !== null && r.daysToDue < 0) out.push({ ...base, reason: `Due date passed ${-r.daysToDue} day(s) ago without an offer sent`, severity: 'RED' });
+    else if (r.daysToDue !== null && r.daysToDue <= 2) out.push({ ...base, reason: `Due in ${r.daysToDue} day(s) – offer not sent`, severity: 'RED' });
+    else if (r.status === 'BACKLOG') out.push({ ...base, reason: 'Old enquiry without a docket – approve (docket no.) or Regret', severity: 'INFO' });
+    else if (r.draftTotal !== null && !r.quoted) out.push({ ...base, reason: `Draft offer ready${r.budgetary ? ' (budgetary)' : ''} – waiting for approval`, severity: 'AMBER' });
+    else if (!r.quoted) out.push({ ...base, reason: 'Docket open – BOM / costing to finish', severity: 'AMBER' });
+  }
+  const order = { RED: 0, AMBER: 1, INFO: 2 } as const;
+  out.sort((a, b) => order[a.severity] - order[b.severity] || (a.daysToDue ?? 999) - (b.daysToDue ?? 999));
+  const line = (x: ReminderRow) =>
+    `- [${x.severity}] ${x.docketNo ?? 'no docket'} | ${x.partyName ?? '?'} | ${String(x.subject ?? '').slice(0, 80)}${x.dueDate ? ` | due ${x.dueDate}` : ''}\n  ${x.reason}`;
+  return { rows: out, red: out.filter((x) => x.severity === 'RED').length, text: out.length ? out.map(line).join('\n') : 'No open enquiry needs action.' };
 }
 
 export interface EnquiryRow {
