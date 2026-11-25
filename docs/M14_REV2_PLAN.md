@@ -116,7 +116,14 @@ For each: BOM → costing → cost sheet with ESTIMATE flags → offer (Quotatio
     KUSUM → CEE-000535), 16 BACKLOG (no docket – Puja to decide), 5 not enquiries. Workflow published (every 15 min, 7 days).
   - §2 stage 2 (part 1): a new enquiry docket gets draft prices the same day – BOM from the matching approved drawing +
     costing (not applied), else last quoted (ESTIMATE), else "needs BOM / drawing". Shown on the Enquiries tracker.
-  - Still open: draft offer PDF + Gmail draft reply per enquiry, reminders/escalations (WhatsApp + mail), Regret flow.
+  - Afternoon: draft offer page per enquiry, Admin "Approve → docket" for backlog, close as PO / Lost / Regret (reason),
+    daily 09:30 reminder mail (n8n "Ceebuild – Enquiry reminders", to Minmoy for now).
+  - §10: Rev 2 piece-length rule live (Planning Settings, 300 m); store-stock register (/planning/store-stock), used
+    first by new indents, deducted on issue; RM indent Excel (Lanarsy = 4,267 bars / 101.40 MT).
+  - Fabrication drawings slice 1: Drawing Standards (/admin/drawing-standards), A3 PDF from a confirmed BOM (notes,
+    member sheets, cutting list = BOM), drawing sets + issue log tables. KESCo Type A/B tested.
+  - Still open (need inputs): Gmail draft reply from info@ (no info@ceebuild credential in n8n), WhatsApp alerts,
+    holes/bends/assembly entry + Satya mail + cutting gate, Souvik sheet import, Power Automate flow, LME zinc.
   - Plans written: `docs/M14_FABRICATION_DRAWINGS_PLAN.md` (target 10-12), `docs/M14_ORDER_TO_EXECUTION_IMPORT_PLAN.md`
     (live import 02-12, needs sheet access).
 - Dockets: CEE-000534 delivery state Bihar; BOMs + draft costings (not applied) for CEE-000533, 534 (structures mix + N&B),
