@@ -8,10 +8,11 @@ import { docketCostingAction } from '@/app/actions/costing';
 import { MATCH_LABELS, type MatchLevel } from '@/lib/costing/drawings';
 import type { DocketCostRow } from '../server/compute';
 import { Badge, card, inr, td, th } from './shared';
+import { QuotationHistory } from './QuotationHistory';
 
-type Data = { docket: { id: number; docketNo: string | null; partyName: string | null; utility: string | null; state: string | null; deliveryLocation: string | null }; rows: DocketCostRow[]; total: number };
+type Data = { docket: { id: number; docketNo: string | null; partyName: string | null; utility: string | null; state: string | null; deliveryLocation: string | null; deliveryState?: string | null }; rows: DocketCostRow[]; total: number };
 
-export function DocketCostingPage({ docketId }: { docketId: number }) {
+export function DocketCostingPage({ docketId, isAdmin = false }: { docketId: number; isAdmin?: boolean }) {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -31,7 +32,8 @@ export function DocketCostingPage({ docketId }: { docketId: number }) {
           <h1 className="mt-1 text-xl font-semibold text-slate-900">Costing – {docket.docketNo ?? `docket #${docket.id}`}</h1>
           <p className="text-xs text-slate-700">
             {docket.partyName} · {docket.utility ?? 'no utility'} · {docket.state ?? ''}
-            {docket.deliveryLocation ? ` → ${docket.deliveryLocation}` : ''} · {done} of {rows.length} item(s) costed from a BOM
+            {docket.deliveryLocation ? ` → ${docket.deliveryLocation}` : ''}
+            {docket.deliveryState && docket.deliveryState !== docket.state ? ` (delivery state ${docket.deliveryState}, freight)` : ''} · {done} of {rows.length} item(s) costed from a BOM
           </p>
         </div>
         <Link href={`/quotation/${docket.id}`} target="_blank" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-blue-600 px-3 text-sm font-semibold text-white hover:bg-blue-700">
@@ -104,6 +106,7 @@ export function DocketCostingPage({ docketId }: { docketId: number }) {
           </tfoot>
         </table>
       </div>
+      <QuotationHistory docketId={docketId} isAdmin={isAdmin} />
     </div>
   );
 }

@@ -34,6 +34,8 @@ export interface Docket {
   state: string | null;
   utility: string | null;
   deliveryLocation: string | null;
+  /** Site state for freight; state = billing state (GST). */
+  deliveryState?: string | null;
   type?: string | null;
   price: string | null;
   payment: string | null;

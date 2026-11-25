@@ -37,6 +37,8 @@ export const RATE_KINDS = [
   'ZINC_RATE',
   'GALV_TRANSPORT',
   'FREIGHT_MT',
+  'FREIGHT_TRIP',
+  'PAINT_RATE',
   'INTEREST_PCT',
   'CREDIT_DAYS',
   'LC_BG_PCT',
@@ -61,6 +63,8 @@ export const RATE_META: Record<RateKind, { label: string; units: string[]; subje
   ZINC_RATE: { label: 'Zinc rate', units: ['Rs/kg'], subject: 'DEFAULT', perSubject: false },
   GALV_TRANSPORT: { label: 'Transport to/from galvaniser', units: ['Rs/kg'], subject: 'DEFAULT', perSubject: false },
   FREIGHT_MT: { label: 'Freight (FOR)', units: ['Rs/MT'], subject: 'Destination state or DEFAULT', perSubject: true },
+  FREIGHT_TRIP: { label: 'Freight per truck trip (load by space)', units: ['Rs/trip'], subject: 'Destination state or DEFAULT', perSubject: true },
+  PAINT_RATE: { label: 'Painting (painted finish)', units: ['Rs/kg'], subject: 'DEFAULT', perSubject: false },
   INTEREST_PCT: { label: 'Interest % per 30 days (on selling value)', units: ['%'], subject: 'DEFAULT', perSubject: false },
   CREDIT_DAYS: { label: 'Credit days', units: ['days'], subject: 'DEFAULT', perSubject: false },
   LC_BG_PCT: { label: 'LC / BG charges', units: ['%'], subject: 'DEFAULT', perSubject: false },
@@ -109,7 +113,7 @@ export const isInterim = (r: { source?: string | null; rateType?: string | null 
   !!r && (r.rateType === 'ESTIMATE' || /^\s*INTERIM\b/i.test(r.source ?? ''));
 
 /** RM section families (Rev 2 §4.1: rate lookup = size row -> family row -> "No RM rate"). */
-export const RM_FAMILIES = ['CHANNEL', 'ANGLE', 'FLAT', 'ROD'] as const;
+export const RM_FAMILIES = ['CHANNEL', 'ANGLE', 'FLAT', 'ROD', 'PIPE', 'WIRE_MESH'] as const;
 /** Family of a section key: ISMC.. -> CHANNEL, ISA.. -> ANGLE, FLAT.. -> FLAT, RB.. -> ROD. */
 export function familyOf(key: string | null | undefined): (typeof RM_FAMILIES)[number] | null {
   const k = String(key ?? '').toUpperCase();
@@ -117,6 +121,8 @@ export function familyOf(key: string | null | undefined): (typeof RM_FAMILIES)[n
   if (/^ISA\d/.test(k)) return 'ANGLE';
   if (/^FLAT\d/.test(k)) return 'FLAT';
   if (/^RB\d/.test(k)) return 'ROD';
+  if (/^(GI|MS)?(PIPE|TUBE)\d/.test(k)) return 'PIPE';
+  if (/^(GI)?(WIREMESH|MESH|CHAINLINK|WELDMESH|WIREFABRIC)/.test(k)) return 'WIRE_MESH';
   return null;
 }
 
@@ -188,6 +194,26 @@ export interface CostInput {
   planConfirmed?: boolean;
   /** Docket / item discount (Rev 2 §7), Admin only, with a reason. */
   discount?: DiscountInput | null;
+  /** Freight load basis (25-11): WEIGHT = Rs/MT; SPACE = ROUNDUP(sets / sets per truck) trips x trip rate. */
+  load?: { basis: LoadBasis; setsPerTruck: number | null } | null;
+  /** Painted finish: PAINT_RATE Rs/kg on the black weight (not with galvanised). */
+  painted?: boolean;
+}
+
+export const LOAD_BASES = ['WEIGHT', 'SPACE'] as const;
+export type LoadBasis = (typeof LOAD_BASES)[number];
+
+/** Freight block of a costing (how freight was worked out). */
+export interface FreightResult {
+  basis: LoadBasis;
+  exWorks: boolean;
+  /** Rs/MT used on the lines (SPACE: the trip cost spread over the dispatched tonnes). */
+  ratePerMt: number;
+  setsPerTruck: number | null;
+  trips: number | null;
+  tripRate: number | null;
+  total: number;
+  perSet: number | null;
 }
 
 export const DISCOUNT_MODES = ['PCT', 'RS_PER_KG', 'LUMP'] as const;
@@ -276,6 +302,8 @@ export interface LineResult {
   galv: number;
   freight: number;
   inspPack: number;
+  /** Painting, Rs per set (painted finish). */
+  paint: number;
   /** LC/BG + interest, Rs per set. */
   commercial: number;
   /** Interest part of `commercial` (credit days / 30 x % of the selling value). */
@@ -344,9 +372,15 @@ export interface CostResult {
   vaAmount: number;
   /** Discount block (null = no discount). Final price = discount.finalPrice, else grandSell. */
   discount: DiscountResult | null;
+  freight: FreightResult;
   ratesUsed: RateUsed[];
   checks: {
+    /** Effective VA (after any discount) below the minimum: blocked (cannot be applied). */
     belowMinVa: boolean;
+    /** Effective VA between the minimum and the default: needs approval (Admin) with a reason. */
+    vaNeedsApproval: boolean;
+    /** VA % the checks were made on (after the discount when there is one). */
+    effectiveVaPct: number;
     variancePct: number | null;
     varianceRef: string | null;
     /** Lines with blank weight, rate or set count (they stop the price being applied). */
@@ -403,7 +437,30 @@ export function computeCosting(input: CostInput): CostResult {
   const galvTransport = input.galvanised ? val(take('GALV_TRANSPORT', null)) : 0;
   // No destination = ex-works: no freight.
   const exWorks = !String(input.destState ?? '').trim();
-  const freightMt = exWorks ? 0 : val(take('FREIGHT_MT', input.destState));
+  const loadBasis: LoadBasis = input.load?.basis === 'SPACE' ? 'SPACE' : 'WEIGHT';
+  const setsPerTruck = input.load?.setsPerTruck && input.load.setsPerTruck > 0 ? input.load.setsPerTruck : null;
+  const tripRate = !exWorks && loadBasis === 'SPACE' ? take('FREIGHT_TRIP', input.destState) : null;
+  const paintRate = input.painted && !input.galvanised ? val(take('PAINT_RATE', null)) : 0;
+  // SPACE: the truck fills by volume, so freight = trips x trip rate, spread over the dispatched
+  // tonnes (pre-pass on the structure weights) and charged per kg like the WEIGHT basis.
+  let freightMt = exWorks ? 0 : loadBasis === 'WEIGHT' ? val(take('FREIGHT_MT', input.destState)) : 0;
+  let spaceTrips: number | null = null;
+  let spaceSets = 0;
+  if (!exWorks && loadBasis === 'SPACE') {
+    const setsOf = new Map<string, number>();
+    let totalWt = 0;
+    for (const l of input.lines) {
+      if (l.category !== 'STRUCTURE' || l.scope !== 'IN_SCOPE') continue;
+      const sets = l.sets !== null && l.sets > 0 ? l.sets : 0;
+      setsOf.set(l.group ?? '', sets);
+      const k = (l.sectionKey && input.sectionKgm[l.sectionKey]) || (l.kgPerM && l.kgPerM > 0 ? l.kgPerM : 0);
+      const black = ((l.qtyPerSet ?? 0) * (l.lengthMm ?? 0) * k) / 1000;
+      totalWt += (input.galvanised ? black * (1 + zinc) : black) * sets;
+    }
+    spaceSets = [...setsOf.values()].reduce((a, b) => a + b, 0);
+    if (setsPerTruck && spaceSets > 0) spaceTrips = Math.ceil(spaceSets / setsPerTruck - 1e-9);
+    if (spaceTrips && tripRate && totalWt > 0) freightMt = (spaceTrips * tripRate.value) / (totalWt / 1000);
+  }
   const inspection = val(take('INSPECTION', null));
   const packing = val(take('PACKING', null));
   // Interest: % per 30 days of credit, charged on the selling value before GST.
@@ -430,7 +487,12 @@ export function computeCosting(input: CostInput): CostResult {
     if (!pickRate(input.rates, kind, null, input.quoteDate)) pendingMasters.push(`${label} – pending, 0 used`);
   };
   if (input.vaPct === null && !vaDefault && !minVa) missingMasters.push('Default VA %');
-  if (!exWorks) need('FREIGHT_MT', `Freight Rs/MT (${input.destState})`, input.destState);
+  if (!exWorks && loadBasis === 'WEIGHT') need('FREIGHT_MT', `Freight Rs/MT (${input.destState})`, input.destState);
+  if (!exWorks && loadBasis === 'SPACE') {
+    need('FREIGHT_TRIP', `Freight Rs/trip (${input.destState})`, input.destState);
+    if (!setsPerTruck) missingMasters.push('Sets per truck (BOM, load by space)');
+  }
+  if (input.painted && !input.galvanised) need('PAINT_RATE', 'Painting rate (painted finish)');
   need('INTEREST_PCT', 'Interest % per 30 days');
   need('CREDIT_DAYS', 'Credit days');
   pending('MIN_VA_PCT', 'Minimum VA %');
@@ -482,6 +544,7 @@ export function computeCosting(input: CostInput): CostResult {
       galv: 0,
       freight: 0,
       inspPack: 0,
+      paint: 0,
       commercial: 0,
       interest: 0,
       cost: 0,
@@ -609,7 +672,8 @@ export function computeCosting(input: CostInput): CostResult {
     const freight = (galvWt / 1000) * freightMt;
     // Inspection / packing per kg of the weight handled (billed or not: the clamp is still packed).
     const inspPack = (inspection + packing) * (input.billingBasis === 'GALV' ? galvWt : black);
-    const baseCost = rm + fab + galv + freight + inspPack;
+    const paint = paintRate * black;
+    const baseCost = rm + fab + galv + freight + inspPack + paint;
     const lc = baseCost * lcbg;
     const p = price(baseCost + lc, va);
     return {
@@ -631,6 +695,7 @@ export function computeCosting(input: CostInput): CostResult {
       galv: r2(galv),
       freight: r2(freight),
       inspPack: r2(inspPack),
+      paint: r2(paint),
       commercial: r2(lc + p.interest),
       interest: r2(p.interest),
       cost: r2(p.cost),
@@ -691,7 +756,6 @@ export function computeCosting(input: CostInput): CostResult {
   const boughtOut = { cost: r2(tot(bo, (l) => l.cost)), sell: r2(boSell), perSetSell: single && single.sets > 0 ? r2(boSell / single.sets) : null };
 
   const messages: string[] = [];
-  const belowMinVa = !!minVa && vaPct < minVa.value - 1e-9;  if (belowMinVa) messages.push(`VA ${vaPct}% is below the minimum ${minVa!.value}%.`);
   if (exWorks) messages.push('No destination: priced ex-works (no freight).');
   let variancePct: number | null = null;
   if (input.lastPricePerKg && input.lastPricePerKg.value > 0 && structure.sellPerKg > 0) {
@@ -713,10 +777,26 @@ export function computeCosting(input: CostInput): CostResult {
     input.discount && input.discount.value > 0
       ? applyDiscount(input.discount, { grandSell, costTotal, billedWtKg: structure.billedWtKg, sellPerKg: structure.sellPerKg, minVaPct: minVa ? minVa.value : null })
       : null;
-  if (discount) {
-    messages.push(`Discount Rs ${discount.amount} (${DISCOUNT_LABELS[discount.mode]} ${discount.value}${discount.reason ? `, ${discount.reason}` : ''}): final price Rs ${discount.finalPrice}, effective VA ${discount.effectiveVaPct}%.`);
-    if (discount.belowMinVa) messages.push(`Effective VA after discount ${discount.effectiveVaPct}% is below the minimum ${minVa!.value}%.`);
-  }
+  if (discount) messages.push(`Discount Rs ${discount.amount} (${DISCOUNT_LABELS[discount.mode]} ${discount.value}${discount.reason ? `, ${discount.reason}` : ''}): final price Rs ${discount.finalPrice}, effective VA ${discount.effectiveVaPct}%.`);
+  // VA band (25-11): below the minimum = blocked; minimum up to the default = Admin approval + reason.
+  const effectiveVaPct = discount ? discount.effectiveVaPct : vaPct;
+  const belowMinVa = !!minVa && effectiveVaPct < minVa.value - 1e-9;
+  const vaNeedsApproval = !belowMinVa && !!vaDefault && effectiveVaPct < vaDefault.value - 1e-9;
+  if (belowMinVa) messages.push(`VA ${effectiveVaPct}% is below the minimum ${minVa!.value}%: blocked, the price cannot be applied.`);
+  else if (vaNeedsApproval) messages.push(`VA ${effectiveVaPct}% is below the default ${vaDefault!.value}%: needs approval with a reason before it is applied.`);
+  const freightTotal = r2(lines.reduce((a, l) => a + l.freight * l.sets, 0));
+  const freight: FreightResult = {
+    basis: loadBasis,
+    exWorks,
+    ratePerMt: r2(freightMt),
+    setsPerTruck,
+    trips: spaceTrips,
+    tripRate: tripRate ? tripRate.value : null,
+    total: freightTotal,
+    perSet: loadBasis === 'SPACE' && spaceSets > 0 ? r2(freightTotal / spaceSets) : null,
+  };
+  if (loadBasis === 'SPACE' && !exWorks && spaceTrips) messages.push(`Freight by space: ${spaceSets} sets / ${setsPerTruck} per truck = ${spaceTrips} trip(s) x Rs ${tripRate?.value ?? 0} = Rs ${freightTotal}.`);
+  if (paintRate) messages.push(`Painted finish: Rs ${paintRate}/kg on the black weight.`);
   const totalSets = r3(groups.reduce((a, g) => a + g.sets, 0));
   if (!(totalSets > 0)) messages.push('No set count: check the item quantity / structure set counts.');
   if (costed.length === 0) messages.push('No line could be costed.');
@@ -738,9 +818,12 @@ export function computeCosting(input: CostInput): CostResult {
     costTotal,
     vaAmount: r2(grandSell - costTotal),
     discount,
+    freight,
     ratesUsed: [...used.values()].sort((a, b) => a.kind.localeCompare(b.kind) || a.subject.localeCompare(b.subject)),
     checks: {
       belowMinVa,
+      vaNeedsApproval,
+      effectiveVaPct: r2(effectiveVaPct),
       variancePct,
       varianceRef: input.lastPricePerKg?.ref ?? null,
       blankLines: blank,
@@ -749,7 +832,7 @@ export function computeCosting(input: CostInput): CostResult {
       missingMasters,
       pendingMasters,
       interimLines,
-      ok: blank.length === 0 && outside.length === 0 && missingMasters.length === 0 && totalSets > 0 && costed.length > 0,
+      ok: blank.length === 0 && outside.length === 0 && missingMasters.length === 0 && totalSets > 0 && costed.length > 0 && !belowMinVa,
       messages,
     },
   };

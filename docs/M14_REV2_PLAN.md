@@ -94,7 +94,18 @@ For each: BOM → costing → cost sheet with ESTIMATE flags → offer (Quotatio
    Drawing-standards master, revisions, issue to Satya + "confirmed by production" gate). Test = KESCo Rev 0. Plan + date by 26-11.
 
 ## Status log
-- 25-11 10:15 – deploy of `9971291` **did not happen**: health uptime 60,222 s (container from 24-11 ~16:00). Check the Actions run / self-hosted runner.
+- 25-11 10:15 – deploy of `9971291` **did not happen**: the commit dropped `src/lib/gemini.ts` (build failed). Restored in `dfb1365`; server restarted 10:17.
+- 25-11 10:35 backup `backups/live-before-m14-25nov-20261125-1035.dump`; migration `20261125100000_m14_25nov` applied (delivery state,
+  item HSN, BOM load basis / sets per truck / painted, `quotation_snapshots`, `erp_po_lines`, `erp_indent_lines`, `freight_history`).
+- Power BI seed (`scripts/m14_import_pbi.ts`): PO 1,400 · indent 242 · freight 39,708 rows; 643 exceptions (232 FO without no/from/to,
+  407 FO rate 0, 4 PO without no/item). Freight lanes: 282 lanes, 26 states -> FREIGHT_MT + FREIGHT_TRIP (16 MT lane, Dhulagarh,
+  trucks only). RM PO history monthly since 11-2025 (45 rows, rate type PO; the 20-11 ESTIMATE stays current).
+- Masters (`scripts/m14_25nov_masters_dockets.ts`): Sinha 4.03, GI transport 0.50, zinc 3.8%, min VA 8%, wire mesh 66, paint 7,
+  M10 set 6, latch 150, wire fabric per sqm; steel daily / zinc daily / N&B + freight monthly.
+- Code: VA band (<8% blocked, 8–12% Admin approval + reason), freight by space, painted finish, delivery state, HSN on offer,
+  §11 quotation snapshots + history, PIPE / WIRE_MESH families, "ISMC 75X40X6" -> ISMC75X40. 86/86 tests.
+- Dockets: CEE-000534 delivery state Bihar; BOMs + draft costings (not applied) for CEE-000533, 534 (structures mix + N&B),
+  535 (KUSUM STR req sheet); KESCo docket CEE-000536 with 3 items, BOMs, costing at VA 25%, snapshot Rev 0 frozen.
 - 24-11 evening – plan written. Phase 1 code done locally, 79/79 tests pass, typecheck clean (outside scratch/):
   - `src/lib/costing/calc.ts`: Rev 2 interest (days/30 × % of selling value, closed form), `VA_PCT` default, GI = labour + zinc% × `ZINC_RATE` + transport, ex-works with no destination, pending masters non-blocking, N&B / bought-out margin falls back to VA %.
   - `prisma/migrations/20261124180000_m14_rev2_rate_meta`: `cost_rates.rate_type`, `supplier`, `valid_to`, `update_freq_days`, `owner`. Tags the INTERIM rows as ESTIMATE.

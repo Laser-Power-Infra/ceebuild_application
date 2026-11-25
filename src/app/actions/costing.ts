@@ -39,6 +39,7 @@ import {
 } from '@/modules/costing/server/itemBom';
 import { costingDetail, docketCosting, listCostings, previewCosting, saveCosting } from '@/modules/costing/server/compute';
 import { extractFromSheet, extractWithAi } from '@/modules/costing/server/extract';
+import { freezeQuotation, quotationHistory } from '@/modules/costing/server/snapshot';
 
 const obj = (v: unknown) => (v && typeof v === 'object' ? (v as Record<string, unknown>) : {});
 const optNum = (v: unknown) => (v === null || v === undefined || v === '' ? null : toNum(v));
@@ -223,7 +224,7 @@ export async function previewCostingAction(bomId: unknown, opts: unknown) {
 export async function saveCostingAction(bomId: unknown, opts: unknown) {
   const o = obj(opts);
   return write((user) =>
-    saveCosting(toId(bomId, 'BOM'), { vaPct: optNum(o.vaPct), quoteDate: typeof o.quoteDate === 'string' ? o.quoteDate : null, apply: o.apply === true, discount: optDiscount(o.discount) }, user),
+    saveCosting(toId(bomId, 'BOM'), { vaPct: optNum(o.vaPct), quoteDate: typeof o.quoteDate === 'string' ? o.quoteDate : null, apply: o.apply === true, discount: optDiscount(o.discount), vaApprovalReason: typeof o.vaApprovalReason === 'string' ? o.vaApprovalReason : null }, user),
   );
 }
 
@@ -233,4 +234,14 @@ export async function costingDetailAction(id: unknown) {
 
 export async function docketCostingAction(docketId: unknown) {
   return read(() => docketCosting(toId(docketId, 'docket')));
+}
+
+// ---- Rev 2 §11: frozen quotation snapshots + costing history ----
+
+export async function quotationHistoryAction(docketId: unknown) {
+  return read(() => quotationHistory(toId(docketId, 'docket')));
+}
+export async function freezeQuotationAction(docketId: unknown, input: unknown) {
+  const o = obj(input);
+  return write((user) => freezeQuotation(toId(docketId, 'docket'), { quotedOn: o.quotedOn, status: o.status, note: o.note, sentTo: o.sentTo }, user), { roles: ADMIN_ROLES });
 }

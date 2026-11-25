@@ -26,6 +26,7 @@ const EDITABLE_ITEM_FIELDS = [
   'a',
   'freightPerKg',
   'status',
+  'hsn',
 ] as const;
 
 function getFilterList(searchParams: URLSearchParams, key: string): string[] {

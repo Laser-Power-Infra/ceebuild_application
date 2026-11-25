@@ -1,0 +1,145 @@
+import matplotlib; matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+from matplotlib.backends.backend_pdf import PdfPages
+F='DejaVu Sans'
+def sheet(title,no):
+    fig=plt.figure(figsize=(16.54,11.69)); ax=fig.add_axes([0.02,0.02,0.96,0.96]); ax.set_xlim(0,1654); ax.set_ylim(0,1169); ax.axis('off')
+    ax.add_patch(Rectangle((5,5),1644,1159,fill=False,lw=1.5))
+    ax.add_patch(Rectangle((1150,5),499,120,fill=False,lw=1))
+    ax.text(1160,105,'CEEBUILD COMPANY PVT. LTD.',fontsize=11,weight='bold')
+    ax.text(1160,85,'KESCo (Kanpur) RDSS ? DTR fencing ? FABRICATION DRAWING',fontsize=8)
+    ax.text(1160,65,title,fontsize=9,weight='bold')
+    ax.text(1160,45,f'Drg no. CB/KESCo/FEN/{no:02d}   Rev 0   25-11-2026   Not to scale ? dims in mm',fontsize=7.5)
+    ax.text(1160,25,'Basis: Satwik revised drg signed by KESCo 19-09-2026 (sheets 1 & 2). Prepared: Claude for Puja Agarwal',fontsize=6.5)
+    return fig,ax
+def dim(ax,x1,y1,x2,y2,t,off=0,vert=False,fs=7):
+    ax.annotate('',(x1,y1),(x2,y2),arrowprops=dict(arrowstyle='<->',lw=0.6))
+    if vert: ax.text(x1+off,(y1+y2)/2,t,fontsize=fs,rotation=90,va='center',ha='center')
+    else: ax.text((x1+x2)/2,y1+off,t,fontsize=fs,ha='center')
+def panel(ax,x0,y0,W,typ,lab,s=0.12):
+    # W panel width mm, height 2400; rails FL50x6 at bottom, middle, top; verticals 40x5
+    H=2400
+    X=lambda v:x0+v*s; Y=lambda v:y0+v*s
+    for yc in (25,1200,2375):
+        ax.add_patch(Rectangle((X(0),Y(yc-25)),W*s,50*s,fc='#bbbbbb',ec='k',lw=0.6))
+        ax.plot([X(25)],[Y(yc)],'o',ms=2.5,mfc='w',mec='k'); ax.plot([X(W-25)],[Y(yc)],'o',ms=2.5,mfc='w',mec='k')
+    if typ=='A':
+        n=int(W/500)+1; xs=[min(max(i*500,20),W-20) for i in range(n)]
+        for i in range(0,int(W/50)+1):
+            ax.plot([X(i*50),X(i*50)],[Y(0),Y(H)],lw=0.15,color='#777')
+        for j in range(0,int(H/50)+1):
+            ax.plot([X(0),X(W)],[Y(j*50),Y(j*50)],lw=0.15,color='#777')
+    else:
+        n=int((W-40)//115)+1; xs=[ (W-(n-1)*115)/2 + i*115 for i in range(n)]
+    for xv in xs:
+        ax.add_patch(Rectangle((X(xv-20),Y(25)),40*s,2350*s,fc='#dddddd',ec='k',lw=0.4))
+    dim(ax,X(0),Y(-120),X(W),Y(-120),f'{W}',off=-14)
+    dim(ax,X(-120),Y(0),X(-120),Y(H),'2400',off=-12,vert=True)
+    ax.text(X(0),Y(H)+18,lab,fontsize=9,weight='bold')
+    return len(xs)
+pdf=PdfPages('Ceebuild_Fabrication_Drawings_KESCo_DTR_Fencing_Rev0_25-11-2026.pdf')
+# Sheet 1 GA + notes
+fig,ax=sheet('Sheet 1 ? General arrangement, design decisions & notes',1)
+s=0.045; x0,y0=120,650
+pts=[(0,0),(3000,0),(3000,3000),(0,3000)]
+# plan 3x3 m with gate on one side
+ax.add_patch(Rectangle((x0,y0),3000*s*1.0,3000*s*1.0,fill=False,lw=1.2))
+for (px,py) in [(0,0),(3000,0),(3000,3000),(0,3000),(2000,0)]:
+    ax.add_patch(Rectangle((x0+px*s-4,y0+py*s-4),8,8,fc='k'))
+ax.plot([x0+2000*s,x0+3000*s],[y0-6,y0-6],lw=3,color='w'); ax.text(x0+2500*s,y0-25,'GATE 1000',fontsize=7,ha='center')
+ax.text(x0+1000*s,y0-25,'P4 = 2000',fontsize=7,ha='center')
+ax.text(x0-60,y0+1500*s,'P1 = 3000',fontsize=7,rotation=90,va='center'); ax.text(x0+3000*s+12,y0+1500*s,'P2 = 3000',fontsize=7,rotation=90,va='center'); ax.text(x0+1500*s,y0+3000*s+10,'P3 = 3000',fontsize=7,ha='center')
+ax.text(x0,y0+3000*s+45,'PLAN ? one enclosure, 12 m perimeter x 2.4 m high (28.8 sqm)',fontsize=9,weight='bold')
+ax.text(x0,y0-60,'Posts C1?C3 at corners, G1/G2 at gate (5 nos ISA 40x40x5 x 2800).',fontsize=7)
+notes=['DESIGN DECISIONS (engineering judgement ? not shown on the approved drawing):',
+'1. Bolt holes: 11.5 dia (M10 + 1.5 clearance, IS 800) ? punched, not gas-cut.',
+'2. Post holes on angle gauge line 22 mm from heel (IS SP:6 back mark for 40 leg).',
+'3. Hole levels on post (from post bottom; 400 mm embedded): 475 / 1600 / 2775 = centre of bottom,',
+'   middle and top rails. Top hole edge distance 25 mm (> 1.5 d = 17 mm).',
+'4. Rail end holes: 11.5 dia at 25 mm from flat end, on flat centre line (25 mm).',
+'   3 nos M10 bolt + nut + lock nut + washer per post face, one per rail (Note 5 of approved drg).',
+'5. Wire mesh fixing: tack weld 25 mm long @ 150 mm c/c on all rails and vertical strips',
+'   (KESCo remark: chain link and vertical & horizontal strips welded to each other).',
+'6. Vertical strips welded to each rail with 4 mm fillet both sides (2 x 40 mm per crossing).',
+'7. Type A: 40x5 strips @ 500 mm c/c incl. both panel ends (3000: 7 nos, 2000: 5 nos = 26), mesh 50x50.',
+'   Type B: 40x5 strips @ 115 mm pitch / 75 mm clear (3000: 26 nos, 2000: 17 nos), mesh 100x100 if ordered.',
+'8. Gate: 1000 wide; 3 hinges FH-1 (FL 50x6 x 130) welded to post G2; pad-lock flats FLP-1/2 on G1;',
+'   door lock handle / latch bolted at 1100 above GL (bought-out).',
+'9. Finish: remove weld spatter, wire-brush / clean, 1 coat red-oxide primer + 2 coats bus-green enamel',
+'   (Note 3 of approved drg). Hot-dip galvanising only if ordered (IS 2629, then no paint).',
+'10. Marking: punch erection mark on each panel/post (e.g. KF-A-P1, KF-B-G).',
+'11. Tolerances as approved drg: up to 50 mm ±5%, 51-100 ±4%, 101-300 ±3%, >300 ±2%.',
+'12. Material IS 2062 E250A. Welding to IS 816 (E6013 electrodes).',
+'TO BE CONFIRMED BY SATYA BEFORE CUTTING: items 2, 3 and 5 against his jigs/practice.']
+for i,t in enumerate(notes):
+    ax.text(700,1110-i*24,t,fontsize=8.2,weight='bold' if i in (0,len(notes)-1) else 'normal')
+fig.savefig(pdf,format='pdf'); plt.close(fig)
+# Sheet 2 panels type A
+for typ in ('A','B'):
+    fig,ax=sheet(f'Sheet {2 if typ=="A" else 3} ? Panels Type {typ} ({"7.08 chain-link 50x50 mesh, strips @500 c/c" if typ=="A" else "7.09 strips @75 clear / 115 pitch"})',2 if typ=='A' else 3)
+    n1=panel(ax,120,560,3000,typ,'PANEL P1/P2/P3 ? 3000 x 2400 (3 per enclosure)')
+    n2=panel(ax,640,560,2000,typ,'PANEL P4 ? 2000 x 2400 (1 per enclosure)')
+    tbl=[('Mark','Member','Section','Length','P1-P3 qty','P4 qty'),
+         ('FCH-1','Horizontal rail','FL 50x6','3000','3','?'),
+         ('FCH-2','Horizontal rail','FL 50x6','2000','?','3'),
+         ('FCV-1','Vertical strip','FL 40x5','2350',str(n1),str(n2)),
+         ('WF-1','Wire mesh 10 SWG','50x50' if typ=='A' else '100x100','sheet','3000x2400','2000x2400')]
+    for i,r in enumerate(tbl):
+        for j,c in enumerate(r):
+            ax.text(950+j*110,1080-i*26,c,fontsize=8,weight='bold' if i==0 else 'normal')
+    ax.text(950,920,'Rails at 25 / 1200 / 2375 from panel bottom (centres).',fontsize=8)
+    ax.text(950,900,'Holes: 11.5 dia at 25 mm from each rail end (6 per panel).',fontsize=8)
+    ax.text(950,880,'Strips welded to rail face; mesh tack-welded @150 c/c.',fontsize=8)
+    ax.text(950,860,f'Strip count per enclosure: 3x{n1} + {n2} = {3*n1+n2} (approved drg: {"26" if typ=="A" else "96"})',fontsize=8)
+    ax.text(120,250,'ELEVATION (view from outside). Mesh shown only for Type A.' if typ=='A' else 'ELEVATION (view from outside). Mesh (if ordered) fixed on inner face.',fontsize=8)
+    fig.savefig(pdf,format='pdf'); plt.close(fig)
+# Sheet 4 post + gate + joint
+fig,ax=sheet('Sheet 4 ? Post (FCA-1), gate and bolted joint detail',4)
+s=0.25; x0,y0=150,300
+ax.add_patch(Rectangle((x0,y0),40*s*2,2800*s,fc='#cccccc',ec='k'))
+for h in (475,1600,2775):
+    ax.plot(x0+22*s*2,y0+h*s,'o',ms=4,mfc='w',mec='k'); ax.text(x0+40*s*2+8,y0+h*s,f'11.5 dia @ {h}',fontsize=7,va='center')
+ax.plot([x0-30,x0+60],[y0+400*s,y0+400*s],'k--',lw=0.8); ax.text(x0-30,y0+400*s+5,'GL (400 embedded)',fontsize=7)
+dim(ax,x0-40,y0,x0-40,y0+2800*s,'2800',off=-10,vert=True)
+ax.text(x0-20,y0+2800*s+20,'FCA-1  ISA 40x40x5 x 2800 (5 per set)',fontsize=8,weight='bold')
+ax.text(x0-20,y0+2800*s+5,'gauge 22 from heel, holes on one leg',fontsize=7)
+# gate
+gx,gy=520,300; gs=0.25
+ax.add_patch(Rectangle((gx,gy),1000*gs,2400*gs,fill=False,lw=1))
+for yc in (25,1200,2375): ax.add_patch(Rectangle((gx,gy+(yc-25)*gs),900*gs,50*gs,fc='#bbbbbb',ec='k',lw=0.5))
+for xv in (50,500,950): ax.add_patch(Rectangle((gx+(xv-20)*gs,gy+25*gs),40*gs,2200*gs,fc='#dddddd',ec='k',lw=0.4))
+for yc in (300,1200,2100): ax.add_patch(Rectangle((gx-130*gs,gy+(yc-25)*gs),130*gs,50*gs,fc='k'))
+ax.text(gx,gy+2400*gs+20,'GATE ? 1000 x 2400 (FCH-3 FL50x6x900 x3, FCV-2 FL40x5x2200 x3 (A) / x8 (B))',fontsize=8,weight='bold')
+ax.text(gx,gy+2400*gs+5,'Hinges FH-1 FL50x6x130 x3 welded to G2; pad-lock flats FLP-1 (20) & FLP-2 (100); latch at 1100',fontsize=7)
+# joint
+jx,jy=1000,500
+ax.add_patch(Rectangle((jx,jy),40,160,fc='#cccccc',ec='k')); ax.add_patch(Rectangle((jx+40,jy+60),200,40,fc='#bbbbbb',ec='k'))
+ax.plot(jx+20,jy+80,'o',ms=8,mfc='w',mec='k'); ax.text(jx+50,jy+110,'FL 50x6 rail end',fontsize=7); ax.text(jx-10,jy-15,'ISA 40x40x5 post',fontsize=7)
+ax.text(jx,jy+190,'TYPICAL BOLTED JOINT (3 per post face)',fontsize=8,weight='bold')
+ax.text(jx,jy+175,'M10 x 35 bolt Gr 4.6 + nut + lock nut + washer; 11.5 holes; edge 25 mm',fontsize=7)
+fig.savefig(pdf,format='pdf'); plt.close(fig)
+# Sheet 5 cutting list
+import openpyxl
+fig,ax=sheet('Sheet 5 ? Cutting list per enclosure and total',5)
+rows=[('Mark','Item','Section','Cut length','Qty/set A','Qty/set B','Holes','Bend/weld'),
+('FCA-1','Post','ISA 40x40x5','2800','5','5','3 x 11.5','?'),
+('FCH-1','Rail (P1-P3)','FL 50x6','3000','9','9','2 x 11.5','weld strips'),
+('FCH-2','Rail (P4)','FL 50x6','2000','3','3','2 x 11.5','weld strips'),
+('FCH-3','Gate rail','FL 50x6','900','3','3','?','weld'),
+('FCV-1','Panel strip','FL 40x5','2350','26*','96','?','weld'),
+('FCV-2','Gate strip','FL 40x5','2200','3','8','?','weld'),
+('FTB-1','Tie flat','FL 50x6','1000','2','2','2 x 11.5','?'),
+('FH-1','Hinge','FL 50x6','130','3','3','?','weld'),
+('FLP-1/2','Pad-lock flat','FL 50x6','20 / 100','1+1','1+1','1 x 11.5 (FLP-2)','weld'),
+('WF-1','Wire mesh 10 SWG','50x50 / 100x100','sqm','27.14','27.14*','?','tack weld @150'),
+('HW-1','M10 bolt set','Gr 4.6','?','32','32','?','?')]
+for i,r in enumerate(rows):
+    for j,c in enumerate(r):
+        ax.text(60+[0,90,230,370,480,580,680,820][j],1080-i*30,c,fontsize=8.5,weight='bold' if i==0 else 'normal')
+ax.text(60,700,'* Approved drg BOM; panel-wise strip count on sheets 2?3 (re-check against 500 c/c spacing at cutting).',fontsize=8)
+ax.text(60,680,'* Type B mesh only if Laser confirms Option 1 (query raised 25-11-2026).',fontsize=8)
+ax.text(60,650,'Sets: Type A 262, Type B 99 (enquiry qty). Steel per set: A 238.5 kg, B 514.0 kg. Total steel 113.36 MT.',fontsize=8.5,weight='bold')
+ax.text(60,630,'RM indent: Ceebuild_RM_Indent_KESCo_DTR_Fencing_24-11-2026 (custom lengths 5600 = 2x2800, 4700 = 2x2350, 4400 = 2x2200).',fontsize=8)
+fig.savefig(pdf,format='pdf'); plt.close(fig)
+pdf.close()

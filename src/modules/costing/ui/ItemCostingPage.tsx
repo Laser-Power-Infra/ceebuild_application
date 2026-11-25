@@ -543,6 +543,9 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
   const [discVal, setDiscVal] = useState('');
   const [discReason, setDiscReason] = useState('');
   const discount = discVal.trim() === '' ? null : { mode: discMode, value: discVal, reason: discReason };
+  // VA between the minimum and the default: Admin approval with a reason (25-11).
+  const [vaReason, setVaReason] = useState('');
+  const [spt, setSpt] = useState(bom.setsPerTruck === null ? '' : String(bom.setsPerTruck));
 
   const run = useCallback(async () => {
     const r = await previewCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date, discount: discVal.trim() === '' ? null : { mode: discMode, value: discVal, reason: discReason } });
@@ -550,7 +553,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
     setP(r.data);
   }, [bom.id, va, date, discMode, discVal, discReason, onError]);
   // Re-run whenever the BOM (lines/choices) or the inputs change.
-  const sig = JSON.stringify([bom.lines, bom.fabType, bom.galvanised, bom.billingBasis, bom.status]);
+  const sig = JSON.stringify([bom.lines, bom.fabType, bom.galvanised, bom.painted, bom.billingBasis, bom.loadBasis, bom.setsPerTruck, bom.status]);
   useEffect(() => {
     const t = setTimeout(() => void run(), 250);
     return () => clearTimeout(t);
@@ -564,7 +567,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
 
   const save = async (apply: boolean) => {
     setBusy(true);
-    const r = await saveCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date, apply, discount });
+    const r = await saveCostingAction(bom.id, { vaPct: va === '' ? null : va, quoteDate: date, apply, discount, vaApprovalReason: vaReason });
     setBusy(false);
     if (!r.success) return onError(r.error);
     setMsg(apply ? 'Saved and applied: the price is now on the docket item and the offer PDF.' : 'Costing saved.');
@@ -585,11 +588,31 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <div>
           <label className={labelCls} htmlFor="c-galv">Galvanised</label>
-          <select id="c-galv" className={fieldCls} disabled={!canEdit} value={String(bom.galvanised)} onChange={(e) => void meta('galvanised', e.target.value)}>
-            <option value="true">Yes (GI)</option>
-            <option value="false">No (black)</option>
+          <select
+            id="c-galv"
+            className={fieldCls}
+            disabled={!canEdit}
+            value={bom.galvanised ? 'GI' : bom.painted ? 'PAINT' : 'BLACK'}
+            onChange={(e) => void (e.target.value === 'GI' ? meta('galvanised', 'true') : e.target.value === 'PAINT' ? meta('painted', 'true') : meta('galvanised', 'false').then(() => meta('painted', 'false')))}
+          >
+            <option value="GI">Galvanised (GI)</option>
+            <option value="PAINT">Painted</option>
+            <option value="BLACK">Black (no finish)</option>
           </select>
         </div>
+        <div>
+          <label className={labelCls} htmlFor="c-lb">Freight load basis</label>
+          <select id="c-lb" className={fieldCls} disabled={!canEdit} value={bom.loadBasis} onChange={(e) => void meta('loadBasis', e.target.value)}>
+            <option value="WEIGHT">Weight (Rs/MT)</option>
+            <option value="SPACE">Space (bulky: trips)</option>
+          </select>
+        </div>
+        {bom.loadBasis === 'SPACE' && (
+          <div>
+            <label className={labelCls} htmlFor="c-spt">Sets per truck</label>
+            <input id="c-spt" className={fieldCls} disabled={!canEdit} inputMode="decimal" value={spt} onChange={(e) => setSpt(e.target.value)} onBlur={() => spt !== String(bom.setsPerTruck ?? '') && void meta('setsPerTruck', spt)} />
+          </div>
+        )}
         <div>
           <label className={labelCls} htmlFor="c-bb">Client billing basis</label>
           <select id="c-bb" className={fieldCls} disabled={!canEdit} value={bom.billingBasis} onChange={(e) => void meta('billingBasis', e.target.value)}>
@@ -669,11 +692,20 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
             <Stat label="Final price (before GST)" value={`Rs ${inr(res.discount ? res.discount.finalPrice : res.grandSell, 0)}`} strong />
             <Stat
               label="Effective VA %"
-              value={`${inr(res.discount ? res.discount.effectiveVaPct : res.vaPct)}%`}
+              value={`${inr(res.checks.effectiveVaPct)}%`}
               strong
-              tone={(res.discount ? res.discount.belowMinVa : res.checks.belowMinVa) ? 'red' : undefined}
+              tone={res.checks.belowMinVa ? 'red' : res.checks.vaNeedsApproval ? 'amber' : undefined}
             />
           </div>
+          {res.freight && !res.freight.exWorks && (
+            <p className="mt-2 text-xs text-slate-700">
+              Freight ({res.freight.basis === 'SPACE' ? 'load by space' : 'load by weight'}):{' '}
+              {res.freight.basis === 'SPACE'
+                ? `${res.freight.trips ?? '–'} trip(s) × Rs ${inr(res.freight.tripRate ?? 0, 0)} (${res.freight.setsPerTruck ?? '–'} sets per truck) = Rs ${inr(res.freight.total, 0)}${res.freight.perSet !== null ? `, Rs ${inr(res.freight.perSet)} per set` : ''}`
+                : `Rs ${inr(res.freight.ratePerMt, 0)}/MT = Rs ${inr(res.freight.total, 0)}`}{' '}
+              to {p?.destState}.
+            </p>
+          )}
 
           <div className="mt-3 flex flex-col gap-1">
             {res.checks.messages.map((m, i) => (
@@ -712,7 +744,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
                   <th className={`${th} text-right`}>Fab</th>
                   <th className={`${th} text-right`}>Galv</th>
                   <th className={`${th} text-right`}>Freight</th>
-                  <th className={`${th} text-right`}>Insp+pack</th>
+                  <th className={`${th} text-right`}>Insp+pack{bom.painted ? '+paint' : ''}</th>
                   <th className={`${th} text-right`} title="LC/BG + interest (credit days ÷ 30 × % of the selling value)">Interest / finance cost</th>
                   <th className={`${th} text-right`}>Cost</th>
                   <th className={`${th} text-right`}>Selling</th>
@@ -752,7 +784,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
                     <td className={`${td} text-right`} title={l.fabCat ? `${fabCatLabel(l.fabCat)}${l.fabRate !== null ? ` @ Rs ${l.fabRate} ${FAB_CAT_BY_CODE[l.fabCat]?.unit === 'Rs/pc' ? '/pc' : '/kg'}` : ''}` : ''}>{inr(l.fab)}</td>
                     <td className={`${td} text-right`}>{inr(l.galv)}</td>
                     <td className={`${td} text-right`}>{inr(l.freight)}</td>
-                    <td className={`${td} text-right`}>{inr(l.inspPack)}</td>
+                    <td className={`${td} text-right`}>{inr(l.inspPack + (l.paint ?? 0))}</td>
                     <td className={`${td} text-right`}>{inr(l.commercial)}</td>
                     <td className={`${td} text-right font-semibold`}>{inr(l.cost)}</td>
                     <td className={`${td} text-right font-semibold`}>{inr(l.sell)}</td>
@@ -787,14 +819,23 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
           {canEdit && (
             <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
               <Button variant="outline" disabled={busy} onClick={() => void save(false)}>Save costing</Button>
+              {res.checks.vaNeedsApproval && role === 'Admin' && (
+                <input
+                  className={`${fieldCls} w-72`}
+                  placeholder={`Approval reason: VA ${res.checks.effectiveVaPct}% below the default`}
+                  value={vaReason}
+                  onChange={(e) => setVaReason(e.target.value)}
+                />
+              )}
               <Button
-                disabled={busy || !res.checks.ok || p?.bomStatus !== 'CONFIRMED' || (res.checks.belowMinVa && role !== 'Admin')}
+                disabled={busy || !res.checks.ok || p?.bomStatus !== 'CONFIRMED' || (res.checks.vaNeedsApproval && (role !== 'Admin' || !vaReason.trim()))}
                 onClick={() => void save(true)}
                 title={!res.checks.ok ? 'Fix the flagged lines first' : p?.bomStatus !== 'CONFIRMED' ? 'Confirm the BOM first' : ''}
               >
                 <CheckCircle2 /> Save &amp; apply Rs {inr(perKgPrice || !res.perSet ? res.structure.sellPerKg : res.perSet.sell)} {unitLabel} to the quotation
               </Button>
-              {res.checks.belowMinVa && role !== 'Admin' && <span className="text-xs text-rose-800">Below minimum VA: only an Admin can apply.</span>}
+              {res.checks.belowMinVa && <span className="text-xs text-rose-800">Below the minimum VA {res.minVaPct}%: blocked.</span>}
+              {res.checks.vaNeedsApproval && role !== 'Admin' && <span className="text-xs text-amber-800">VA below the default: needs an Admin's approval with a reason.</span>}
               {msg && <span className="text-xs font-semibold text-emerald-800">{msg}</span>}
             </div>
           )}
@@ -842,9 +883,9 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
   );
 }
 
-function Stat({ label, value, strong, tone }: { label: string; value: string; strong?: boolean; tone?: 'red' }) {
+function Stat({ label, value, strong, tone }: { label: string; value: string; strong?: boolean; tone?: 'red' | 'amber' }) {
   return (
-    <div className={`rounded-lg border px-3 py-2 ${tone === 'red' ? 'border-rose-200 bg-rose-50' : 'border-slate-200 bg-slate-50'}`}>
+    <div className={`rounded-lg border px-3 py-2 ${tone === 'red' ? 'border-rose-200 bg-rose-50' : tone === 'amber' ? 'border-amber-200 bg-amber-50' : 'border-slate-200 bg-slate-50'}`}>
       <div className="text-xs text-slate-700">{label}</div>
       <div className={`text-sm ${strong ? 'font-bold text-slate-900' : 'font-semibold text-slate-800'}`}>{value}</div>
     </div>

@@ -6,7 +6,7 @@ import { DOCKET_TYPES, isDocketType } from '@/lib/dockets';
 import { cn } from '@/lib/utils';
 import type { Docket, DocketActions } from '../types';
 
-type Field = 'docketNoQtnNo' | 'type' | 'partyName' | 'state' | 'utility' | 'deliveryLocation' | 'address' | Condition;
+type Field = 'docketNoQtnNo' | 'type' | 'partyName' | 'state' | 'utility' | 'deliveryLocation' | 'deliveryState' | 'address' | Condition;
 type Condition = 'price' | 'payment' | 'delivery' | 'warranty' | 'approval' | 'inspection';
 
 const CONDITIONS: Array<[Condition, string]> = [
@@ -17,7 +17,7 @@ const CONDITIONS: Array<[Condition, string]> = [
   ['approval', 'Approval condition'],
   ['inspection', 'Inspection condition'],
 ];
-const FIELDS: Field[] = ['docketNoQtnNo', 'type', 'partyName', 'state', 'utility', 'deliveryLocation', 'address', ...CONDITIONS.map(([k]) => k)];
+const FIELDS: Field[] = ['docketNoQtnNo', 'type', 'partyName', 'state', 'utility', 'deliveryLocation', 'deliveryState', 'address', ...CONDITIONS.map(([k]) => k)];
 
 const input =
   'h-8 w-full rounded-md border border-border bg-background px-2 text-xs text-foreground outline-none focus-visible:border-blue-500 focus-visible:ring-1 focus-visible:ring-blue-500 disabled:bg-muted disabled:text-foreground/60';
@@ -140,9 +140,10 @@ export function DocketDrawer({ doc, canEdit, isAdmin, termOptions, attachmentCou
         </div>
 
         <div className="grid grid-cols-3 gap-3">
-          {text('state', 'State', { list: 'master-states' })}
+          {text('state', 'State (billing / GST)', { list: 'master-states' })}
           {text('utility', 'Utility', { list: 'master-utilities' })}
           {text('deliveryLocation', 'Delivery location')}
+          {text('deliveryState', 'Delivery state (freight; blank = state)', { list: 'master-states' })}
           {text('address', 'Address', { list: 'master-addresses', span: 'col-span-3' })}
         </div>
 

@@ -17,7 +17,8 @@ const GROUPS: { title: string; kinds: RateKind[] }[] = [
   { title: 'Raw material', kinds: ['RM_RATE', 'WASTAGE_PCT'] },
   { title: 'Fabrication / conversion', kinds: ['FAB_RATE'] },
   { title: 'Galvanising (GI cost master): labour + zinc issue % x zinc rate + transport', kinds: ['GALV_RATE', 'ZINC_PCT', 'ZINC_RATE', 'GALV_TRANSPORT'] },
-  { title: 'Freight (FOR, by destination state; no destination = ex-works)', kinds: ['FREIGHT_MT'] },
+  { title: 'Freight (FOR, by destination state; no destination = ex-works)', kinds: ['FREIGHT_MT', 'FREIGHT_TRIP'] },
+  { title: 'Painting (painted finish, e.g. DTR fencing)', kinds: ['PAINT_RATE'] },
   { title: 'Finance and VA (interest = credit days ÷ 30 × % of selling value)', kinds: ['VA_PCT', 'MIN_VA_PCT', 'INTEREST_PCT', 'CREDIT_DAYS', 'LC_BG_PCT', 'INSPECTION', 'PACKING'] },
   { title: 'Nuts & bolts and bought-out items (separate offer lines; own margin %, else VA %)', kinds: ['NB_RATE', 'NB_MARGIN_PCT', 'BOUGHT_OUT', 'BO_MARGIN_PCT'] },
 ];
@@ -275,7 +276,7 @@ export function CostingMasterPage({ role }: { role: string }) {
                     ))}
                   </select>
                 ) : (
-                  <input id="r-subj" className={fieldCls} placeholder={rateForm.kind === 'FREIGHT_MT' ? 'Bihar (blank = DEFAULT)' : rateForm.kind === 'NB_RATE' ? 'M16X40 (blank = DEFAULT)' : 'Danger board'} value={rateForm.subject} onChange={(e) => setRateForm({ ...rateForm, subject: e.target.value })} />
+                  <input id="r-subj" className={fieldCls} placeholder={rateForm.kind === 'FREIGHT_MT' || rateForm.kind === 'FREIGHT_TRIP' ? 'Bihar (blank = DEFAULT)' : rateForm.kind === 'NB_RATE' ? 'M16X40 (blank = DEFAULT)' : 'Danger board'} value={rateForm.subject} onChange={(e) => setRateForm({ ...rateForm, subject: e.target.value })} />
                 )}
               </div>
             )}

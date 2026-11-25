@@ -118,6 +118,8 @@ export function sectionKey(section: string | null | undefined): string | null {
       break;
     }
   }
+  // A channel is named depth x flange; a third figure is the web thickness ("ISMC 75X40X6").
+  k = k.replace(/^(ISMC\d+(?:\.\d+)?X\d+(?:\.\d+)?)X\d+(?:\.\d+)?$/, '$1');
   return k;
 }
 

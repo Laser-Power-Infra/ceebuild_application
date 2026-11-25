@@ -69,3 +69,4 @@ docker-compose.yml
 # Real CEEBUILD user list (usernames/roles) - keep local; see config/users.example.json
 config/users.json
 backups/
+docs/m14-rev2-reference/pbi-*/

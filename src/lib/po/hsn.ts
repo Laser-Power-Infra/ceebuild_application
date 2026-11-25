@@ -38,3 +38,14 @@ export function gstPctFor(hsn: string | null | undefined): number | null {
   if (GST_BY_HSN[k] !== undefined) return GST_BY_HSN[k];
   return /^(72|73)/.test(k) ? 18 : null;
 }
+
+/**
+ * HSN printed on an offer line (M14, 25-11): the item's own HSN when set, else from the item name,
+ * else 7308 (fabricated structures). Danger / sign plates come out as 8310 through HSN_RULES.
+ */
+export function offerHsn(item: { hsn?: string | null; ourItemName?: string | null; itemNameParty?: string | null }): string {
+  const own = String(item.hsn ?? '').trim();
+  if (own) return own;
+  const name = `${item.ourItemName ?? ''} ${item.itemNameParty ?? ''}`.trim();
+  return (name && hsnFor(name)?.hsn) || '7308';
+}

@@ -5,7 +5,7 @@ import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
 import { toNum } from '@/lib/bom/parse';
 import { normalizeDocketNo } from '@/lib/dockets';
-import { computeCosting, setsFromItem, wastageFromPlan, type BillingBasis, type CostLineInput, type CostResult, type DiscountInput } from '@/lib/costing/calc';
+import { computeCosting, setsFromItem, wastageFromPlan, type BillingBasis, type CostLineInput, type CostResult, type DiscountInput, type LoadBasis } from '@/lib/costing/calc';
 import { classifyFab } from '@/lib/costing/fab';
 import { planIndent, type PlanPiece, type SectionInfo } from '@/lib/planning/cutting';
 import { getPlanSettings } from '@/modules/settings/server';
@@ -118,7 +118,18 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
       fabCat: l.fabCat ?? classifyFab({ sectionKey: l.sectionKey, section: l.section, description: l.description, lengthMm: l.lengthMm, structureType: g?.name ?? bom.structureType }),
     };
   };
-  const base = { galvanised: bom.galvanised, billingBasis: bom.billingBasis as BillingBasis, destState: docket?.deliveryLocation || docket?.state || null, quoteDate, sectionKgm, purchaseItems, rates };
+  // Freight goes to the site: the delivery state when set (billing state stays for GST), else the state.
+  const base = {
+    galvanised: bom.galvanised,
+    painted: bom.painted,
+    billingBasis: bom.billingBasis as BillingBasis,
+    destState: docket?.deliveryState || docket?.state || null,
+    quoteDate,
+    sectionKgm,
+    purchaseItems,
+    rates,
+    load: { basis: (bom.loadBasis === 'SPACE' ? 'SPACE' : 'WEIGHT') as LoadBasis, setsPerTruck: dec(bom.setsPerTruck) },
+  };
   const qty = toNum(item.qty);
   let setsBasis: CostingPreview['setsBasis'];
   let lines: CostLineInput[];
@@ -248,7 +259,7 @@ export async function costingDetail(id: number) {
  */
 export async function saveCosting(
   bomId: number,
-  opts: { vaPct?: number | null; quoteDate?: string | null; apply: boolean; note?: string; discount?: DiscountInput | null },
+  opts: { vaPct?: number | null; quoteDate?: string | null; apply: boolean; note?: string; discount?: DiscountInput | null; vaApprovalReason?: string | null },
   user: AuthUser,
 ) {
   // Rev 2 §7: discount is Admin only and needs a reason.
@@ -260,11 +271,18 @@ export async function saveCosting(
   const r = p.result;
   // Discount scales every price (per kg, per set, N&B, bought-out) to the final price.
   const f = r.discount ? r.discount.factor : 1;
-  if (opts.apply && r.discount?.belowMinVa && user.role !== 'Admin') throw new UserError('Effective VA after discount is below the minimum VA.');
+  // VA band (25-11): below the minimum is blocked for everyone (checks.ok is false); between the
+  // minimum and the default VA needs an Admin's approval with a reason, kept with the costing.
+  const vaApproval =
+    r.checks.vaNeedsApproval && opts.vaApprovalReason?.trim() ? { reason: opts.vaApprovalReason.trim().slice(0, 300), by: user.name, at: new Date().toISOString() } : null;
   if (opts.apply) {
     if (p.bomStatus !== 'CONFIRMED') throw new UserError('Confirm the BOM before applying the price.');
+    if (r.checks.belowMinVa) throw new UserError(`VA ${r.checks.effectiveVaPct}% is below the minimum ${r.minVaPct}%: blocked.`);
     if (!r.checks.ok) throw new UserError(`Cannot apply: ${r.checks.messages.join(' ')}`);
-    if (r.checks.belowMinVa && user.role !== 'Admin') throw new UserError(`VA ${r.vaPct}% is below the minimum ${r.minVaPct}%. Only an Admin can apply it.`);
+    if (r.checks.vaNeedsApproval) {
+      if (user.role !== 'Admin') throw new UserError(`VA ${r.checks.effectiveVaPct}% is below the default: an Admin must approve it.`);
+      if (!vaApproval) throw new UserError(`VA ${r.checks.effectiveVaPct}% is below the default: give the reason for the approval.`);
+    }
   }
   const bom = await prisma.itemBom.findUnique({ where: { id: bomId }, select: { itemId: true, docketId: true, billingBasis: true } });
   const priceFields = (() => {
@@ -301,7 +319,7 @@ export async function saveCosting(
         nbSellTotal: r2(r.nutsBolts.sell * f),
         boSellTotal: r2(r.boughtOut.sell * f),
         detail: { ...p, ratesUsed: r.ratesUsed } as unknown as Prisma.InputJsonValue,
-        flags: r.checks as unknown as Prisma.InputJsonValue,
+        flags: { ...r.checks, vaApproval } as unknown as Prisma.InputJsonValue,
         applied: !!priceFields,
         appliedAt: priceFields ? new Date() : null,
         createdById: user.id,
@@ -321,6 +339,7 @@ export async function saveCosting(
           sellPerKg: r2(r.structure.sellPerKg * f),
           sellTotal: r.discount ? r.discount.finalPrice : r.grandSell,
           discount: r.discount ? { mode: r.discount.mode, value: r.discount.value, amount: r.discount.amount, reason: r.discount.reason, effectiveVaPct: r.discount.effectiveVaPct } : null,
+          vaApproval,
           applied: !!priceFields,
         }),
         ...auditUser(user),
@@ -403,7 +422,7 @@ export async function docketCosting(docketId: number) {
   });
   const total = r2(rows.reduce((a, r) => a + (r.sellTotal ?? 0), 0));
   return {
-    docket: { id: docket.id, docketNo: docket.docketNoQtnNo, partyName: docket.partyName, utility: docket.utility, state: docket.state, deliveryLocation: docket.deliveryLocation },
+    docket: { id: docket.id, docketNo: docket.docketNoQtnNo, partyName: docket.partyName, utility: docket.utility, state: docket.state, deliveryLocation: docket.deliveryLocation, deliveryState: docket.deliveryState },
     rows,
     total,
   };

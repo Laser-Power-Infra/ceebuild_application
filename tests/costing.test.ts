@@ -394,3 +394,95 @@ test('masters left blank are listed and block Apply; interim RM rate is marked b
   // Rev 2: kerf / end allowance not confirmed is pending (0 used), not blocking
   assert.ok(noFreight.checks.pendingMasters.some((m) => /End allowance/.test(m)));
 });
+
+// ---- M14 25-11: VA band, freight by space, painted finish, delivery-state lanes ----
+
+test('25-11: VA below the minimum is blocked; between minimum and default needs approval', () => {
+  const rs = [...baseRates().filter((r) => r.kind !== 'MIN_VA_PCT'), rate('MIN_VA_PCT', 8, '%'), rate('VA_PCT', 12, '%')];
+  const ok = computeCosting(input({ rates: rs }));
+  assert.equal(ok.checks.belowMinVa, false);
+  assert.equal(ok.checks.vaNeedsApproval, false);
+  assert.equal(ok.checks.ok, true);
+  const mid = computeCosting(input({ rates: rs, vaPct: 10 }));
+  assert.equal(mid.checks.vaNeedsApproval, true);
+  assert.equal(mid.checks.ok, true); // allowed, but only with an Admin approval + reason (server)
+  const low = computeCosting(input({ rates: rs, vaPct: 7 }));
+  assert.equal(low.checks.belowMinVa, true);
+  assert.equal(low.checks.ok, false);
+  // A discount that takes the effective VA under 8% is blocked too.
+  const disc = computeCosting(input({ rates: rs, discount: { mode: 'PCT', value: 5, reason: 'x' } }));
+  assert.ok(disc.checks.effectiveVaPct < 8);
+  assert.equal(disc.checks.belowMinVa, true);
+  assert.equal(disc.checks.ok, false);
+});
+
+test('25-11: freight by space = ROUNDUP(sets / sets per truck) trips x trip rate', () => {
+  const rs = [...baseRates(), rate('FREIGHT_TRIP', 43450, 'Rs/trip', 'BIHAR')];
+  const r = computeCosting(input({ rates: rs, load: { basis: 'SPACE', setsPerTruck: 14 }, lines: [line({ sets: 262 })] }));
+  assert.equal(r.freight.basis, 'SPACE');
+  assert.equal(r.freight.trips, 19); // 262 / 14 = 18.7 -> 19
+  // Per-line rounding (Rs 0.01 a line per set): within a few rupees of 19 x 43,450.
+  assert.ok(Math.abs(r.freight.total - 19 * 43450) < 5);
+  assert.ok(Math.abs((r.freight.perSet ?? 0) - (19 * 43450) / 262) < 0.05);
+  // No sets per truck: listed as missing, price cannot be applied.
+  const miss = computeCosting(input({ rates: rs, load: { basis: 'SPACE', setsPerTruck: null } }));
+  assert.ok(miss.checks.missingMasters.some((m) => /Sets per truck/.test(m)));
+  assert.equal(miss.checks.ok, false);
+  // Weight basis unchanged.
+  assert.equal(computeCosting(input()).freight.basis, 'WEIGHT');
+});
+
+test('25-11: painted finish adds PAINT_RATE x black kg; not with galvanised', () => {
+  const rs = [...baseRates(), rate('PAINT_RATE', 7, 'Rs/kg')];
+  const painted = computeCosting(input({ rates: rs, galvanised: false, painted: true }));
+  assert.equal(painted.lines[0].paint, Math.round(7 * 38.24 * 100) / 100);
+  const gi = computeCosting(input({ rates: rs, galvanised: true, painted: true }));
+  assert.equal(gi.lines[0].paint, 0);
+  const noRate = computeCosting(input({ galvanised: false, painted: true }));
+  assert.ok(noRate.checks.missingMasters.some((m) => /Painting/.test(m)));
+});
+
+test('25-11: pipe and wire-mesh families; channel thickness dropped from the key', async () => {
+  const { familyOf } = await import('../src/lib/costing/calc');
+  assert.equal(familyOf('PIPE25NB'), 'PIPE');
+  assert.equal(familyOf('GIPIPE40NB'), 'PIPE');
+  assert.equal(familyOf('WIREMESH50X50'), 'WIRE_MESH');
+  assert.equal(sectionKey('ISMC 75X40X6'), 'ISMC75X40');
+  assert.equal(sectionKey('ISMC-100x50x6'), 'ISMC100X50');
+  assert.equal(sectionKey('ISA 50X50X6'), 'ISA50X50X6');
+});
+
+test('freight lanes: PIN -> state, trucks only, <=6 months lowest, older +5%, outliers dropped', async () => {
+  const { stateOfPin, truckCapacityMt, deriveLanes, stateFreight } = await import('../src/lib/freight/lanes');
+  assert.equal(stateOfPin('208001'), 'Uttar Pradesh');
+  assert.equal(stateOfPin('821115'), 'Bihar');
+  assert.equal(stateOfPin('834001'), 'Jharkhand');
+  assert.equal(stateOfPin('495553'), 'Chhattisgarh');
+  assert.equal(stateOfPin('12'), null);
+  assert.equal(truckCapacityMt('TRUCK-16MT'), 16);
+  assert.equal(truckCapacityMt('TRAILER'), null);
+  const row = (date: string, tripRate: number, vehicleType = 'TRUCK-16MT', toPin = '208001') => ({ fromLoc: 'DHULAGARH', toLoc: 'KANPUR', toPin, vehicleType, date, tripRate });
+  const lanes = deriveLanes(
+    [
+      row('2026-10-01', 45000),
+      row('2026-09-01', 43000),
+      row('2026-07-01', 44000),
+      row('2026-08-01', 9000), // outlier (< 0.5 x median)
+      row('2026-10-05', 40000, 'TRAILER'), // not a truck
+      row('2025-01-01', 30000, 'TRUCK-9MT', '821115'),
+      row('2024-06-01', 28000, 'TRUCK-9MT', '821115'),
+      row('2025-02-01', 31000, 'TRUCK-9MT', '821115'),
+      { ...row('2026-10-01', 1000), fromLoc: 'KALYANI' }, // other origin
+    ],
+    '2026-11-25',
+  );
+  const up = lanes.find((l) => l.state === 'Uttar Pradesh')!;
+  assert.equal(up.tripRate, 43000);
+  assert.equal(up.basis, 'LOWEST_6M');
+  assert.equal(up.outliers, 1);
+  const br = lanes.find((l) => l.state === 'Bihar')!;
+  assert.equal(br.basis, 'OLDER_PLUS_5');
+  assert.equal(br.tripRate, 32550); // latest older (31,000) + 5%
+  const s = stateFreight(lanes);
+  assert.equal(s.find((x) => x.state === 'Uttar Pradesh')?.perMt.ratePerMt, Math.round((43000 / 16) * 100) / 100);
+});

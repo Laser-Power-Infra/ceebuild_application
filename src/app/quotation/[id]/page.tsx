@@ -3,6 +3,7 @@
 import React, { useEffect, useState, use, useRef } from 'react';
 import { Printer, ArrowLeft, Download, FileText, CheckCircle, Sparkles } from 'lucide-react';
 import Link from 'next/link';
+import { offerHsn } from '@/lib/po/hsn';
 
 interface Docket {
   id: number;
@@ -30,6 +31,7 @@ interface Item {
   price: string | null;
   uomOfQtn: string | null;
   unitWtOfMemberKg?: string | null;
+  hsn?: string | null;
 }
 
 export default function QuotationPage({ params }: { params: Promise<{ id: string }> }) {
@@ -479,7 +481,8 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
                     <tr>
                       <th className="w-[7%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">SL NO</th>
                       <th className="w-[33%] p-1.5 border border-blue-400 text-left font-extrabold">PARTY ITEM NAME</th>
-                      <th className="w-[24%] p-1.5 border border-blue-400 text-left font-extrabold">OUR ITEM NAME</th>
+                      <th className="w-[18%] p-1.5 border border-blue-400 text-left font-extrabold">OUR ITEM NAME</th>
+                      <th className="w-[6%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">HSN</th>
                       <th className="w-[9%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">QTY</th>
                       <th className="w-[7%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">UNIT</th>
                       <th className="w-[10%] p-1.5 border border-blue-400 text-center whitespace-nowrap font-extrabold">RATE/UNIT</th>
@@ -489,7 +492,7 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
                   <tbody className="divide-y divide-blue-200 font-medium">
                     {chunk.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="p-6 text-center text-slate-500 font-semibold border border-blue-300">
+                        <td colSpan={8} className="p-6 text-center text-slate-500 font-semibold border border-blue-300">
                           No quotation items listed under offer #{docket.docketNoQtnNo}.
                         </td>
                       </tr>
@@ -505,6 +508,7 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
                           <td className="p-1.5 border border-blue-300 text-left text-blue-900 font-bold leading-tight break-words">
                             {item.ourItemName || '-'}
                           </td>
+                          <td className="p-1.5 border border-blue-300 text-center text-slate-700 whitespace-nowrap">{offerHsn(item)}</td>
                           <td className="p-1.5 border border-blue-300 text-center font-bold text-slate-800 whitespace-nowrap">
                             {item.qty || '-'}
                           </td>

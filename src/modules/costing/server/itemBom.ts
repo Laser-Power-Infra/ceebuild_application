@@ -34,6 +34,7 @@ export interface DocketInfo {
   utility: string | null;
   state: string | null;
   deliveryLocation: string | null;
+  deliveryState: string | null;
   type: string | null;
 }
 
@@ -90,7 +91,10 @@ export interface ItemBomInfo {
   structureType: string | null;
   fabType: string;
   galvanised: boolean;
+  painted: boolean;
   billingBasis: string;
+  loadBasis: string;
+  setsPerTruck: number | null;
   status: string;
   extractNote: string | null;
   createdByName: string | null;
@@ -140,7 +144,7 @@ export function itemInfo(item: Awaited<ReturnType<typeof loadItem>>['item']): It
 }
 
 export function docketInfo(d: Awaited<ReturnType<typeof loadItem>>['docket']): DocketInfo | null {
-  return d ? { id: d.id, docketNo: d.docketNoQtnNo, partyName: d.partyName, utility: d.utility, state: d.state, deliveryLocation: d.deliveryLocation, type: d.type } : null;
+  return d ? { id: d.id, docketNo: d.docketNoQtnNo, partyName: d.partyName, utility: d.utility, state: d.state, deliveryLocation: d.deliveryLocation, deliveryState: d.deliveryState, type: d.type } : null;
 }
 
 export async function currentBom(itemId: number): Promise<ItemBomInfo | null> {
@@ -159,7 +163,10 @@ export async function currentBom(itemId: number): Promise<ItemBomInfo | null> {
     structureType: bom.structureType,
     fabType: bom.fabType,
     galvanised: bom.galvanised,
+    painted: bom.painted,
     billingBasis: bom.billingBasis,
+    loadBasis: bom.loadBasis,
+    setsPerTruck: bom.setsPerTruck ? bom.setsPerTruck.toNumber() : null,
     status: bom.status,
     extractNote: bom.extractNote,
     createdByName: bom.createdByName,
@@ -309,7 +316,7 @@ async function newBom(
   user: AuthUser,
 ) {
   // Carry the costing choices over from the previous version.
-  const prev = await tx.itemBom.findFirst({ where: { itemId }, orderBy: { id: 'desc' }, select: { fabType: true, galvanised: true, billingBasis: true } });
+  const prev = await tx.itemBom.findFirst({ where: { itemId }, orderBy: { id: 'desc' }, select: { fabType: true, galvanised: true, painted: true, billingBasis: true, loadBasis: true, setsPerTruck: true } });
   const bom = await tx.itemBom.create({ data: { itemId, docketId, ...data, ...(prev ?? {}), createdById: user.id, createdByName: user.name } });
   const notes = await saveGroups(tx, bom.id, groups);
   if (notes.length) {
@@ -561,7 +568,20 @@ export async function updateBomMeta(bomId: number, field: string, value: string,
   } else if (field === 'billingBasis') {
     if (v !== 'BLACK' && v !== 'GALV') throw new UserError('Billing basis is Black or Galvanised weight.');
     data.billingBasis = v;
-  } else if (field === 'galvanised') data.galvanised = v === 'true';
+  } else if (field === 'galvanised') {
+    data.galvanised = v === 'true';
+    if (v === 'true') data.painted = false;
+  } else if (field === 'painted') {
+    data.painted = v === 'true';
+    if (v === 'true') data.galvanised = false;
+  } else if (field === 'loadBasis') {
+    if (v !== 'WEIGHT' && v !== 'SPACE') throw new UserError('Load basis is WEIGHT or SPACE.');
+    data.loadBasis = v;
+  } else if (field === 'setsPerTruck') {
+    const n = v === '' ? null : Number(v);
+    if (n !== null && !(Number.isFinite(n) && n > 0 && n < 10000)) throw new UserError('Sets per truck must be a number above 0.');
+    data.setsPerTruck = n;
+  }
   else if (field === 'structureType') data.structureType = v.slice(0, 200) || null;
   else throw new UserError('This field cannot be edited.');
   return prisma.$transaction(async (tx) => {
@@ -643,7 +663,7 @@ export async function addBomToLibrary(bomId: number, header: Record<string, unkn
       continue;
     }
     await createDrawing(
-      { utility: docket?.utility, state: docket?.deliveryLocation || docket?.state, ...header, itemType: groups.length > 1 ? g.name : header.itemType || g.name, drawingNo, revision },
+      { utility: docket?.utility, state: docket?.deliveryState || docket?.state, ...header, itemType: groups.length > 1 ? g.name : header.itemType || g.name, drawingNo, revision },
       lines,
       user,
       bomId,

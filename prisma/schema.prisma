@@ -27,6 +27,8 @@ model ItemTable {
   a                String?
   freightPerKg     String?  @map("freight_per_kg")
   status           String?
+  // HSN on the offer; blank = default from the item name (7308 structures, 8310 danger plates).
+  hsn              String?
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 
@@ -42,6 +44,8 @@ model DockerPartyName {
   state            String?
   utility          String?
   deliveryLocation String?  @map("delivery_location")
+  // Site state for freight (state = billing state for GST). Blank = same as state.
+  deliveryState    String?  @map("delivery_state")
   type             String?
   price            String?
   payment          String?
@@ -938,8 +942,13 @@ model ItemBom {
   // PLAIN_CUT | CLAMP_BENT | WELDED (fabrication / conversion rate)
   fabType         String           @default("PLAIN_CUT") @map("fab_type")
   galvanised      Boolean          @default(true)
+  // Painted finish (e.g. DTR fencing, two coats): PAINT_RATE Rs/kg black is added. Not with galvanised.
+  painted         Boolean          @default(false)
   // BLACK | GALV: the weight the client is billed on
   billingBasis    String           @default("GALV") @map("billing_basis")
+  // WEIGHT (freight Rs/MT) | SPACE (bulky: trips = ROUNDUP(sets / sets per truck) x trip rate)
+  loadBasis       String           @default("WEIGHT") @map("load_basis")
+  setsPerTruck    Decimal?         @map("sets_per_truck") @db.Decimal(10, 2)
   // DRAFT | CONFIRMED
   status          String           @default("DRAFT")
   extractNote     String?          @map("extract_note")
@@ -1045,4 +1054,96 @@ model ItemCosting {
   @@index([itemId])
   @@index([docketId])
   @@map("item_costings")
+}
+
+// Rev 2 §11: frozen quotation as sent / approved. Never changed after it is written; a new revision
+// is a new row. Holds the docket, every item and price, the costings and the rates in force.
+model QuotationSnapshot {
+  id            Int      @id @default(autoincrement())
+  docketId      Int      @map("docket_id")
+  docketNo      String?  @map("docket_no")
+  rev           Int
+  quotedOn      DateTime @map("quoted_on") @db.Date
+  // SENT | APPROVED
+  status        String   @default("SENT")
+  note          String?
+  sentTo        String?  @map("sent_to")
+  totalValue    Decimal? @map("total_value") @db.Decimal(16, 2)
+  payload       Json
+  createdById   Int?     @map("created_by_id")
+  createdByName String?  @map("created_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([docketId, rev])
+  @@map("quotation_snapshots")
+}
+
+// Rev 2 §8 seed from the Power BI exports (later the daily Power Automate / n8n feed). Incremental:
+// rows are keyed by a hash of their content and never deleted.
+model ErpPoLine {
+  id        Int       @id @default(autoincrement())
+  rowHash   String    @unique @map("row_hash")
+  indentNo  String?   @map("indent_no")
+  poNo      String?   @map("po_no")
+  party     String?
+  orderDate DateTime? @map("order_date") @db.Date
+  itemName  String?   @map("item_name")
+  uom       String?
+  rate      Decimal?  @db.Decimal(14, 4)
+  poQty     Decimal?  @map("po_qty") @db.Decimal(16, 3)
+  grnQty    Decimal?  @map("grn_qty") @db.Decimal(16, 3)
+  balToGrn  Decimal?  @map("bal_to_grn") @db.Decimal(16, 3)
+  source    String?
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@index([itemName])
+  @@map("erp_po_lines")
+}
+
+model ErpIndentLine {
+  id             Int       @id @default(autoincrement())
+  rowHash        String    @unique @map("row_hash")
+  indentNo       String?   @map("indent_no")
+  indentDate     DateTime? @map("indent_date") @db.Date
+  itemName       String?   @map("item_name")
+  uom            String?
+  indentQty      Decimal?  @map("indent_qty") @db.Decimal(16, 3)
+  requisitionBy  String?   @map("requisition_by")
+  indentBy       String?   @map("indent_by")
+  purpose        String?
+  requireDate    DateTime? @map("require_date") @db.Date
+  deliverySch    String?   @map("delivery_sch")
+  poQty          Decimal?  @map("po_qty") @db.Decimal(16, 3)
+  balToPo        Decimal?  @map("bal_to_po") @db.Decimal(16, 3)
+  source         String?
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@map("erp_indent_lines")
+}
+
+// FREIGHT HISTORY RECORD (FO table), the base of the Freight Master lanes (§5).
+model FreightHistory {
+  id           Int       @id @default(autoincrement())
+  rowHash      String    @unique @map("row_hash")
+  foNo         String?   @map("fo_no")
+  foDate       DateTime? @map("fo_date") @db.Date
+  docNo        String?   @map("doc_no")
+  docDate      DateTime? @map("doc_date") @db.Date
+  fromLoc      String?   @map("from_loc")
+  fromPin      String?   @map("from_pin")
+  toLoc        String?   @map("to_loc")
+  toPin        String?   @map("to_pin")
+  vehicleType  String?   @map("vehicle_type")
+  truckNo      String?   @map("truck_no")
+  netWeight    Decimal?  @map("net_weight") @db.Decimal(14, 3)
+  foRate       Decimal?  @map("fo_rate") @db.Decimal(14, 2)
+  freightValue Decimal?  @map("freight_value") @db.Decimal(14, 2)
+  distance     Decimal?  @db.Decimal(10, 1)
+  billNo       String?   @map("bill_no")
+  billAmount   Decimal?  @map("bill_amount") @db.Decimal(14, 2)
+  source       String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  @@index([toPin])
+  @@map("freight_history")
 }
