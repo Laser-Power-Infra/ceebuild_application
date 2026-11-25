@@ -518,6 +518,9 @@ model PlanSettings {
   minOffcutMm      Int      @default(300) @map("min_offcut_mm")
   // A mark gets its own custom bar length only when it needs at least this many such bars.
   customMinBars    Int      @default(5) @map("custom_min_bars")
+  // Rev 2 §10 length rule: a piece length (all marks together) gets a custom bar when it needs at
+  // least this many metres and 2+ pieces fit; 6000 mm exact multiples stay custom. 0 = old mark rule.
+  customMinMetres  Int      @default(0) @map("custom_min_metres")
   // Red-flag thresholds (days) for the overview.
   bomDueDays       Int      @default(7) @map("bom_due_days")
   galvAlertDays    Int      @default(7) @map("galv_alert_days")

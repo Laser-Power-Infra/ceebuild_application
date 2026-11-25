@@ -8,6 +8,8 @@ export interface PlanSettingsValues {
   bufferPct: number;
   minOffcutMm: number;
   customMinBars: number;
+  /** Rev 2 §10 rule: custom bar per piece length when it needs >= this many metres (0 = per-mark rule). */
+  customMinMetres: number;
   bomDueDays: number;
   galvAlertDays: number;
   diAlertDays: number;

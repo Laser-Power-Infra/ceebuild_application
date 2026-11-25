@@ -29,6 +29,8 @@ export function cutSettingsOf(s: PlanSettingsValues): CutSettings {
     bufferPct: s.bufferPct,
     minOffcutMm: s.minOffcutMm,
     customMinBars: s.customMinBars,
+    // Rev 2 §10 (Puja's Rev 3 indent): custom bar per piece length; 0 keeps the per-mark rule.
+    customMinMetres: s.customMinMetres > 0 ? s.customMinMetres : undefined,
   };
 }
 

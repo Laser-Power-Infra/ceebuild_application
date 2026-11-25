@@ -19,6 +19,7 @@ const CUTTING: Field[] = [
   { key: 'tolPlusMm', label: 'Supply tolerance', unit: '+mm', help: 'Supply tolerance is +0 / +this. No negative tolerance: shorter bars are short.' },
   { key: 'bufferPct', label: 'Buffer', unit: '%', help: 'Extra bars per indent line, rounded up. Plant to confirm.', placeholder: true, step: '0.01' },
   { key: 'customMinBars', label: 'Custom length from', unit: 'bars', help: 'A mark gets its own exact-multiple length only if it fills at least this many bars.', placeholder: true },
+  { key: 'customMinMetres', label: 'Custom length (Rev 2 rule) from', unit: 'm', help: 'Rev 2 rule: all marks of one piece length together get a custom bar when they need at least this many metres and 2+ pieces fit (Puja: 300). 0 = per-mark rule above.' },
   { key: 'minOffcutMm', label: 'Usable offcut from', unit: 'mm', help: 'Offcuts at least this long are listed for reuse.' },
 ];
 const ALERTS: Field[] = [
