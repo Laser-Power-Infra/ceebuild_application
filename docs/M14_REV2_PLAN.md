@@ -74,12 +74,35 @@ For each: BOM → costing → cost sheet with ESTIMATE flags → offer (Quotatio
 - Puja: galvaniser choice, GI transport rate, HSN 8310
 - Vikas: ERP / Power BI access
 
+## 25-11 new mails from Puja (08:00 → 08:59 IST) – changes to the plan
+1. **Power BI exports attached** (freight FO 39,706 rows, Ceebuild indent 240, PO 1,397) + Souvik's "ORDER TO EXECUTION" sheet
+   (BOM AGAINST PLANING, ~3,440 × 113) → one-time import into an Execution module; send the field mapping + exception count with tomorrow's plan.
+2. **§5/§8 no longer wait for Vikas.** Daily refresh = Power Automate (Puja's M365, 02:00, DAX "Run a query against a dataset",
+   fallback Export to file / subscription) → OneDrive/mail → n8n upsert. Send flow design + exact queries; live by **27-11**.
+   Until then: Google Sheet "CEEBUILD EXECUTION TRACKING" is the daily feed.
+3. **Today, status by EOD:**
+   - CEE-000533 JSW: BOM from Drive file + L&T drawings (DA 22 sets, DC/DD 14 sets; 25 NB tube 3000 mm, flats 50×6, bolts bought-out; 699.5 kg black). DAP Akaltara CG.
+   - CEE-000534 NKC: keep billing state Haryana, **add a separate delivery state = Bihar** (new field). Link the 21-11 sent quotation as Rev 0. BOM from Lanarsy SBPDCL approved drawings; rest → missing list.
+   - CEE-000535 Laser: no enquiry found – tell Puja who raised it + attach source.
+   - KESCo docket: create, VA 25% override, freeze the quoted snapshot (§11) at 991 / 1,619 / 1,516 (GI 1,116 / 1,889 / 1,786) per sqm. Add GI wire mesh 66 Rs/kg to RM master.
+   - **Freight load basis** WEIGHT/SPACE per item/BOM; SPACE: trips = ROUNDUP(sets / sets per truck), freight/set = trip rate / sets per truck.
+4. **C1 decisions → masters today:** galvaniser Sinha 4.03 (others history), GI transport 0.50, zinc 3.8%, **minimum VA 8%** (block < 8%,
+   8–12% needs Puja's approval + reason), HSN default 7308 (danger plates 8310). Frequencies: steel daily (carry forward with IEEMA index
+   estimate, overdue by 12:00 → red + alert), zinc LME × USD/INR / 1000 × (1 + premium, calibrated on Rs 379), N&B + freight monthly.
+   Then re-run KESCo, JSW, NKC costings.
+5. **New module: fabrication drawings from BOM** (A3 PDF, title block, GA + member sheets + cutting list matching the indent,
+   Drawing-standards master, revisions, issue to Satya + "confirmed by production" gate). Test = KESCo Rev 0. Plan + date by 26-11.
+
 ## Status log
+- 25-11 10:15 – deploy of `9971291` **did not happen**: health uptime 60,222 s (container from 24-11 ~16:00). Check the Actions run / self-hosted runner.
 - 24-11 evening – plan written. Phase 1 code done locally, 79/79 tests pass, typecheck clean (outside scratch/):
   - `src/lib/costing/calc.ts`: Rev 2 interest (days/30 × % of selling value, closed form), `VA_PCT` default, GI = labour + zinc% × `ZINC_RATE` + transport, ex-works with no destination, pending masters non-blocking, N&B / bought-out margin falls back to VA %.
   - `prisma/migrations/20261124180000_m14_rev2_rate_meta`: `cost_rates.rate_type`, `supplier`, `valid_to`, `update_freq_days`, `owner`. Tags the INTERIM rows as ESTIMATE.
   - `master.ts` + `CostingMasterPage.tsx`: new fields, rate-type badge, "update overdue" in red.
   - `scripts/m14_load_rev2_masters.ts`: GI, zinc, N&B, finance and VA seeds.
   - Live check (read-only): live has only RM (12 rows, 20-11 Anchal) and FAB (14 rows). No N&B margin, so N&B takes VA 12%.
-- **Waiting for go-ahead:** pg_dump → `prisma migrate deploy` → seed `--dry` then real → commit and push (CI deploys to the server).
+- 24-11 18:18 backup `backups/live-before-m14-rev2-20261124-1818.dump`. ~18:25 migration `20261124180000_m14_rev2_rate_meta` applied on live. Rev 2 masters seeded (12 rows: RM families, GI, zinc, N&B, credit, interest, VA). Commit `9971291` pushed to main, so CI deploy is running.
+- Also done locally and pushed: RM family fallback, docket discount (§7), cost-sheet build-up (cost → VA → before discount → discount → final → effective VA).
+- §12 check (read-only): CEE-000533 (item 5758), 000534 (5759–5762) and 000535 (5763) have **no BOM and no costing**. Each needs a BOM before it can be costed. CEE-000534 has state "Haryana" but Sasaram is in Bihar – to correct.
+- (superseded) Waiting for go-ahead: pg_dump → `prisma migrate deploy` → seed `--dry` then real → commit and push (CI deploys to the server).
 - Still to do in Phase 1: RM family fallback (size row → family row, e.g. all angles 50.00 when the size is not on the purchase list); intake re-run screenshots.
