@@ -425,9 +425,10 @@ export async function enquiryReminders(): Promise<{ rows: ReminderRow[]; red: nu
   const out: ReminderRow[] = [];
   for (const r of rows) {
     const base = { id: r.id, partyName: r.partyName, subject: r.subject, docketNo: r.docketNo, dueDate: r.dueDate, daysToDue: r.daysToDue };
-    if (r.daysToDue !== null && r.daysToDue < 0) out.push({ ...base, reason: `Due date passed ${-r.daysToDue} day(s) ago without an offer sent`, severity: 'RED' });
+    // Backlog (90-day backfill) first: old enquiries are a decision list, not an alarm.
+    if (r.status === 'BACKLOG') out.push({ ...base, reason: 'Old enquiry without a docket – approve (docket no.), Lost or Regret', severity: 'INFO' });
+    else if (r.daysToDue !== null && r.daysToDue < 0) out.push({ ...base, reason: `Due date passed ${-r.daysToDue} day(s) ago without an offer sent`, severity: 'RED' });
     else if (r.daysToDue !== null && r.daysToDue <= 2) out.push({ ...base, reason: `Due in ${r.daysToDue} day(s) – offer not sent`, severity: 'RED' });
-    else if (r.status === 'BACKLOG') out.push({ ...base, reason: 'Old enquiry without a docket – approve (docket no.) or Regret', severity: 'INFO' });
     else if (r.draftTotal !== null && !r.quoted) out.push({ ...base, reason: `Draft offer ready${r.budgetary ? ' (budgetary)' : ''} – waiting for approval`, severity: 'AMBER' });
     else if (!r.quoted) out.push({ ...base, reason: 'Docket open – BOM / costing to finish', severity: 'AMBER' });
   }
