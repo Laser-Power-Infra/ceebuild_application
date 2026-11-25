@@ -195,8 +195,9 @@ async function existingDocket(e: RawEnquiry, mailDate: Date | null) {
   const dockets = await prisma.dockerPartyName.findMany({ where: { createdAt: { gte: from } }, orderBy: { id: 'desc' }, select: { id: true, partyName: true, utility: true } });
   const uKey = partyKey(e.utility);
   const same = dockets.filter((d) => partyKey(d.partyName) === key);
-  // Same party with several dockets (e.g. Laser: KESCo and KUSUM): the utility decides.
-  const hit = uKey ? (same.find((d) => partyKey(d.utility) === uKey) ?? (same.length === 1 && !same[0].utility ? same[0] : null)) : (same[0] ?? null);
+  // Same party with several dockets (e.g. Laser: KESCo and KUSUM): only a matching utility links.
+  // No utility read -> link only when the party has exactly one docket in the window.
+  const hit = uKey ? (same.find((d) => partyKey(d.utility) === uKey) ?? (same.length === 1 && !same[0].utility ? same[0] : null)) : same.length === 1 ? same[0] : null;
   return hit?.id ?? null;
 }
 
