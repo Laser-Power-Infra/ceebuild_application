@@ -227,9 +227,11 @@ export interface RawExtraction {
 
 /** Ceebuild / Laser Power & Infra company names and mail domains (public). A customer field holding one was misread. */
 export const OWN_COMPANY = {
-  names: [/\bCEE\s*BUILD\b/i, /\bLASER\s+POWER\b/i],
+  names: [/\bCEE\s*-?\s*B(?:UI|IU|U)LI?D\b/i, /\bLASER\s+POWER\b/i],
   domains: ['ceebuildcompany.com', 'laserpowerinfra.com'],
 };
+/** Ceebuild itself (also typos like "Cee Bulid"). Laser Power & Infra is a group company but also a customer. */
+export const CEEBUILD_NAME = /\bCEE\s*-?\s*B(?:UI|IU|U)LI?D\b/i;
 
 /**
  * Our own people and phone numbers (personal data, so not in the code): server setting
@@ -275,13 +277,23 @@ export function ownCompanyHit(value: string | null | undefined, own: OwnContacts
 // Customer-side fields that must never hold our own details.
 const CUSTOMER_FIELDS: PoFieldKey[] = ['customerName', 'customerGstin', 'billingAddress', 'contactPerson', 'contactEmail', 'contactPhone'];
 
+// Fields where Laser Power & Infra is a real buyer (it places POs on Ceebuild): only Ceebuild is wrong there.
+const BUYER_COMPANY_FIELDS = new Set<PoFieldKey>(['customerName', 'customerGstin', 'billingAddress']);
+
 /**
  * Blank (and mark yellow) every customer field that holds our own company / person / phone / email.
  * Runs when a PO is read AND when a saved reading is opened, so older readings are cleaned too.
  */
 export function guardOwnFields(fields: Record<PoFieldKey, PoFieldValue>, own: OwnContacts = ownContactsFromEnv()) {
   for (const k of CUSTOMER_FIELDS) {
-    const why = fields[k] ? ownCompanyHit(fields[k].value, own) : null;
+    const v = fields[k]?.value;
+    // Readings saved before Laser counted as a buyer: put back what the AI read (kept in the note).
+    if (!v && BUYER_COMPANY_FIELDS.has(k)) {
+      const m = (fields[k]?.note ?? '').match(/^AI read "([\s\S]+)" – that is our own company/);
+      if (m && !CEEBUILD_NAME.test(m[1])) fields[k] = { value: m[1], confidence: 'medium', note: 'Laser Power & Infra is the buyer on this PO' };
+      continue;
+    }
+    const why = !v ? null : BUYER_COMPANY_FIELDS.has(k) ? (CEEBUILD_NAME.test(v) ? 'that is our own company' : null) : ownCompanyHit(v, own);
     if (why) fields[k] = { value: null, confidence: 'missing', note: `AI read "${fields[k].value}" – ${why}; enter the customer's own` };
   }
   return fields;

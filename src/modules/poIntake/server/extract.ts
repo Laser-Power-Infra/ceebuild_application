@@ -48,7 +48,8 @@ export const PO_SCHEMA = {
 export function buildPrompt(today: string) {
   const fieldList = PO_FIELDS.map((f) => `- ${f.key} (${f.label}): ${f.hint}`).join('\n');
   return `You are reading a customer's purchase order (PO) sent to CEEBUILD COMPANY (the supplier / vendor of galvanised steel
-fabricated structures; its group company is LASER POWER & INFRA LIMITED - both are "us"). The documents may be scanned images
+fabricated structures). Its group company LASER POWER & INFRA LIMITED often places POs on Ceebuild: then Laser IS the buyer
+(customer) - put Laser's name, GSTIN and billing address in the customer fields. Ceebuild is never the customer. The documents may be scanned images
 with no text layer: read them by OCR, carefully, digit by digit. Several documents may be attached (the PO, its annexures, a
 drawing / GTP, a BOM, and sometimes OUR OWN price offer). Today is ${today}.
 
@@ -68,7 +69,8 @@ price, quantity or term from an OFFER - it is what we quoted, not what the custo
 
 fields - one entry per key below. value = the text as printed (amounts may keep Rs/commas; dates in any printed format).
 Use value null when the PO does not state it - never guess. Customer fields (customer, GSTIN, addresses, contact person / email /
-phone) are about the BUYER only: never put Ceebuild's or Laser Power & Infra's names, people, phone numbers or emails there. A PO
+phone) are about the BUYER only (the company whose letterhead / "From" issued the PO): never put Ceebuild's name, GSTIN or
+address there (Ceebuild is the supplier / vendor on the PO), nor Ceebuild's or Laser's people, phone numbers or emails in the contact. A PO
 "addressed to" / "Kind Attn." a person at Ceebuild or Laser names OUR person - not the contact. The customer's contact is their
 own signatory / purchase or project person, taken from the PO or from the customer's own mail signature in the thread.
 confidence: "high" = printed clearly and unambiguous; "medium" = readable but inferred or slightly unclear;
@@ -101,8 +103,9 @@ the PO documents; from the mail take only the customer's contact (signature), dr
   (dd-mm-yyyy). None when there is no mail thread.
 - other (untagged) warnings only for CURRENT issues (not superseded ones).
 
-documentType - what the main document is. A PO issued BY Ceebuild to its own supplier (Ceebuild is the buyer), an
-invoice, a quotation or a letter is NOT_A_PO. warnings - anything the reviewer must know (illegible pages, two different
+documentType - what the main document is. A PO issued BY Ceebuild to its own supplier (Ceebuild is the buyer: Ceebuild
+letterhead, PO no. like "CB-PO/125/2026-27", material delivered to Ceebuild's works at Dhulagarh / Sankrail), an invoice, a
+proforma, a quotation, a delivery-failure (bounce) mail or a letter is NOT_A_PO. warnings - anything the reviewer must know (illegible pages, two different
 PO numbers, totals that do not add up, documents that are not POs).`;
 }
 

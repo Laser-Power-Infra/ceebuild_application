@@ -8,12 +8,14 @@ import { Button } from '@/components/ui/button';
 import { listOrdersAction, listOrdersFacetAction } from '@/app/actions/orders';
 import { ORDER_COLUMNS, type OrderRow, type OrdersMeta } from '../columns';
 import { NewOrderDialog } from './NewOrderDialog';
+import { ReceivedPos } from './ReceivedPos';
 
 const canEditRole = (role: string) => role === 'Admin' || role === 'User';
 
 export function OrdersPage({ role }: { role: string }) {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
+  const [tableKey, setTableKey] = useState(0);
   const columns = ORDER_COLUMNS.map((c) =>
     c.key === 'poNumber'
       ? { ...c, render: (r: OrderRow) => <a href={`/orders/${r.id}`} className="font-bold text-blue-700 hover:underline">{r.poNumber}</a> }
@@ -26,7 +28,9 @@ export function OrdersPage({ role }: { role: string }) {
         <h1 className="text-xl font-semibold text-slate-900">Orders</h1>
         <p className="text-xs text-slate-500">An order starts when an offer becomes a PO. Open an order for its BOM and execution registers.</p>
       </div>
+      <ReceivedPos canEdit={canEditRole(role)} onCreated={() => setTableKey((k) => k + 1)} />
       <ServerTable<OrderRow, OrdersMeta>
+        key={tableKey}
         tableId="orders"
         columns={columns}
         rowId={(r) => String(r.id)}

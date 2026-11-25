@@ -10,8 +10,8 @@ import { downloadAttachmentByName } from '@/lib/mailbox';
 import { normalizeDocketNo } from '@/lib/dockets';
 import { PO_FIELDS, type PoExtraction, type PoFieldKey, type PoLineDraft, type PoPendingItem } from '@/lib/po/fields';
 import { enrichExtraction } from '@/lib/po/enrich';
-import { guardOwnFields, normaliseLine, poKey, companyTokens } from '@/lib/po/normalise';
-import { matchQuotedItems, rankDockets, runPoChecks, type DocketCandidate } from '@/lib/po/checks';
+import { guardOwnFields, normaliseLine, parseDate, poKey, companyTokens } from '@/lib/po/normalise';
+import { autoDocketPick, matchQuotedItems, rankDockets, runPoChecks, type DocketCandidate } from '@/lib/po/checks';
 import { getPlanSettings } from '@/modules/settings/server';
 import { createOrderInTx } from '@/modules/orders/server/mutations';
 import type { ConfirmIntakeInput, DocKind, IntakeDoc, IntakeReview } from '../types';
@@ -20,6 +20,7 @@ import { getMailThread, poMailCandidates, searchMailThreads, type MailThread } f
 import { callN8n, N8N_USER } from '@/lib/n8n';
 import { columnsFromFields } from './columns';
 import { runIndentJob, type JobResult } from './job';
+import { customerFromSender, issuedByUs, mailSkipReason, senderFromWarnings } from '@/lib/po/direction';
 
 const sql = Prisma.sql;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -233,6 +234,16 @@ export function suggestHold(e: {
   };
 }
 
+/** "Name <x@lanarsy.com>" -> the docket party whose name holds "lanarsy" (one party only), else null. */
+async function partyFromSenderDomain(sender: string | null): Promise<string | null> {
+  const dom = String(sender ?? '').match(/@([a-z0-9.-]+)>?\s*$/i)?.[1]?.toLowerCase();
+  if (!dom || /ceebuildcompany|laserpowerinfra|gmail|yahoo|outlook|hotmail|rediff|googlemail/.test(dom)) return null;
+  const label = dom.split('.')[0];
+  if (label.length < 4) return null;
+  const rows = await prisma.$queryRaw<{ party: string }[]>(sql`SELECT DISTINCT upper(trim(party_name)) AS party FROM "docket-party-name" WHERE party_name ILIKE ${'%' + label + '%'} LIMIT 3`);
+  return rows.length === 1 ? rows[0].party : null;
+}
+
 export async function getIntakeReview(intakeId: number): Promise<IntakeReview> {
   const intake = await prisma.poIntake.findUnique({ where: { id: intakeId }, include: { documents: { orderBy: { id: 'asc' } } } });
   if (!intake) throw new UserError('This PO intake was not found.');
@@ -248,6 +259,11 @@ export async function getIntakeReview(intakeId: number): Promise<IntakeReview> {
   if (drawingPending.length && f.drawingStatus.value !== 'TO_BE_APPROVED') {
     const p = drawingPending[0];
     f.drawingStatus = { value: 'TO_BE_APPROVED', confidence: 'low', note: `latest mail${p.since ? ` (${ddmmyyyy(p.since)})` : ''}: ${p.item} still pending${f.drawingStatus.value ? `; the PO / older mail said ${f.drawingStatus.value.replace(/_/g, ' ').toLowerCase()}` : ''}` };
+  }
+  if (!f.customerName.value) {
+    const sender = senderFromWarnings(extraction.warnings);
+    const fromMail = customerFromSender(sender) ?? (await partyFromSenderDomain(sender));
+    if (fromMail) f.customerName = { value: fromMail, confidence: 'low', note: `from the mail sender (the PO did not name the buyer clearly)${f.customerName.note ? `; ${f.customerName.note}` : ''}` };
   }
   const [cands, duplicateOf, library] = await Promise.all([
     docketCandidates(f.customerName.value, f.endClient.value),
@@ -458,7 +474,7 @@ export async function n8nPoMails(days: number, limit: number) {
   const cands = await poMailCandidates(days, 60);
   const done = await handledThreads(cands.map((c) => c.threadId));
   const mails = cands
-    .filter((c) => !done.has(c.threadId))
+    .filter((c) => !done.has(c.threadId) && !mailSkipReason(c.subject, c.sender).skip)
     .map(forN8n)
     .filter((m) => m.files.some((f) => f.kind === 'PO'))
     .slice(0, limit);
@@ -538,6 +554,13 @@ export async function ingestN8nIntake(p: N8nIntakePayload) {
     return fail('FAILED', (e as Error).message);
   }
   if (extraction.documentType === 'NOT_A_PO') return fail('DISCARDED', `Not a customer PO (AI). ${extraction.warnings.join(' ')}`.trim(), extraction);
+  const exf = extraction.fields;
+  const ours = issuedByUs(
+    { poNumber: exf.poNumber.value, customerName: exf.customerName.value, deliveryAddress: exf.deliveryAddress.value, endClient: exf.endClient.value, project: exf.project.value },
+    subject,
+    p.sender,
+  );
+  if (ours) return fail('DISCARDED', `Not a customer PO: ${ours}`, extraction);
   if (!s3Configured) return fail('FAILED', 'File storage (S3) is not configured on the dashboard.', extraction);
   if (fileErrors.length) extraction.warnings.push(`Not attached from the mail: ${fileErrors.join('; ')}`);
   if (subject) extraction.warnings.push(`Read by n8n from the mail "${subject}"${p.sender ? ` (${p.sender})` : ''}.`);
@@ -567,7 +590,16 @@ export async function ingestN8nIntake(p: N8nIntakePayload) {
 
 /** "Pick from mail": search the mail archive (Ceebuild mail with attachments). */
 export async function searchMailArchive(q: string) {
-  const threads = await searchMailThreads(q);
+  // Only POs a party sent to us: our own POs to suppliers, bounces and mails n8n found are not a customer PO are left out.
+  const notPo = new Set(
+    (
+      await prisma.poIntake.findMany({
+        where: { source: 'N8N_MAIL', status: 'DISCARDED', error: { startsWith: 'Not a customer PO' } },
+        select: { gmailMessageId: true },
+      })
+    ).map((r) => r.gmailMessageId),
+  );
+  const threads = (await searchMailThreads(q)).filter((t) => !mailSkipReason(t.subject, t.sender).skip && !notPo.has(threadRef(t.threadId)));
   const done = await prisma.poIntake.findMany({
     where: { gmailMessageId: { in: threads.map((t) => threadRef(t.threadId)) }, status: { in: ['EXTRACTED', 'CONFIRMED'] } },
     select: { gmailMessageId: true, id: true, status: true, orderId: true },
@@ -629,7 +661,9 @@ export async function pendingIntakes() {
 export async function attachN8nFile(intakeId: number, meta: { name: string; kind: string; mimeType: string | null }, buffer: Buffer) {
   const intake = await prisma.poIntake.findUnique({ where: { id: intakeId }, select: { id: true, status: true, source: true, gmailMessageId: true, extracted: true } });
   if (!intake || intake.source !== 'N8N_MAIL') throw new UserError('Intake not found.');
-  if (intake.status !== 'EXTRACTED') return { skipped: true, reason: `intake is ${intake.status.toLowerCase()}` };
+  if (intake.status !== 'EXTRACTED' && intake.status !== 'CONFIRMED') return { skipped: true, reason: `intake is ${intake.status.toLowerCase()}` };
+  // An order made automatically before n8n finished uploading gets the late files too.
+  const orderId = intake.status === 'CONFIRMED' ? ((await prisma.poIntake.findUnique({ where: { id: intakeId }, select: { orderId: true } }))?.orderId ?? null) : null;
   const name = meta.name.slice(0, 255) || 'file';
   if (!buffer.length) throw new UserError(`${name} is empty.`);
   if (buffer.length > MAX_FILE_BYTES) throw new UserError(`${name} is larger than 25 MB.`);
@@ -638,9 +672,103 @@ export async function attachN8nFile(intakeId: number, meta: { name: string; kind
   const f: IntakeFile = { name, type: meta.mimeType || geminiMimeOf(name) || 'application/octet-stream', buffer, kind: aiKind(name, toKind(meta.kind), intake.extracted as unknown as PoExtraction | null) };
   const s3Key = await storeFile(f);
   const doc = await prisma.orderDocument.create({
-    data: { intakeId, kind: f.kind, fileName: name, s3Key, mimeType: f.type, sizeBytes: buffer.length, source: 'N8N_MAIL', gmailMessageId: intake.gmailMessageId, uploadedByName: N8N_USER.name },
+    data: { intakeId, orderId, kind: f.kind, fileName: name, s3Key, mimeType: f.type, sizeBytes: buffer.length, source: 'N8N_MAIL', gmailMessageId: intake.gmailMessageId, uploadedByName: N8N_USER.name },
   });
   return { documentId: doc.id, kind: f.kind };
+}
+
+// ------------------------------------------------------------------ orders made automatically from PO mails
+
+/** Docket id -> the date it was entered (yyyy-mm-dd). */
+async function docketDates(ids: number[]) {
+  const rows = ids.length ? await prisma.dockerPartyName.findMany({ where: { id: { in: ids } }, select: { id: true, createdAt: true } }) : [];
+  return new Map(rows.map((r) => [r.id, r.createdAt.toISOString().slice(0, 10)]));
+}
+
+export type AutoOrderResult = { intakeId: number; created: boolean; orderId?: number; docketNo?: string | null; reason?: string; discarded?: boolean };
+
+/**
+ * A PO mail n8n read becomes an order without waiting for the review screen when it is safe:
+ * a PO the party sent us (not our own PO to a supplier), not a duplicate, and an offer (docket) to
+ * the same party that matches. The order's remarks say it was made automatically and what to check;
+ * anything else stays on Orders -> "Received POs not yet orders" for a person to finish.
+ */
+export async function autoCreateOrder(intakeId: number): Promise<AutoOrderResult> {
+  const review = await getIntakeReview(intakeId);
+  if (review.status !== 'EXTRACTED') return { intakeId, created: false, reason: `intake is ${review.status.toLowerCase()}` };
+  const f = review.extraction.fields;
+  const ours = issuedByUs(
+    { poNumber: f.poNumber.value, customerName: f.customerName.value, deliveryAddress: f.deliveryAddress.value, endClient: f.endClient.value, project: f.project.value },
+    review.mailSubject,
+    senderFromWarnings(review.extraction.warnings),
+  );
+  if (ours) {
+    await prisma.poIntake.update({ where: { id: intakeId }, data: { status: 'DISCARDED', error: `Not a customer PO: ${ours}`.slice(0, 1000) } });
+    await prisma.editLog.create({ data: { tableName: 'po_intakes', recordId: intakeId, fieldName: 'status', oldValue: 'EXTRACTED', newValue: `DISCARDED (${ours})`.slice(0, 5000), ...auditUser(N8N_USER) } });
+    return { intakeId, created: false, discarded: true, reason: ours };
+  }
+  if (review.duplicateOf) return { intakeId, created: false, reason: `PO ${review.duplicateOf.poNumber} is already order #${review.duplicateOf.orderId}.` };
+  const { pick: docket, why } = autoDocketPick(review.dockets, { endClient: f.endClient.value, project: f.project.value, poDate: parseDate(f.poDate.value) }, await docketDates(review.dockets.map((d) => d.id)));
+  if (!docket) return { intakeId, created: false, reason: `Docket not chosen automatically: ${why}.` };
+
+  const fields = Object.fromEntries(PO_FIELDS.map((fd) => [fd.key, f[fd.key]?.value ?? null])) as Record<PoFieldKey, string | null>;
+  const proposed = review.proposedCompletion && !fields.completionDate ? ` Delivery date not on the PO (proposed ${review.proposedCompletion.date}).` : '';
+  try {
+    const r = await confirmIntake(
+      intakeId,
+      {
+        docketId: docket.id,
+        fields,
+        lines: review.extraction.lines,
+        hold: review.suggestedHold,
+        remarks: `Made automatically from the PO mail "${review.mailSubject ?? ''}" – check the PO fields and docket ${docket.docketNo ?? docket.id} (${why}; ${docket.reasons.join(', ')}).${proposed}`.slice(0, 2000),
+      },
+      N8N_USER,
+    );
+    return { intakeId, created: true, orderId: r.id, docketNo: docket.docketNo };
+  } catch (e) {
+    return { intakeId, created: false, reason: (e as Error).message };
+  }
+}
+
+/** Every PO mail waiting for review, read at least `minAgeMinutes` ago (so n8n has uploaded its files). */
+export async function autoCreateOrders(minAgeMinutes = 5): Promise<AutoOrderResult[]> {
+  const rows = await prisma.poIntake.findMany({
+    where: { status: 'EXTRACTED', source: 'N8N_MAIL', createdAt: { lte: new Date(Date.now() - minAgeMinutes * 60_000) } },
+    orderBy: { id: 'asc' },
+    select: { id: true },
+  });
+  const out: AutoOrderResult[] = [];
+  for (const r of rows) {
+    try {
+      out.push(await autoCreateOrder(r.id));
+    } catch (e) {
+      out.push({ intakeId: r.id, created: false, reason: (e as Error).message });
+    }
+  }
+  return out;
+}
+
+/** Received POs (read from mail) that are not orders yet, with why - for the Orders page. */
+export async function receivedPosNotOrders() {
+  const rows = await prisma.poIntake.findMany({ where: { status: 'EXTRACTED', source: 'N8N_MAIL' }, orderBy: { id: 'desc' }, take: 100, select: { id: true } });
+  const out: { intakeId: number; subject: string | null; customer: string | null; poNumber: string | null; poDate: string | null; totalValue: string | null; reason: string }[] = [];
+  for (const r of rows) {
+    try {
+      const rv = await getIntakeReview(r.id);
+      const f = rv.extraction.fields;
+      const auto = autoDocketPick(rv.dockets, { endClient: f.endClient.value, project: f.project.value, poDate: parseDate(f.poDate.value) }, await docketDates(rv.dockets.map((d) => d.id)));
+      const reason = rv.duplicateOf
+        ? `Already order #${rv.duplicateOf.orderId} (PO ${rv.duplicateOf.poNumber})`
+        : !auto.pick
+          ? `Choose the docket: ${auto.why}`
+          : 'Some PO fields could not be saved as read – open it, check and confirm';
+      out.push({ intakeId: r.id, subject: rv.mailSubject, customer: f.customerName.value, poNumber: f.poNumber.value, poDate: f.poDate.value, totalValue: f.totalValue.value, reason });
+    } catch (e) {
+      out.push({ intakeId: r.id, subject: null, customer: null, poNumber: null, poDate: null, totalValue: null, reason: (e as Error).message });
+    }
+  }
+  return out;
 }
 
 /**

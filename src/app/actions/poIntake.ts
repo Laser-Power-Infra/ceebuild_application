@@ -8,12 +8,14 @@ import { mailboxConfigured, mailboxName, searchMailbox, threadMails } from '@/li
 import { s3Configured } from '@/lib/s3';
 import type { PoFieldKey, PoLineDraft } from '@/lib/po/fields';
 import {
+  autoCreateOrders,
   checkDuplicate,
   confirmIntake,
   discardIntake,
   getIntakeReview,
   intakeForThread,
   pendingIntakes,
+  receivedPosNotOrders,
   requestMailRead,
   rereadIntake,
   searchMailArchive,
@@ -150,6 +152,16 @@ export async function runIndentJobAction(orderId: unknown) {
 
 export async function pendingIntakesAction() {
   return read(() => pendingIntakes());
+}
+
+/** Orders page: POs received by mail that are not orders yet. */
+export async function receivedPosAction() {
+  return read(() => receivedPosNotOrders());
+}
+
+/** Orders page button: make orders now from the received PO mails where that is safe. */
+export async function autoCreateOrdersAction() {
+  return write(() => autoCreateOrders(0));
 }
 
 export async function searchMailArchiveAction(q: unknown) {

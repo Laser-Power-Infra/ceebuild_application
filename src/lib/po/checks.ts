@@ -337,3 +337,45 @@ export function matchQuotedItems(lines: PoLineDraft[], items: DocketCandidate['i
     };
   });
 }
+
+const itemPct = (d: DocketMatch) => Number(d.reasons.find((r) => r.startsWith('items match'))?.match(/\d+/)?.[0] ?? 0);
+
+/**
+ * The docket an order may be made with WITHOUT a person choosing (PO mails -> orders automatically).
+ * Stricter than the review screen's pre-selection: same party, same utility when the PO names one,
+ * and either the only such offer or the latest revision that also matches the items best (>= 50 %).
+ * Otherwise null with the reason, and the PO waits for a person to choose.
+ */
+export function autoDocketPick(
+  dockets: DocketMatch[],
+  po: { endClient: string | null; project: string | null; poDate?: string | null },
+  docketDates?: Map<number, string>,
+): { pick: DocketMatch | null; why: string } {
+  let c = dockets.filter((d) => d.group === 'SAME_PARTY' && d.relevant);
+  if (!c.length) return { pick: null, why: 'no offer (docket) to this party matches' };
+  // An offer made well after the PO date cannot be what the PO answers (7 days' grace for late entry).
+  if (po.poDate && docketDates) {
+    const limit = new Date(new Date(`${po.poDate}T00:00:00Z`).getTime() + 7 * 86400_000).toISOString().slice(0, 10);
+    const dated = c.filter((d) => !docketDates.get(d.id) || (docketDates.get(d.id) as string) <= limit);
+    if (!dated.length) return { pick: null, why: `the offers to this party were made after the PO date ${po.poDate}` };
+    c = dated;
+  }
+  const dated = c;
+  const hasTarget = !!(utilityKey(po.endClient) || utilityKey(po.project));
+  if (hasTarget) {
+    const util = c.filter((d) => d.reasons.some((r) => r.startsWith('utility')));
+    if (!util.length) return { pick: null, why: 'no offer to this party for this utility / project' };
+    c = util;
+  }
+  // A newer offer to the party with no utility filled may be the revision of the one picked: a person decides.
+  const newerBlank = (p: DocketMatch) => dated.find((d) => !d.utility && docketSeq(d.docketNo) > docketSeq(p.docketNo));
+  const done = (p: DocketMatch, why: string) => {
+    const n = newerBlank(p);
+    return n ? { pick: null, why: `${n.docketNo} (newer, no utility entered) may be the revised offer of ${p.docketNo} – choose one` } : { pick: p, why };
+  };
+  if (c.length === 1) return done(c[0], 'the only matching offer to this party');
+  const best = Math.max(...c.map(itemPct));
+  // The latest revision wins (Puja's rule) when it also matches the items (about) best.
+  if (itemPct(c[0]) >= 50 && best - itemPct(c[0]) <= 5) return done(c[0], 'latest revision, best item match');
+  return { pick: null, why: `${c.length} offers to this party match (${c.slice(0, 4).map((d) => d.docketNo).join(', ')}) – choose one` };
+}
