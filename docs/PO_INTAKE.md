@@ -77,6 +77,27 @@ mail sync ──> MySQL mail archive (threads; attachments on Google Drive)
 | BOM Excel / CSV attachments have a preview (sheet tabs) in the file viewer. | `sheetPreview.ts`, `shared.tsx` |
 | **Read again** on the review screen re-reads a PO with the current rules (mail: through n8n; upload: from the stored files); the old reading is discarded and logged. | `intake.ts` `rereadIntake()` |
 
+## Only POs we received; orders made automatically (25-11-2026)
+
+- **Direction.** Only POs a party sent TO Ceebuild count. Left out of the PO mail list and never made
+  into orders: our purchase team's POs to suppliers (subject "P.O-125/Durga Trading Company/...",
+  "P.O REQUIRED", PO no. "CB-PO/...", material delivered to our works at Dhulagarh / Sankrail with no
+  project) and bounce / auto-reply mails. Rules in `src/lib/po/direction.ts`; the AI prompt says the same.
+- **Laser Power & Infra is a buyer.** It places most POs on Ceebuild, so its name / GSTIN / billing
+  address stay in the customer fields; only Ceebuild (also misspelt "Cee Bulid") is blanked. Laser's
+  people and mail ids are still never the customer contact.
+- **Customer from the mail** when the PO does not name the buyer clearly: the sender's company name,
+  else the docket party matching the sender's mail domain (lanarsy.com -> LANARSY INFRA LIMITED).
+- **Automatic orders.** Each 15-minute n8n call (`GET /api/n8n/po-mails`) first runs
+  `autoCreateOrders`: a PO read at least 5 minutes ago becomes an order (user "n8n (automatic)", edit
+  log as usual, hold from the latest mail, indent job runs) when the docket is unambiguous
+  (`autoDocketPick`): same party; same utility when the PO names one; offer entered no later than
+  7 days after the PO date; and the only such offer, or the latest revision that also matches the
+  items best (within 5 points, at least 50 %); no newer offer to the party with the utility blank.
+  Optional fields that cannot be saved as read (e.g. GST "15.12.000.00") are left blank and named in
+  the order remarks. Everything else waits on **Orders -> "POs received by mail – not orders yet"**
+  with the reason; "Make orders now" runs the same check at once.
+
 ## Indent job (runs on Confirm, "Re-run" on the PO tab)
 
 | Step | What it does | Stops with |

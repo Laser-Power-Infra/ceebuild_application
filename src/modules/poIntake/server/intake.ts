@@ -712,7 +712,23 @@ export async function autoCreateOrder(intakeId: number): Promise<AutoOrderResult
   if (!docket) return { intakeId, created: false, reason: `Docket not chosen automatically: ${why}.` };
 
   const fields = Object.fromEntries(PO_FIELDS.map((fd) => [fd.key, f[fd.key]?.value ?? null])) as Record<PoFieldKey, string | null>;
+  // A field the AI read but that cannot be saved (e.g. GST "15.12.000.00", delivery "As per requirement")
+  // is left blank on the order and named in the remarks; a required one stops the automatic order.
+  const blanked: string[] = [];
+  for (let i = 0; i < PO_FIELDS.length; i++) {
+    try {
+      columnsFromFields(fields);
+      break;
+    } catch (e) {
+      const msg = (e as Error).message;
+      const fd = PO_FIELDS.find((x) => msg.startsWith(`${x.label}:`));
+      if (!fd || fd.required || fields[fd.key] === null) return { intakeId, created: false, reason: msg };
+      blanked.push(`${fd.label} "${fields[fd.key]}"`);
+      fields[fd.key] = null;
+    }
+  }
   const proposed = review.proposedCompletion && !fields.completionDate ? ` Delivery date not on the PO (proposed ${review.proposedCompletion.date}).` : '';
+  const left = blanked.length ? ` Left blank (could not be read as written): ${blanked.join('; ')}.` : '';
   try {
     const r = await confirmIntake(
       intakeId,
@@ -721,7 +737,7 @@ export async function autoCreateOrder(intakeId: number): Promise<AutoOrderResult
         fields,
         lines: review.extraction.lines,
         hold: review.suggestedHold,
-        remarks: `Made automatically from the PO mail "${review.mailSubject ?? ''}" – check the PO fields and docket ${docket.docketNo ?? docket.id} (${why}; ${docket.reasons.join(', ')}).${proposed}`.slice(0, 2000),
+        remarks: `Made automatically from the PO mail "${review.mailSubject ?? ''}" – check the PO fields and docket ${docket.docketNo ?? docket.id} (${why}; ${docket.reasons.join(', ')}).${proposed}${left}`.slice(0, 2000),
       },
       N8N_USER,
     );
