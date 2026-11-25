@@ -1147,3 +1147,37 @@ model FreightHistory {
   @@index([toPin])
   @@map("freight_history")
 }
+
+// Rev 2 §2 (enquiry automation, stage 1): every mail to info@ read by n8n + Gemini. An ENQUIRY creates
+// a docket (or links to the existing one); anything else is recorded so it is not read again.
+model EnquiryIntake {
+  id             Int       @id @default(autoincrement())
+  // "thread:<gmail thread id>" of the mail archive
+  threadRef      String    @map("thread_ref")
+  // ENQUIRY | PO | AMENDMENT | CLARIFICATION | OTHER
+  classification String
+  // CREATED (new docket) | LINKED (existing docket) | NOT_ENQUIRY | FAILED
+  status         String
+  subject        String?
+  sender         String?
+  mailDate       DateTime? @map("mail_date")
+  partyName      String?   @map("party_name")
+  enquiryNo      String?   @map("enquiry_no")
+  dueDate        DateTime? @map("due_date") @db.Date
+  docketId       Int?      @map("docket_id")
+  docketNo       String?   @map("docket_no")
+  // Files of the mail (name, kind, Drive link) and what the AI read (party, items, terms, notes).
+  files          Json?
+  extracted      Json?
+  model          String?
+  error          String?
+  // REGRET needs a reason approved by Puja (E5); PO / LOST close the enquiry.
+  outcome        String?
+  outcomeNote    String?   @map("outcome_note")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([threadRef])
+  @@index([docketId])
+  @@map("enquiry_intakes")
+}

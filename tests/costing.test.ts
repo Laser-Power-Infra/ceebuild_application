@@ -487,6 +487,19 @@ test('freight lanes: PIN -> state, trucks only, <=6 months lowest, older +5%, ou
   assert.equal(s.find((x) => x.state === 'Uttar Pradesh')?.perMt.ratePerMt, Math.round((43000 / 16) * 100) / 100);
 });
 
+test('enquiry intake: mail class, party key and enquiry no. key', async () => {
+  const { classifyMail, partyKey, enquiryNoKey } = await import('../src/lib/enquiry/classify');
+  assert.equal(classifyMail('RFQ FOR SUPPLY OF PIPE TYPE FOR 400 KV TRANSMISSION LINE AT JSW MAHANADI POWER LTD || 4937002082', ''), 'ENQUIRY');
+  assert.equal(classifyMail('Fwd: Requrirements of Hardware & Structure for KUSUM Solar Project- Maharashtra', 'Please provide your best offer.'), 'ENQUIRY');
+  assert.equal(classifyMail('Purchase Order No. 4500123 for GI structures', ''), 'PO');
+  assert.equal(classifyMail('Clarification on GTP', ''), 'CLARIFICATION');
+  assert.equal(classifyMail('Payment Request – November', 'quote'), 'OTHER');
+  assert.equal(partyKey('JSW MAHANADI POWER COMPANY LTD.'), partyKey('JSW Mahanadi Power Co. Limited'));
+  assert.equal(partyKey('M/s N K C Project'), 'N K');
+  assert.equal(enquiryNoKey('RFQ No. 4937002082'), '4937002082');
+  assert.equal(enquiryNoKey('12'), null);
+});
+
 test('ERP feed: dates, numbers and content hashes (identical rows keep distinct keys)', async () => {
   // import.ts is server-only; the pure helpers are checked through a copy-free dynamic import guard.
   const mod = await import('../src/modules/erp/server/import').catch(() => null);
@@ -500,4 +513,9 @@ test('ERP feed: dates, numbers and content hashes (identical rows keep distinct 
   const h = rowHashes([{ a: 1 }, { a: 1 }, { a: 2 }]);
   assert.equal(new Set(h).size, 3);
   assert.deepEqual(rowHashes([{ a: 1 }]), [h[0]]);
+});
+
+test('enquiry intake: internal M14 mails are not enquiries', async () => {
+  const { classifyMail } = await import('../src/lib/enquiry/classify');
+  assert.equal(classifyMail('Re: M14 – Correction to E5: every enquiry MUST get an offer', 'enquiry'), 'OTHER');
 });

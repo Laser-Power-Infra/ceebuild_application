@@ -59,6 +59,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: 'Quotation',
     items: [
       { key: 'dockets', label: 'Dockets', icon: Building, href: '/?tab=dockets', tab: 'dockets' },
+      { key: 'enquiries', label: 'Enquiries', icon: History, href: '/costing/enquiries' },
       { key: 'terms', label: 'Terms & Conditions', icon: FileText, href: '/?tab=terms', tab: 'terms' },
     ],
   },
