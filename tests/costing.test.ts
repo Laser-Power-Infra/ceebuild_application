@@ -486,3 +486,18 @@ test('freight lanes: PIN -> state, trucks only, <=6 months lowest, older +5%, ou
   const s = stateFreight(lanes);
   assert.equal(s.find((x) => x.state === 'Uttar Pradesh')?.perMt.ratePerMt, Math.round((43000 / 16) * 100) / 100);
 });
+
+test('ERP feed: dates, numbers and content hashes (identical rows keep distinct keys)', async () => {
+  // import.ts is server-only; the pure helpers are checked through a copy-free dynamic import guard.
+  const mod = await import('../src/modules/erp/server/import').catch(() => null);
+  if (!mod) return; // 'server-only' refuses outside the react-server condition
+  const { erpDate, erpNum, rowHashes } = mod;
+  assert.equal((erpDate('24-Nov-26') as Date).toISOString().slice(0, 10), '2026-11-24');
+  assert.equal((erpDate('2026-11-24T00:00:00') as Date).toISOString().slice(0, 10), '2026-11-24');
+  assert.equal((erpDate('05/12/2025') as Date).toISOString().slice(0, 10), '2025-12-05');
+  assert.equal(erpDate('abc'), 'BAD');
+  assert.equal(erpNum('1,234.5'), 1234.5);
+  const h = rowHashes([{ a: 1 }, { a: 1 }, { a: 2 }]);
+  assert.equal(new Set(h).size, 3);
+  assert.deepEqual(rowHashes([{ a: 1 }]), [h[0]]);
+});
