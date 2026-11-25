@@ -5,6 +5,7 @@ import { UserError } from '@/lib/actionResult';
 import { getGeminiModel, parseGeminiAnswer } from '@/lib/gemini';
 import { searchMailThreads, type MailThread } from '@/lib/mailDb';
 import { nextDocketNumber, isUniqueViolation } from '@/lib/docketNumber';
+import { autoCostEnquiry } from './autoCost';
 import { classifyMail, enquiryNoKey, ENQUIRY_SEARCH_WORDS, MAIL_CLASSES, partyKey, type MailClass } from '@/lib/enquiry/classify';
 
 // Rev 2 §2 stage 1 (E1-E3, E6 tracker): n8n lists new mails of info@ that look like enquiries
@@ -34,14 +35,14 @@ export const ENQUIRY_SCHEMA = {
     dueDate: S,
     tender: { type: 'BOOLEAN' },
     terms: S,
-    items: { type: 'ARRAY', items: { type: 'OBJECT', properties: { description: { type: 'STRING' }, unit: S, qty: S, note: S }, required: ['description'] } },
+    items: { type: 'ARRAY', items: { type: 'OBJECT', properties: { description: { type: 'STRING' }, unit: S, qty: S, note: S, ourItem: S, libraryType: S }, required: ['description'] } },
     documents: { type: 'ARRAY', items: { type: 'OBJECT', properties: { name: { type: 'STRING' }, type: { type: 'STRING', enum: ['BOQ', 'BOM', 'DRAWING', 'GTP', 'SPECIFICATION', 'OFFER', 'OTHER'] } }, required: ['name', 'type'] } },
     notes: { type: 'ARRAY', items: { type: 'STRING' } },
   },
   required: ['mailClass', 'items', 'documents', 'notes'],
 };
 
-export function enquiryPrompt(today: string) {
+export function enquiryPrompt(today: string, ourItems: string[] = [], libraryTypes: string[] = []) {
   return `You are reading a mail thread received by CEEBUILD COMPANY (info@ceebuildcompany.com), a maker of galvanised steel
 fabricated structures for power distribution / transmission (cross arms, channels, clamps, earthing, fencing, stay sets ...).
 Its group company is LASER POWER & INFRA LIMITED. Attached documents (BOQ, drawings, GTP, specifications) may be scanned: read
@@ -53,7 +54,9 @@ forwarding their project's requirement to Ceebuild: then the party is LASER POWE
 end client). NOT an enquiry: Laser's or Ceebuild's own purchase enquiries to OTHER suppliers (cables, conductors, wires,
 pipes ... asked from vendors, with Ceebuild only copied or forwarding) - that is OTHER. PO = a purchase / work order or LOA. AMENDMENT = a revised BOQ / corrigendum / amendment to an earlier enquiry or
 order. CLARIFICATION = questions or answers about an earlier enquiry or offer. OTHER = anything else, including OUR OWN offers
-and quotations sent out by Ceebuild / Laser, invoices, payments, internal mails.
+and quotations sent out by Ceebuild / Laser on their own, invoices, payments, internal mails.
+Classify the THREAD by the request that started it: a customer's RFQ / enquiry followed by our offer or our questions in
+later messages is still an ENQUIRY (read party, items and terms from the customer's request).
 
 For an ENQUIRY (else leave the fields null and items empty):
 - party = the organisation asking for the price (never Ceebuild; Laser only when Laser itself is the buyer). partyAddress.
@@ -65,13 +68,32 @@ For an ENQUIRY (else leave the fields null and items empty):
 - terms = the terms asked, one line: price basis (ex-works / FOR / DAP), taxes, freight, delivery period, payment, LD.
 - items = every line of the BOQ / requirement: description as printed (short form ok), unit as printed (Sqm, Set, Nos, Kg,
   MT, Km), qty, note (e.g. "mesh 50x50 for 7.08"). Skip total rows. Do not invent lines.
+  ourItem = the one of OUR ITEM NAMES below that the line is (exactly as written there), else null.
+  libraryType = the one of APPROVED DRAWING TYPES below that is the same structure (same voltage, pole type and
+  arrangement), exactly as written there, else null. Only when it is clearly the same structure.
 - documents = one entry per attached document (name exactly as in "Document n: name"): BOQ, BOM, DRAWING, GTP,
   SPECIFICATION, OFFER (our own) or OTHER.
-- notes = anything the costing team must know (options asked, galvanised vs painted, drawings still to come, open queries).`;
+- notes = anything the costing team must know (options asked, galvanised vs painted, drawings still to come, open queries).
+
+OUR ITEM NAMES: ${ourItems.join(' | ') || '(none)'}
+APPROVED DRAWING TYPES: ${libraryTypes.join(' | ') || '(none)'}`;
 }
 
-export function enquiryRequestSpec() {
-  return { model: getGeminiModel(), prompt: enquiryPrompt(new Date().toISOString().slice(0, 10)), schema: ENQUIRY_SCHEMA };
+/** Our item names in use and the approved drawing types, for the AI to map enquiry lines onto. */
+async function mappingLists() {
+  const [names, types] = await Promise.all([
+    prisma.itemTable.groupBy({ by: ['ourItemName'], where: { ourItemName: { not: null } }, _count: true, orderBy: { _count: { ourItemName: 'desc' } }, take: 30 }),
+    prisma.approvedDrawing.findMany({ where: { status: 'APPROVED' }, select: { itemType: true }, distinct: ['itemType'] }),
+  ]);
+  return {
+    ourItems: names.map((n) => String(n.ourItemName ?? '').trim()).filter((n) => n && n.toUpperCase() !== 'OTHERS'),
+    libraryTypes: types.map((t) => t.itemType).filter(Boolean),
+  };
+}
+
+export async function enquiryRequestSpec() {
+  const { ourItems, libraryTypes } = await mappingLists();
+  return { model: getGeminiModel(), prompt: enquiryPrompt(new Date().toISOString().slice(0, 10), ourItems, libraryTypes), schema: ENQUIRY_SCHEMA };
 }
 
 export const threadRef = (threadId: string) => `thread:${threadId}`;
@@ -126,7 +148,7 @@ export async function n8nEnquiryMails(days: number, limit: number, backfill = fa
     .sort((a, b) => String(a.t.date).localeCompare(String(b.t.date)))
     .slice(0, limit)
     .map((c) => forN8n(c.t, c.cls));
-  return { ...enquiryRequestSpec(), backfill, candidates: cands.length, mails };
+  return { ...(await enquiryRequestSpec()), backfill, candidates: cands.length, mails };
 }
 
 interface RawEnquiry {
@@ -146,7 +168,7 @@ interface RawEnquiry {
   dueDate?: string | null;
   tender?: boolean;
   terms?: string | null;
-  items?: { description?: string; unit?: string | null; qty?: string | null; note?: string | null }[];
+  items?: { description?: string; unit?: string | null; qty?: string | null; note?: string | null; ourItem?: string | null; libraryType?: string | null }[];
   documents?: { name?: string; type?: string }[];
   notes?: string[];
 }
@@ -315,6 +337,7 @@ export async function ingestEnquiry(p: N8nEnquiryPayload) {
               itemNameParty: [str(i.description, 400), str(i.note, 200)].filter(Boolean).join(' – '),
               uom: str(i.unit, 30),
               qty: qtyOf(i.qty),
+              ourItemName: str(i.ourItem, 100),
             })),
           });
         const row = await tx.enquiryIntake.create({ data: { ...common, status: 'CREATED', docketId: d.id, docketNo: nextDocketNo } });
@@ -330,6 +353,8 @@ export async function ingestEnquiry(p: N8nEnquiryPayload) {
         });
         return { id: row.id, status: row.status, docketId: d.id, docketNo: nextDocketNo };
       });
+      // Stage 2: draft prices the same day (best effort; the docket is kept even if costing fails).
+      await autoCostEnquiry(out.id).catch((err) => console.error('[enquiry auto-cost]', out.id, err));
       return out;
     } catch (err) {
       if (!isUniqueViolation(err) || attempt === 2) throw err;
@@ -359,6 +384,10 @@ export interface EnquiryRow {
   outcome: string | null;
   daysToDue: number | null;
   stage: string;
+  /** Stage 2 draft (never applied): total and whether any line is budgetary / estimated. */
+  draftTotal: number | null;
+  budgetary: boolean;
+  needs: string[];
 }
 
 const ymd = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
@@ -423,6 +452,9 @@ export async function enquiryTracker(): Promise<EnquiryRow[]> {
       outcome: r.outcome,
       daysToDue: r.dueDate ? Math.ceil((r.dueDate.getTime() - today) / 86400000) : null,
       stage,
+      draftTotal: (r.autoCost as { total?: number | null } | null)?.total ?? null,
+      budgetary: !!(r.autoCost as { budgetary?: boolean } | null)?.budgetary,
+      needs: (r.autoCost as { needs?: string[] } | null)?.needs ?? [],
     };
   });
 }

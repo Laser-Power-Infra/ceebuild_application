@@ -53,7 +53,7 @@ export interface SavedCosting {
 }
 
 /** Last quoted structure price per kg for the same item type on another docket (variance check). */
-async function lastQuoted(structureType: string | null, ourItemName: string | null): Promise<{ value: number; ref: string } | null> {
+export async function lastQuoted(structureType: string | null, ourItemName: string | null): Promise<{ value: number; ref: string } | null> {
   const type = structureType || ourItemName;
   if (!type) return null;
   const rows = await prisma.$queryRaw<{ sell_per_kg: Prisma.Decimal; docket_no: string | null; created_at: Date }[]>`

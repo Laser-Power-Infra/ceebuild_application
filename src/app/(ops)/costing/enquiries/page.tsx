@@ -71,7 +71,11 @@ export default async function Page() {
                   <td className={`${td} text-right`}>
                     {r.items} · {r.bomReady} · {r.costed}
                   </td>
-                  <td className={td}>{r.sentOn ? `Sent ${fmt(r.sentOn)}` : r.quoted ? `Approved ${fmt(r.quoted)}` : '–'}</td>
+                  <td className={td}>
+                    {r.sentOn ? `Sent ${fmt(r.sentOn)}` : r.quoted ? `Approved ${fmt(r.quoted)}` : r.draftTotal !== null ? `Draft Rs ${Math.round(r.draftTotal).toLocaleString('en-IN')}` : '–'}
+                    {!r.sentOn && r.budgetary && <div className="text-[11px] text-amber-800">Budgetary – subject to drawing / BOM</div>}
+                    {r.needs.length > 0 && <div className="text-[11px] text-rose-800" title={r.needs.join('; ')}>Needs: {r.needs.length} BOM / drawing</div>}
+                  </td>
                   <td className={td}>
                     <Badge tone={r.ordered ? 'green' : r.sentOn ? 'blue' : urgent ? 'red' : 'amber'}>{r.stage}</Badge>
                   </td>

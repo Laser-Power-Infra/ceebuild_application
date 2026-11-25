@@ -1169,6 +1169,8 @@ model EnquiryIntake {
   // Files of the mail (name, kind, Drive link) and what the AI read (party, items, terms, notes).
   files          Json?
   extracted      Json?
+  // Stage 2 draft prices (approved drawing / last quoted / none), never applied without approval.
+  autoCost       Json?     @map("auto_cost")
   model          String?
   error          String?
   // REGRET needs a reason approved by Puja (E5); PO / LOST close the enquiry.
