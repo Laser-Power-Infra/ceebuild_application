@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   const days = Math.min(Math.max(Number(url.searchParams.get('days')) || 7, 1), 120);
   const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 3, 1), 20);
   try {
-    return Response.json(await n8nEnquiryMails(days, limit));
+    return Response.json(await n8nEnquiryMails(days, limit, url.searchParams.get('backfill') === '1'));
   } catch (e) {
     console.error('[n8n enquiry-mails]', e);
     return Response.json({ error: (e as Error).message }, { status: 500 });

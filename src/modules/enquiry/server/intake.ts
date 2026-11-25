@@ -107,7 +107,7 @@ const forN8n = (t: MailThread, cls: MailClass) => ({
 });
 
 /** For n8n: mails of the last `days` days that look like enquiries and were not read yet (oldest first). */
-export async function n8nEnquiryMails(days: number, limit: number) {
+export async function n8nEnquiryMails(days: number, limit: number, backfill = false) {
   const since = Date.now() - days * 86400000;
   const seen = new Map<string, MailThread>();
   for (const w of ENQUIRY_SEARCH_WORDS) {
@@ -125,7 +125,7 @@ export async function n8nEnquiryMails(days: number, limit: number) {
     .sort((a, b) => String(a.t.date).localeCompare(String(b.t.date)))
     .slice(0, limit)
     .map((c) => forN8n(c.t, c.cls));
-  return { ...enquiryRequestSpec(), candidates: cands.length, mails };
+  return { ...enquiryRequestSpec(), backfill, candidates: cands.length, mails };
 }
 
 interface RawEnquiry {
@@ -159,6 +159,8 @@ export interface N8nEnquiryPayload {
   gemini?: { status?: number; text?: string } | null;
   model?: string | null;
   note?: string | null;
+  /** 90-day backfill: an enquiry with no docket is listed (BACKLOG), no docket is created. */
+  backfill?: boolean;
 }
 
 const str = (v: unknown, n = 300) => {
@@ -238,6 +240,11 @@ export async function ingestEnquiry(p: N8nEnquiryPayload) {
     const row = await prisma.enquiryIntake.create({ data: { ...common, status: 'LINKED', docketId: linkId, docketNo: d?.docketNoQtnNo ?? null } });
     return { id: row.id, status: row.status, docketId: linkId, docketNo: d?.docketNoQtnNo ?? null };
   }
+  // 90-day backfill (E1): list the old enquiry with no docket; no docket number is taken without approval.
+  if (p.backfill) {
+    const row = await prisma.enquiryIntake.create({ data: { ...common, status: 'BACKLOG' } });
+    return { id: row.id, status: row.status, docketId: null, docketNo: null };
+  }
 
   // New docket "Enquiry – to cost", items from the BOQ.
   const items = (e.items ?? []).filter((i) => str(i.description)).slice(0, 200);
@@ -314,7 +321,7 @@ const ymd = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
 /** E6 tracker: each enquiry with its stage (received -> docket -> BOM -> costed -> offer -> sent -> PO / lost). */
 export async function enquiryTracker(): Promise<EnquiryRow[]> {
-  const rows = await prisma.enquiryIntake.findMany({ where: { status: { in: ['CREATED', 'LINKED'] } }, orderBy: { id: 'desc' }, take: 300 });
+  const rows = await prisma.enquiryIntake.findMany({ where: { status: { in: ['CREATED', 'LINKED', 'BACKLOG'] } }, orderBy: { id: 'desc' }, take: 300 });
   const ids = [...new Set(rows.map((r) => r.docketId).filter((x): x is number => !!x))];
   const dockets = ids.length ? await prisma.dockerPartyName.findMany({ where: { id: { in: ids } }, select: { id: true, docketNoQtnNo: true } }) : [];
   const nos = dockets.map((d) => d.docketNoQtnNo).filter((x): x is string => !!x);
@@ -348,7 +355,9 @@ export async function enquiryTracker(): Promise<EnquiryRow[]> {
                 ? 'BOM ready – to cost'
                 : r.docketId
                   ? 'Docket – BOM to make'
-                  : 'Received';
+                  : r.status === 'BACKLOG'
+                    ? 'Backlog – no docket (approve to create)'
+                    : 'Received';
     return {
       id: r.id,
       status: r.status,
