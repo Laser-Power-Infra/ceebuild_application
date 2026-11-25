@@ -70,6 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { key: 'orders', label: 'Orders', icon: Package, href: '/orders' },
       { key: 'rm-indent', label: 'RM Indent', icon: Ruler, href: '/planning/indent' },
       { key: 'rm-receipt', label: 'RM Receipt & Re-plan', icon: PackageCheck, href: '/planning/receipt' },
+      { key: 'store-stock', label: 'Store Stock (offcuts)', icon: Layers, href: '/planning/store-stock' },
       { key: 'production-plan', label: 'Machine Plan', icon: Cog, href: '/planning/production' },
     ],
   },

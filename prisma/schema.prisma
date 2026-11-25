@@ -1186,3 +1186,28 @@ model EnquiryIntake {
   @@index([docketId])
   @@map("enquiry_intakes")
 }
+
+// Rev 2 §10 store stock (usable offcuts, spare full bars) used before ordering new bars.
+// Deducted only when an indent is ISSUED (reservedIndentNo = that indent).
+model RmStoreStock {
+  id               Int      @id @default(autoincrement())
+  section          String
+  sectionKey       String   @map("section_key")
+  lengthMm         Int      @map("length_mm")
+  qty              Int
+  // OFFCUT | FULL
+  kind             String   @default("OFFCUT")
+  // Set when the store keeps these bars for one piece length (that requirement drops first).
+  forPieceLengthMm Int?     @map("for_piece_length_mm")
+  location         String?
+  note             String?
+  active           Boolean  @default(true)
+  reservedIndentNo String?  @map("reserved_indent_no")
+  createdByName    String?  @map("created_by_name")
+  updatedByName    String?  @map("updated_by_name")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@index([sectionKey])
+  @@map("rm_store_stock")
+}

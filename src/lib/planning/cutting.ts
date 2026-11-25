@@ -510,9 +510,9 @@ function sumTotals(sections: SectionSummary[]): PlanTotals {
 }
 
 /** Both strategies, the chosen one in full plus the Mixed vs 6 m-only comparison. */
-export function planWithComparison(pieces: PlanPiece[], sections: Record<string, SectionInfo>, settings: CutSettings, strategy: Strategy) {
-  const mixed = planIndent(pieces, sections, settings, 'MIXED');
-  const standard = planIndent(pieces, sections, settings, 'STANDARD');
+export function planWithComparison(pieces: PlanPiece[], sections: Record<string, SectionInfo>, settings: CutSettings, strategy: Strategy, stock: StockLot[] = []) {
+  const mixed = planIndent(pieces, sections, settings, 'MIXED', stock);
+  const standard = planIndent(pieces, sections, settings, 'STANDARD', stock);
   const comparison: PlanComparison = {
     mixed: { sections: mixed.sections, totals: mixed.totals },
     standard: { sections: standard.sections, totals: standard.totals },

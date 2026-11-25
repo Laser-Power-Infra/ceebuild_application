@@ -1,4 +1,5 @@
 import 'server-only';
+import { reserveStockForIndent, stockLotsFor } from './storeStock';
 import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { UserError } from '@/lib/actionResult';
@@ -82,7 +83,9 @@ export async function generateIndent(orderId: number, strategyIn: unknown, remar
     const input = await loadPlanningInput(tx, orderId);
     let result;
     try {
-      result = planWithComparison(input.pieces, input.sections, input.settings, strategy);
+      // Store stock of the order's sections first (Rev 2 §10); deducted from the register on issue.
+      const stock = await stockLotsFor(tx, Object.keys(input.sections));
+      result = planWithComparison(input.pieces, input.sections, input.settings, strategy, stock);
     } catch (e) {
       throw new UserError(`Plan failed: ${(e as Error).message}`);
     }
@@ -130,6 +133,8 @@ export async function issueIndent(id: number, user: AuthUser) {
       }
     }
     await tx.rmIndent.update({ where: { id }, data: { status: 'ISSUED', issuedByName: user.name, issuedAt: new Date() } });
+    const issued = await tx.rmIndent.findUnique({ where: { id }, select: { plan: true, indentNo: true } });
+    await reserveStockForIndent(tx, (issued?.plan as { stock?: StockUse[] } | null)?.stock, issued?.indentNo ?? String(id), user);
     await audit(tx, user, 'rm_indents', id, 'status', 'DRAFT', 'ISSUED');
     return { id };
   });
