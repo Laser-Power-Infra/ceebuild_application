@@ -115,8 +115,9 @@ export async function n8nEnquiryMails(days: number, limit: number, backfill = fa
   for (const list of found) for (const t of list) if (!seen.has(t.threadId)) seen.set(t.threadId, t);
   const cands = [...seen.values()]
     .filter((t) => t.date && new Date(t.date.replace(' ', 'T') + '+05:30').getTime() >= since)
-    // Our own outgoing mails (offers / quotations from info@) are not enquiries; forwards to us are.
-    .filter((t) => !(OWN_SENDER.test(t.sender ?? '') && !/^\s*(fw|fwd)\s*:/i.test(t.subject ?? '')))
+    // Our own quotation mails ("Quotation CEE-000534 ...") are not enquiries. A customer's RFQ thread whose
+    // latest message is our reply still is (the archive shows the latest sender).
+    .filter((t) => !(OWN_SENDER.test(t.sender ?? '') && /CEE-?\d{4,}/i.test(t.subject ?? '') && !/\b(rfq|enquiry|inquiry|boq)\b/i.test(t.subject ?? '')))
     .map((t) => ({ t, cls: classifyMail(t.subject, t.text) }))
     .filter((x) => x.cls === 'ENQUIRY' || x.cls === 'AMENDMENT' || x.cls === 'CLARIFICATION');
   const done = await handledThreads(cands.map((c) => c.t.threadId));
@@ -183,22 +184,63 @@ const qtyOf = (v: unknown) => {
 };
 
 /** Docket of the same party (and enquiry no. / utility when known) made from 60 days before the mail on. */
-async function existingDocket(e: RawEnquiry, mailDate: Date | null) {
-  const no = enquiryNoKey(e.enquiryNo);
-  if (no) {
-    const prev = await prisma.enquiryIntake.findFirst({ where: { enquiryNo: { not: null }, docketId: { not: null } }, orderBy: { id: 'desc' }, select: { enquiryNo: true, docketId: true } });
-    if (prev && enquiryNoKey(prev.enquiryNo) === no) return prev.docketId;
-  }
-  const key = partyKey(e.party);
-  if (!key) return null;
+const stateKey = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase().replace(/[^A-Z]/g, '') || null;
+
+/**
+ * The docket this mail belongs to, or null. In order: the enquiry no. (earlier intake, or in a docket's
+ * attachment names, e.g. the JSW RFQ no. in its PDF name); same party + same utility; the only docket
+ * of that utility; same party + same delivery state; the party's only docket. Window: dockets made
+ * from 60 days before the mail on.
+ */
+async function existingDocket(e: RawEnquiry, mailDate: Date | null, subject: string | null, excludeIntakeId?: number) {
   const from = new Date((mailDate ?? new Date()).getTime() - 60 * 86400000);
-  const dockets = await prisma.dockerPartyName.findMany({ where: { createdAt: { gte: from } }, orderBy: { id: 'desc' }, select: { id: true, partyName: true, utility: true } });
+  const dockets = await prisma.dockerPartyName.findMany({
+    where: { createdAt: { gte: from } },
+    orderBy: { id: 'desc' },
+    select: { id: true, partyName: true, utility: true, state: true, deliveryState: true, attachments: true },
+  });
+  const no = enquiryNoKey(e.enquiryNo) ?? enquiryNoKey(String(subject ?? '').match(/\b\d{8,12}\b/)?.[0]);
+  if (no) {
+    const prev = await prisma.enquiryIntake.findMany({
+      where: { enquiryNo: { not: null }, docketId: { not: null }, ...(excludeIntakeId ? { id: { not: excludeIntakeId } } : {}) },
+      select: { enquiryNo: true, docketId: true },
+    });
+    const p = prev.find((x) => enquiryNoKey(x.enquiryNo) === no);
+    if (p) return p.docketId;
+    const byFile = dockets.find((d) => String(d.attachments ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '').includes(no));
+    if (byFile) return byFile.id;
+  }
+  const pKey = partyKey(e.party);
   const uKey = partyKey(e.utility);
-  const same = dockets.filter((d) => partyKey(d.partyName) === key);
-  // Same party with several dockets (e.g. Laser: KESCo and KUSUM): only a matching utility links.
-  // No utility read -> link only when the party has exactly one docket in the window.
-  const hit = uKey ? (same.find((d) => partyKey(d.utility) === uKey) ?? (same.length === 1 && !same[0].utility ? same[0] : null)) : same.length === 1 ? same[0] : null;
+  const sKey = stateKey(e.deliveryState);
+  const same = pKey ? dockets.filter((d) => partyKey(d.partyName) === pKey) : [];
+  // A docket of the same utility counts only for the same customer (or when the utility is the customer
+  // itself, e.g. JSW): another contractor's docket for the same DISCOM is a different enquiry.
+  const ofUtility = uKey ? dockets.filter((d) => (partyKey(d.utility) === uKey && (!pKey || partyKey(d.partyName) === pKey)) || partyKey(d.partyName) === uKey) : [];
+  const sameState = sKey ? same.filter((d) => stateKey(d.deliveryState ?? d.state) === sKey) : [];
+  const hit =
+    (uKey ? same.find((d) => partyKey(d.utility) === uKey) : undefined) ??
+    (ofUtility.length === 1 ? ofUtility[0] : undefined) ??
+    (sameState.length === 1 ? sameState[0] : undefined) ??
+    // The party's only docket, unless it is clearly for another utility.
+    (same.length === 1 && (!uKey || !same[0].utility) ? same[0] : undefined);
   return hit?.id ?? null;
+}
+
+/** Re-check the link of rows already read (after the matching rules change). CREATED rows are left alone. */
+export async function relinkEnquiries() {
+  const rows = await prisma.enquiryIntake.findMany({ where: { status: { in: ['LINKED', 'BACKLOG', 'NOT_ENQUIRY'] }, classification: { in: ['ENQUIRY', 'AMENDMENT', 'CLARIFICATION'] } } });
+  const changes: string[] = [];
+  for (const r of rows) {
+    const e = (r.extracted ?? {}) as RawEnquiry;
+    const id = await existingDocket(e, r.mailDate, r.subject, r.id);
+    const status = id ? 'LINKED' : r.classification === 'ENQUIRY' ? 'BACKLOG' : 'NOT_ENQUIRY';
+    if (id === r.docketId && status === r.status) continue;
+    const d = id ? await prisma.dockerPartyName.findUnique({ where: { id }, select: { docketNoQtnNo: true } }) : null;
+    await prisma.enquiryIntake.update({ where: { id: r.id }, data: { status, docketId: id, docketNo: d?.docketNoQtnNo ?? null } });
+    changes.push(`${r.id} ${r.status}${r.docketNo ? ` ${r.docketNo}` : ''} -> ${status}${d?.docketNoQtnNo ? ` ${d.docketNoQtnNo}` : ''} (${String(r.subject ?? '').slice(0, 60)})`);
+  }
+  return changes;
 }
 
 /** n8n posts back one mail it read. Idempotent per thread (a FAILED read may be retried). */
@@ -230,12 +272,13 @@ export async function ingestEnquiry(p: N8nEnquiryPayload) {
   const cls = (MAIL_CLASSES as readonly string[]).includes(String(e.mailClass)) ? (e.mailClass as MailClass) : 'OTHER';
   const extracted = e as unknown as Prisma.InputJsonValue;
   const common = { ...base, classification: cls, extracted, partyName: str(e.party, 300), enquiryNo: str(e.enquiryNo, 100), dueDate: dateOf(e.dueDate) };
-  if (cls !== 'ENQUIRY') {
+  // An amendment / clarification belongs to its docket (a revised BOQ updates the existing docket, E2).
+  const linkId = cls === 'ENQUIRY' || cls === 'AMENDMENT' || cls === 'CLARIFICATION' ? await existingDocket(e, base.mailDate, base.subject) : null;
+  if (cls !== 'ENQUIRY' && !linkId) {
     const row = await prisma.enquiryIntake.create({ data: { ...common, status: 'NOT_ENQUIRY' } });
     return { id: row.id, status: row.status, classification: cls, docketId: null, docketNo: null };
   }
 
-  const linkId = await existingDocket(e, base.mailDate);
   if (linkId) {
     const d = await prisma.dockerPartyName.findUnique({ where: { id: linkId }, select: { docketNoQtnNo: true } });
     const row = await prisma.enquiryIntake.create({ data: { ...common, status: 'LINKED', docketId: linkId, docketNo: d?.docketNoQtnNo ?? null } });

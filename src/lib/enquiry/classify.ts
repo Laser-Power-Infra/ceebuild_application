@@ -38,7 +38,16 @@ export function partyKey(name: string | null | undefined): string | null {
     .replace(/[^A-Z0-9 ]/g, ' ')
     .split(/\s+/)
     .filter((w) => w && !STOP.has(w));
-  return words.length ? words.slice(0, 2).join(' ') : null;
+  // "N K C Project" = "NKC Projects": join runs of single letters, drop a plural S.
+  const joined: string[] = [];
+  let prevSingle = false;
+  for (const w of words) {
+    if (w.length === 1 && prevSingle) joined[joined.length - 1] += w;
+    else joined.push(w);
+    prevSingle = w.length === 1;
+  }
+  const out = joined.map((w) => (w.length > 3 ? w.replace(/S$/, '') : w));
+  return out.length ? out.slice(0, 2).join(' ') : null;
 }
 
 /** Enquiry number key ("RFQ No. 4937002082" / "4937002082" -> "4937002082"). */

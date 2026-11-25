@@ -495,7 +495,9 @@ test('enquiry intake: mail class, party key and enquiry no. key', async () => {
   assert.equal(classifyMail('Clarification on GTP', ''), 'CLARIFICATION');
   assert.equal(classifyMail('Payment Request – November', 'quote'), 'OTHER');
   assert.equal(partyKey('JSW MAHANADI POWER COMPANY LTD.'), partyKey('JSW Mahanadi Power Co. Limited'));
-  assert.equal(partyKey('M/s N K C Project'), 'N K');
+  assert.equal(partyKey('M/s N K C Project'), 'NKC PROJECT');
+  assert.equal(partyKey('NKC Projects Pvt Ltd'), 'NKC PROJECT');
+  assert.equal(partyKey('Laser Power & Infra Ltd.'), partyKey('LASER POWER & INFRA LIMITED'));
   assert.equal(enquiryNoKey('RFQ No. 4937002082'), '4937002082');
   assert.equal(enquiryNoKey('12'), null);
 });
