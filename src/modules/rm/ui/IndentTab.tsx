@@ -5,7 +5,7 @@ import { Ban, CheckCircle2, Download, Play, Trash2 } from 'lucide-react';
 import { Kpi, fmtNum } from '@/components/ServerTable';
 import { Modal, FormError, fieldCls, labelCls } from '@/components/Modal';
 import { Button } from '@/components/ui/button';
-import { cancelIndentAction, deleteIndentAction, generateIndentAction, issueIndentAction, listOrderIndentsAction } from '@/app/actions/rm';
+import { cancelIndentAction, deleteIndentAction, exportIndentExcelAction, generateIndentAction, issueIndentAction, listOrderIndentsAction } from '@/app/actions/rm';
 import { getPlanSettingsAction } from '@/app/actions/settings';
 import type { PlanSettingsValues } from '@/modules/settings/types';
 import type { IndentDetail } from '../columns';
@@ -23,6 +23,19 @@ function downloadCsv(ind: IndentDetail) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = `${ind.indentNo}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+function downloadBase64(base64: string, fileName: string, type: string) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([bytes], { type }));
+  a.download = fileName;
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -131,6 +144,21 @@ export function IndentTab({ orderId, role, onChanged }: { orderId: number; role:
             <div className="flex-1" />
             <Button variant="outline" onClick={() => downloadCsv(ind)}>
               <Download /> CSV
+            </Button>
+            <Button
+              variant="outline"
+              disabled={busy}
+              title="Indent workbook: INDENT, SECTION SUMMARY, CHANGES-HOLD, OFFCUT USED, NOTES"
+              onClick={async () => {
+                setBusy(true);
+                setError('');
+                const r = await exportIndentExcelAction(ind.id);
+                setBusy(false);
+                if (r.success) downloadBase64(r.data.base64, r.data.fileName, XLSX_MIME);
+                else setError(r.error);
+              }}
+            >
+              <Download /> Excel
             </Button>
             {canEdit && ind.status === 'DRAFT' && (
               <Button

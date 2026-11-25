@@ -14,7 +14,8 @@
 //    are listed for reuse.
 
 export type Strategy = 'MIXED' | 'STANDARD';
-export type LineType = 'CUSTOM' | 'STANDARD' | 'OVERLENGTH';
+/** STOCK is used on patterns only: store offcuts / full bars already in hand (nothing to order). */
+export type LineType = 'CUSTOM' | 'STANDARD' | 'OVERLENGTH' | 'STOCK';
 
 export interface CutSettings {
   stdBarMm: number;
@@ -25,6 +26,37 @@ export interface CutSettings {
   bufferPct: number;
   minOffcutMm: number;
   customMinBars: number;
+  /**
+   * Rev 2 "length" rule (indent reference script). When > 0, a custom length is decided per piece
+   * LENGTH of a section (all marks of that length together), and is used when that length needs
+   * at least this many metres and at least 2 pieces fit on one bar; customMinBars is then not used,
+   * and a custom length equal to the standard bar is still a custom (exact-multiple) line.
+   * 0 / unset = the per-mark rule with customMinBars.
+   */
+  customMinMetres?: number;
+}
+
+/**
+ * Store material deducted before ordering (Rev 3 "offcut / stock first").
+ * forLengthMm set: the store cuts that piece length out of these bars (offcuts or full bars), so
+ * the requirement of that length drops by nos x pieces-per-bar. Unset: the bars are nested first
+ * with the 6 m pool pieces of the section (first fit, before any new bar).
+ */
+export interface StockLot {
+  sectionKey: string;
+  lengthMm: number;
+  nos: number;
+  forLengthMm?: number | null;
+  /** e.g. "Satya 23-11-2026"; shown on the indent. */
+  note?: string | null;
+}
+
+export interface StockUse extends StockLot {
+  sectionLabel: string;
+  /** Pieces cut from the store material. */
+  pieces: number;
+  /** Store bars/offcuts actually used. */
+  barsUsed: number;
 }
 
 export interface SectionInfo {
@@ -103,6 +135,8 @@ export interface IndentPlan {
   sections: SectionSummary[];
   totals: PlanTotals;
   warnings: string[];
+  /** Store material deducted (absent on plans made without stock). */
+  stock?: StockUse[];
 }
 
 export interface PlanComparison {
@@ -118,12 +152,13 @@ const r1 = (n: number) => Math.round(n * 10) / 10;
 const kg = (lengthMm: number, kgPerM: number) => (lengthMm / 1000) * kgPerM;
 
 function assertSettings(s: CutSettings) {
-  const ints: (keyof CutSettings)[] = ['stdBarMm', 'maxCustomMm', 'endAllowanceMm', 'kerfMm', 'tolPlusMm', 'minOffcutMm', 'customMinBars'];
+  const ints: Exclude<keyof CutSettings, 'customMinMetres'>[] = ['stdBarMm', 'maxCustomMm', 'endAllowanceMm', 'kerfMm', 'tolPlusMm', 'minOffcutMm', 'customMinBars'];
   for (const k of ints) {
     if (!Number.isInteger(s[k]) || s[k] < 0) throw new Error(`Setting ${k} must be a whole number >= 0`);
   }
   if (s.stdBarMm <= s.endAllowanceMm) throw new Error('Standard bar must be longer than the end allowance');
   if (!(s.bufferPct >= 0)) throw new Error('Buffer % must be >= 0');
+  if (s.customMinMetres !== undefined && !(s.customMinMetres >= 0)) throw new Error('Custom length min metres must be >= 0');
 }
 
 /** Same mark + section + length appearing on several rows -> one entry with the summed qty. */
@@ -161,6 +196,8 @@ interface OpenBar {
   usable: number;
   cuts: Cut[];
   used: number; // consumed() of cuts
+  /** Store bar / offcut (already in hand). */
+  stock?: boolean;
 }
 
 const fits = (bar: OpenBar, len: number, kerf: number) => (bar.cuts.length ? bar.used + kerf + len : len) <= bar.usable;
@@ -173,10 +210,17 @@ const place = (bar: OpenBar, cut: Cut, kerf: number) => {
  * First-fit decreasing on bars of one length. Identical pieces are handled as a run: first fit of
  * each identical piece in turn is the same as filling each bar (in order) as far as it goes.
  */
-export function ffd(pieces: { markNo: string; lengthMm: number; qty: number }[], barLengthMm: number, endAllowanceMm: number, kerfMm: number): OpenBar[] {
+export function ffd(
+  pieces: { markNo: string; lengthMm: number; qty: number }[],
+  barLengthMm: number,
+  endAllowanceMm: number,
+  kerfMm: number,
+  /** Store bars (lengths) opened before any new bar, so they are filled first. */
+  stockBarsMm: number[] = [],
+): OpenBar[] {
   const usable = barLengthMm - endAllowanceMm;
   const sorted = [...pieces].filter((p) => p.qty > 0).sort((a, b) => b.lengthMm - a.lengthMm || a.markNo.localeCompare(b.markNo));
-  const bars: OpenBar[] = [];
+  const bars: OpenBar[] = stockBarsMm.map((len) => ({ barLengthMm: len, usable: len - endAllowanceMm, cuts: [], used: 0, stock: true }));
   for (const p of sorted) {
     if (p.lengthMm > usable) throw new Error(`Piece ${p.markNo} (${p.lengthMm} mm) is longer than the bar's usable ${usable} mm`);
     let left = p.qty;
@@ -220,15 +264,23 @@ function sectionInfo(sections: Record<string, SectionInfo>, key: string): Sectio
 }
 
 /** Indent plan for one strategy. */
-export function planIndent(input: PlanPiece[], sections: Record<string, SectionInfo>, settings: CutSettings, strategy: Strategy): IndentPlan {
+export function planIndent(
+  input: PlanPiece[],
+  sections: Record<string, SectionInfo>,
+  settings: CutSettings,
+  strategy: Strategy,
+  stockIn: StockLot[] = [],
+): IndentPlan {
   assertSettings(settings);
-  const pieces = mergePieces(input);
   const { stdBarMm, endAllowanceMm: allow, kerfMm: kerf } = settings;
+  const stock = deductStock(mergePieces(input), stockIn, sections, settings);
+  const pieces = stock.pieces;
   const stdUsable = stdBarMm - allow;
   const lines: IndentLine[] = [];
   const patterns: BarPattern[] = [];
   const sectionSummaries: SectionSummary[] = [];
-  const warnings: string[] = [];
+  const warnings: string[] = [...stock.warnings];
+  const lengthRule = (settings.customMinMetres ?? 0) > 0;
 
   for (const [key, list] of bySection(pieces)) {
     const info = sectionInfo(sections, key);
@@ -236,10 +288,56 @@ export function planIndent(input: PlanPiece[], sections: Record<string, SectionI
     const pool: PlanPiece[] = [];
     const overlength: PlanPiece[] = [];
     const sectionLines: IndentLine[] = [];
-    const netKg = list.reduce((a, p) => a + kg(p.lengthMm, info.kgPerM) * p.qty, 0);
+    let netKg = list.reduce((a, p) => a + kg(p.lengthMm, info.kgPerM) * p.qty, 0);
 
     const sortedMarks = [...list].sort((a, b) => b.lengthMm - a.lengthMm || a.markNo.localeCompare(b.markNo));
-    for (const p of sortedMarks) {
+    if (strategy === 'MIXED' && lengthRule) {
+      // Rev 2 length rule: all marks of one length share the custom bars.
+      const byLength = new Map<number, PlanPiece[]>();
+      for (const p of sortedMarks) byLength.set(p.lengthMm, [...(byLength.get(p.lengthMm) ?? []), p]);
+      for (const [len, marks] of byLength) {
+        const qty = marks.reduce((a, p) => a + p.qty, 0);
+        const k = piecesPerBar(maxBar - allow, len, kerf);
+        const customLen = k * len + (k - 1) * kerf + allow;
+        const fullBars = k > 0 ? Math.floor(qty / k) : 0;
+        if (len > stdUsable || k < 2 || fullBars < 1 || (len * qty) / 1000 < settings.customMinMetres!) {
+          for (const p of marks) (len > stdUsable ? overlength : pool).push(p);
+          continue;
+        }
+        // Pieces in mark order; the first fullBars x k go on custom bars, the balance to the pool.
+        const bars: OpenBar[] = [];
+        let bar: OpenBar | null = null;
+        const rest = new Map<string, number>();
+        let placed = 0;
+        for (const p of marks) {
+          for (let i = 0; i < p.qty; i++) {
+            if (placed >= fullBars * k) {
+              rest.set(p.markNo, (rest.get(p.markNo) ?? 0) + 1);
+              continue;
+            }
+            if (!bar || bar.cuts.length === k) bars.push((bar = { barLengthMm: customLen, usable: customLen - allow, cuts: [], used: 0 }));
+            place(bar, { markNo: p.markNo, lengthMm: len }, kerf);
+            placed++;
+          }
+        }
+        for (const p of marks) if (rest.get(p.markNo)) pool.push({ ...p, qty: rest.get(p.markNo)! });
+        const markNos = marks.map((m) => m.markNo);
+        sectionLines.push({
+          sectionKey: key,
+          sectionLabel: info.label,
+          barLengthMm: customLen,
+          lineType: 'CUSTOM',
+          forMark: markNos.length > 3 ? `${markNos.slice(0, 3).join(', ')} +${markNos.length - 3}` : markNos.join(', '),
+          piecesPerBar: k,
+          bars: fullBars,
+          bufferBars: 0,
+          kgPerM: info.kgPerM,
+          wtKg: 0,
+        });
+        patterns.push(...toPatterns(bars, key, info.label, 'CUSTOM'));
+      }
+    }
+    for (const p of strategy === 'MIXED' && lengthRule ? [] : sortedMarks) {
       if (strategy === 'MIXED') {
         const k = Math.min(p.qty, piecesPerBar(maxBar - allow, p.lengthMm, kerf));
         const customLen = k * p.lengthMm + (k - 1) * kerf + allow;
@@ -274,9 +372,24 @@ export function planIndent(input: PlanPiece[], sections: Record<string, SectionI
       (p.lengthMm > stdUsable ? overlength : pool).push(p);
     }
 
+    const nestStock = stock.uses.filter((s) => s.sectionKey === key && !s.forLengthMm);
     if (pool.length) {
-      const bars = ffd(pool, stdBarMm, allow, kerf);
-      sectionLines.push({
+      const stockBars = nestStock.flatMap((s) => Array.from({ length: s.nos }, () => s.lengthMm));
+      const all = ffd(pool, stdBarMm, allow, kerf, stockBars);
+      const bars = all.filter((b) => !b.stock);
+      // Store bars that took pieces: count them per lot (lots are opened in order) and take their pieces off the net.
+      let i = 0;
+      for (const s of nestStock) {
+        for (let n = 0; n < s.nos; n++, i++) {
+          const b = all[i];
+          if (!b.cuts.length) continue;
+          s.barsUsed++;
+          s.pieces += b.cuts.length;
+          netKg -= kg(b.cuts.reduce((a, c) => a + c.lengthMm, 0), info.kgPerM);
+        }
+      }
+      patterns.push(...toPatterns(all.filter((b) => b.stock && b.cuts.length), key, info.label, 'STOCK'));
+      if (bars.length) sectionLines.push({
         sectionKey: key,
         sectionLabel: info.label,
         barLengthMm: stdBarMm,
@@ -330,11 +443,51 @@ export function planIndent(input: PlanPiece[], sections: Record<string, SectionI
     });
   }
 
-  return { strategy, lines, patterns: sortPatterns(patterns), sections: sectionSummaries, totals: sumTotals(sectionSummaries), warnings };
+  for (const s of stock.uses) {
+    if (!s.forLengthMm && s.barsUsed === 0) warnings.push(`Store ${s.sectionLabel} ${s.nos} × ${s.lengthMm} mm: no piece nested on it, not used.`);
+  }
+  const plan: IndentPlan = { strategy, lines, patterns: sortPatterns(patterns), sections: sectionSummaries, totals: sumTotals(sectionSummaries), warnings };
+  if (stockIn.length) plan.stock = stock.uses;
+  return plan;
+}
+
+/**
+ * Store material for a given piece length comes off the requirement first (marks of that length
+ * in mark order). Lots for nesting are only validated here; planIndent nests them.
+ */
+function deductStock(pieces: PlanPiece[], lots: StockLot[], sections: Record<string, SectionInfo>, settings: CutSettings) {
+  const warnings: string[] = [];
+  const uses: StockUse[] = [];
+  const left = pieces.map((p) => ({ ...p }));
+  for (const lot of lots) {
+    if (!Number.isInteger(lot.lengthMm) || lot.lengthMm <= 0 || !Number.isInteger(lot.nos) || lot.nos <= 0) {
+      throw new Error(`Store stock ${lot.sectionKey}: length and nos must be whole numbers > 0`);
+    }
+    const label = sections[lot.sectionKey]?.label ?? lot.sectionKey;
+    const use: StockUse = { ...lot, sectionLabel: label, pieces: 0, barsUsed: 0 };
+    uses.push(use);
+    if (!lot.forLengthMm) continue;
+    const marks = left.filter((p) => p.sectionKey === lot.sectionKey && p.lengthMm === lot.forLengthMm && p.qty > 0).sort((a, b) => a.markNo.localeCompare(b.markNo));
+    const per = piecesPerBar(lot.lengthMm - settings.endAllowanceMm, lot.forLengthMm, settings.kerfMm);
+    const need = marks.reduce((a, p) => a + p.qty, 0);
+    if (per < 1 || need === 0) {
+      warnings.push(`Store ${label} ${lot.nos} × ${lot.lengthMm} mm: ${per < 1 ? `too short for ${lot.forLengthMm} mm pieces` : `no ${lot.forLengthMm} mm piece left to cut`}, not used.`);
+      continue;
+    }
+    let take = Math.min(need, per * lot.nos);
+    use.pieces = take;
+    use.barsUsed = Math.ceil(take / per);
+    for (const p of marks) {
+      const n = Math.min(p.qty, take);
+      p.qty -= n;
+      take -= n;
+    }
+  }
+  return { pieces: left.filter((p) => p.qty > 0), uses, warnings };
 }
 
 function sortPatterns(p: BarPattern[]) {
-  const order: Record<LineType, number> = { CUSTOM: 0, STANDARD: 1, OVERLENGTH: 2 };
+  const order: Record<LineType, number> = { STOCK: 0, CUSTOM: 1, STANDARD: 2, OVERLENGTH: 3 };
   return p.sort(
     (a, b) => a.sectionKey.localeCompare(b.sectionKey) || order[a.lineType] - order[b.lineType] || b.count - a.count || b.barLengthMm - a.barLengthMm,
   );

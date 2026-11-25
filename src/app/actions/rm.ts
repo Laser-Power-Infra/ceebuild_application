@@ -3,6 +3,7 @@
 import { read, write, cleanQuery, toId } from '@/lib/actionResult';
 import { ADMIN_ROLES } from '@/lib/auth/server';
 import { cancelIndent, deleteIndent, generateIndent, issueIndent, listIndents, listIndentsFacet, listOrderIndents } from '@/modules/rm/server/indents';
+import { exportIndentExcel } from '@/modules/rm/server/indentExport';
 import {
   addReceipt,
   createSupplementaryIndent,
@@ -33,6 +34,10 @@ export async function cancelIndentAction(id: unknown, reason: unknown) {
 }
 export async function deleteIndentAction(id: unknown) {
   return write((user) => deleteIndent(toId(id, 'indent'), user), { roles: ADMIN_ROLES });
+}
+/** Indent as an .xlsx (base64): INDENT, SECTION SUMMARY, CHANGES-HOLD, OFFCUT USED, NOTES. */
+export async function exportIndentExcelAction(id: unknown) {
+  return read(() => exportIndentExcel(toId(id, 'indent')), 'Could not make the Excel file');
 }
 export async function listIndentsAction(query: unknown) {
   return read(() => listIndents(cleanQuery(query)));

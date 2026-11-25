@@ -84,7 +84,7 @@ export function SettingsNote({ settings, confirmed, isAdmin }: { settings: CutSe
 }
 
 const typeTone = (t: string): Tone => (t === 'CUSTOM' ? 'blue' : t === 'OVERLENGTH' ? 'red' : 'slate');
-export const LINE_TYPE_LABEL: Record<string, string> = { CUSTOM: 'Custom length', STANDARD: '6 m standard', OVERLENGTH: 'Over-length' };
+export const LINE_TYPE_LABEL: Record<string, string> = { CUSTOM: 'Custom length', STANDARD: '6 m standard', OVERLENGTH: 'Over-length', STOCK: 'Store stock' };
 
 export function PatternTable({ patterns, source }: { patterns: (BarPattern & { source?: string })[]; source?: boolean }) {
   return (

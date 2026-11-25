@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { UserError } from '@/lib/actionResult';
 import type { AuthUser } from '@/lib/auth/server';
 import { fetchFacet, fetchPage, plain, type FieldSql, type TableSpec } from '@/lib/serverTable';
-import { planWithComparison, type BarPattern, type IndentPlan, type PlanComparison, type Strategy } from '@/lib/planning/cutting';
+import { planWithComparison, type BarPattern, type IndentPlan, type PlanComparison, type StockUse, type Strategy } from '@/lib/planning/cutting';
 import type { TablePage, TableQuery } from '@/components/data-table/types';
 import type { IndentDetail, IndentRow, IndentSettingsSnapshot, IndentsMeta } from '../columns';
 import { audit, loadPlanningInput, lockOrder, nextIndentNo, type Tx } from './common';
@@ -16,6 +16,8 @@ const PLAN_TX = { timeout: 60_000, maxWait: 10_000 };
 interface StoredPlan {
   patterns: BarPattern[];
   warnings: string[];
+  /** Store offcuts / bars deducted (read by the Excel export's OFFCUT USED sheet). */
+  stock?: StockUse[];
 }
 
 /** Persist a plan as an indent with its lines. */
@@ -27,7 +29,7 @@ export async function saveIndent(
   user: AuthUser,
 ) {
   const indentNo = await nextIndentNo(tx, orderId);
-  const stored: StoredPlan = { patterns: plan.patterns, warnings: plan.warnings };
+  const stored: StoredPlan = { patterns: plan.patterns, warnings: plan.warnings, ...(plan.stock ? { stock: plan.stock } : {}) };
   const indent = await tx.rmIndent.create({
     data: {
       orderId,
