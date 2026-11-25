@@ -104,6 +104,16 @@ For each: BOM → costing → cost sheet with ESTIMATE flags → offer (Quotatio
   M10 set 6, latch 150, wire fabric per sqm; steel daily / zinc daily / N&B + freight monthly.
 - Code: VA band (<8% blocked, 8–12% Admin approval + reason), freight by space, painted finish, delivery state, HSN on offer,
   §11 quotation snapshots + history, PIPE / WIRE_MESH families, "ISMC 75X40X6" -> ISMC75X40. 86/86 tests.
+- 25-11 midday – n8n:
+  - "Ceebuild – Read PO mails": published draft was a Claude variant the dashboard cannot read (`ai` vs `gemini`); restored
+    the Gemini version, schedule fixed to every 15 min (it ran once a day), retries on the first call. Republished.
+  - NEW "Ceebuild – Power BI daily feed" (webhook `ceebuild-erp-feed` → `/api/n8n/erp-import`, 03:30 stale check mails
+    Minmoy). Published, tested end to end. Seed rows re-keyed to content hashes: re-sending the 25-11 files inserts 0.
+    Flow design + DAX in `docs/M14_POWER_AUTOMATE_FLOW.md` (needs Puja's Power Automate).
+  - NEW "Ceebuild – Read enquiry mails" (§2 stage 1: classify → Gemini → docket / link; backfill lists old ones as
+    BACKLOG without taking docket numbers). Tracker: Quotation → Enquiries (`/costing/enquiries`).
+  - Not built yet: §2 stage 2 (auto BOM → cost → draft offer + reply, escalations), Souvik's sheet import (needs access),
+    LME zinc auto rate, fabrication drawings.
 - Dockets: CEE-000534 delivery state Bihar; BOMs + draft costings (not applied) for CEE-000533, 534 (structures mix + N&B),
   535 (KUSUM STR req sheet); KESCo docket CEE-000536 with 3 items, BOMs, costing at VA 25%, snapshot Rev 0 frozen.
 - 24-11 evening – plan written. Phase 1 code done locally, 79/79 tests pass, typecheck clean (outside scratch/):

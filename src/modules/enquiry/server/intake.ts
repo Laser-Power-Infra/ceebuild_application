@@ -110,9 +110,9 @@ const forN8n = (t: MailThread, cls: MailClass) => ({
 export async function n8nEnquiryMails(days: number, limit: number, backfill = false) {
   const since = Date.now() - days * 86400000;
   const seen = new Map<string, MailThread>();
-  for (const w of ENQUIRY_SEARCH_WORDS) {
-    for (const t of await searchMailThreads(w, 100)) if (!seen.has(t.threadId)) seen.set(t.threadId, t);
-  }
+  // One archive search per word, run together (each takes a few seconds).
+  const found = await Promise.all(ENQUIRY_SEARCH_WORDS.map((w) => searchMailThreads(w, 100)));
+  for (const list of found) for (const t of list) if (!seen.has(t.threadId)) seen.set(t.threadId, t);
   const cands = [...seen.values()]
     .filter((t) => t.date && new Date(t.date.replace(' ', 'T') + '+05:30').getTime() >= since)
     // Our own outgoing mails (offers / quotations from info@) are not enquiries; forwards to us are.
