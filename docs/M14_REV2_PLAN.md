@@ -112,8 +112,13 @@ For each: BOM → costing → cost sheet with ESTIMATE flags → offer (Quotatio
     Flow design + DAX in `docs/M14_POWER_AUTOMATE_FLOW.md` (needs Puja's Power Automate).
   - NEW "Ceebuild – Read enquiry mails" (§2 stage 1: classify → Gemini → docket / link; backfill lists old ones as
     BACKLOG without taking docket numbers). Tracker: Quotation → Enquiries (`/costing/enquiries`).
-  - Not built yet: §2 stage 2 (auto BOM → cost → draft offer + reply, escalations), Souvik's sheet import (needs access),
-    LME zinc auto rate, fabrication drawings.
+  - Enquiry backfill (90 days, 47 threads): 18 LINKED (test cases: KESCo → CEE-000536, JSW → CEE-000533, NKC → CEE-000534,
+    KUSUM → CEE-000535), 16 BACKLOG (no docket – Puja to decide), 5 not enquiries. Workflow published (every 15 min, 7 days).
+  - §2 stage 2 (part 1): a new enquiry docket gets draft prices the same day – BOM from the matching approved drawing +
+    costing (not applied), else last quoted (ESTIMATE), else "needs BOM / drawing". Shown on the Enquiries tracker.
+  - Still open: draft offer PDF + Gmail draft reply per enquiry, reminders/escalations (WhatsApp + mail), Regret flow.
+  - Plans written: `docs/M14_FABRICATION_DRAWINGS_PLAN.md` (target 10-12), `docs/M14_ORDER_TO_EXECUTION_IMPORT_PLAN.md`
+    (live import 02-12, needs sheet access).
 - Dockets: CEE-000534 delivery state Bihar; BOMs + draft costings (not applied) for CEE-000533, 534 (structures mix + N&B),
   535 (KUSUM STR req sheet); KESCo docket CEE-000536 with 3 items, BOMs, costing at VA 25%, snapshot Rev 0 frozen.
 - 24-11 evening – plan written. Phase 1 code done locally, 79/79 tests pass, typecheck clean (outside scratch/):
