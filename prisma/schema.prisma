@@ -965,6 +965,7 @@ model ItemBom {
   lines    ItemBomLine[]
   groups   ItemBomGroup[]
   costings ItemCosting[]
+  fabDrawingSets FabDrawingSet[]
 
   @@index([itemId])
   @@index([docketId])
@@ -1210,4 +1211,89 @@ model RmStoreStock {
 
   @@index([sectionKey])
   @@map("rm_store_stock")
+}
+
+// M14 fabrication drawings: Admin-editable rules used when the BOM / approved drawing has no
+// geometry (hole = bolt + 1.5, IS SP:6 gauges, edge distance, weld, finish and general notes).
+model DrawingStandard {
+  id            Int      @id @default(autoincrement())
+  // HOLE | GAUGE | EDGE | WELD | FINISH | MATERIAL | TOLERANCE | MARKING
+  kind          String
+  key           String
+  numValue      Decimal? @map("num_value") @db.Decimal(12, 3)
+  textValue     String?  @map("text_value")
+  unit          String?
+  note          String?
+  sortOrder     Int      @default(100) @map("sort_order")
+  active        Boolean  @default(true)
+  updatedByName String?  @map("updated_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@unique([kind, key])
+  @@map("drawing_standards")
+}
+
+// One fabrication drawing PDF revision (CB/<client>/<item>, Rev n) and its state.
+model FabDrawingSet {
+  id              Int       @id @default(autoincrement())
+  itemBomId       Int?      @map("item_bom_id")
+  itemBom         ItemBom?  @relation(fields: [itemBomId], references: [id], onDelete: SetNull)
+  itemId          Int?      @map("item_id")
+  docketId        Int?      @map("docket_id")
+  orderId         Int?      @map("order_id")
+  bomUploadId     Int?      @map("bom_upload_id")
+  indentId        Int?      @map("indent_id")
+  clientCode      String    @map("client_code")
+  itemCode        String    @map("item_code")
+  // Base drawing no. CB/<client>/<item>; sheet n is <base>/<nn>.
+  drawingNo       String    @map("drawing_no")
+  rev             Int       @default(0)
+  // DRAFT | ISSUED | CONFIRMED | SUPERSEDED
+  status          String    @default("DRAFT")
+  changeNote      String?   @map("change_note")
+  basisRef        String?   @map("basis_ref")
+  pageCount       Int?      @map("page_count")
+  // sha256 of (mark, section, cut length, qty/set, total) of the cutting list
+  cuttingHash     String?   @map("cutting_hash")
+  // Standards and geometry used for this revision.
+  snapshot        Json?
+  s3Key           String?   @map("s3_key")
+  preparedByName  String?   @map("prepared_by_name")
+  checkedByName   String?   @map("checked_by_name")
+  approvedByName  String?   @map("approved_by_name")
+  issuedTo        String?   @map("issued_to")
+  issuedAt        DateTime? @map("issued_at")
+  confirmedByName String?   @map("confirmed_by_name")
+  confirmedAt     DateTime? @map("confirmed_at")
+  confirmRemarks  String?   @map("confirm_remarks")
+  createdById     Int?      @map("created_by_id")
+  createdByName   String?   @map("created_by_name")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  issues FabDrawingIssue[]
+
+  @@unique([drawingNo, rev])
+  @@index([itemBomId])
+  @@index([orderId])
+  @@map("fab_drawing_sets")
+}
+
+// Issue log of a drawing set (mail to production, cc management).
+model FabDrawingIssue {
+  id         Int           @id @default(autoincrement())
+  setId      Int           @map("set_id")
+  set        FabDrawingSet @relation(fields: [setId], references: [id], onDelete: Cascade)
+  sentAt     DateTime      @default(now()) @map("sent_at")
+  sentTo     String        @map("sent_to")
+  cc         String?
+  sentByName String?       @map("sent_by_name")
+  messageId  String?       @map("message_id")
+  // PENDING | SENT | FAILED
+  result     String        @default("PENDING")
+  note       String?
+
+  @@index([setId])
+  @@map("fab_drawing_issues")
 }

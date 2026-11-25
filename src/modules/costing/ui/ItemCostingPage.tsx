@@ -33,6 +33,7 @@ import type { MixedGroup } from '@/lib/costing/mixedBom';
 import type { DrawingRow } from '../server/drawings';
 import type { CostingPreview, SavedCosting } from '../server/compute';
 import { Badge, DraftLinesEditor, DrawingExtractor, card, cellInput, inr, td, th } from './shared';
+import { FabDrawingsButton } from '@/modules/fabdrawings/ui/FabDrawingsButton';
 
 type Data = { item: ItemInfo; docket: DocketInfo | null; bom: ItemBomInfo | null; suggestions: DrawingSuggestion[]; costings: SavedCosting[] };
 
@@ -361,6 +362,7 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
                 <Button size="sm" variant="outline" onClick={async () => { const r = await reopenItemBomAction(bom.id); if (!r.success) return onError(r.error); reload(); }}>
                   <Unlock /> Reopen
                 </Button>
+                <FabDrawingsButton bomId={bom.id} onError={onError} />
                 {!bom.drawingId && (
                   <Button
                     size="sm"

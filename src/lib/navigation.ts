@@ -3,6 +3,7 @@ import {
   Building,
   Calculator,
   Cog,
+  DraftingCompass,
   Library,
   Factory,
   FileSpreadsheet,
@@ -93,6 +94,7 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { key: 'costing-master', label: 'Costing Master', icon: Calculator, href: '/admin/costing' },
       { key: 'drawings', label: 'Approved Drawings', icon: Library, href: '/admin/drawings' },
+      { key: 'drawing-standards', label: 'Drawing Standards', icon: DraftingCompass, href: '/admin/drawing-standards', roles: ['Admin'] },
       { key: 'sections', label: 'GTP Sections', icon: Layers, href: '/admin/sections' },
       { key: 'machines', label: 'Machines', icon: Wrench, href: '/admin/machines' },
       { key: 'plan-settings', label: 'Planning Settings', icon: Settings2, href: '/admin/planning' },
