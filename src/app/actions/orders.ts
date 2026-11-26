@@ -1,6 +1,8 @@
 'use server';
 
-import { read, write, cleanQuery, toId } from '@/lib/actionResult';
+import { read, write, cleanQuery, toId, UserError } from '@/lib/actionResult';
+import { prisma } from '@/lib/prisma';
+import { normalizeDocketNo } from '@/lib/dockets';
 import { ADMIN_ROLES } from '@/lib/auth/server';
 import { getOrder, listOrders, listOrdersFacet, searchDockets } from '@/modules/orders/server/query';
 import { createOrder, changeOrderDocket, deleteOrder, updateOrderTerms } from '@/modules/orders/server/mutations';
@@ -35,6 +37,16 @@ export async function createOrderAction(input: unknown) {
       user,
     ),
   );
+}
+
+/** Admin, from the PO tab: the docket is given by its number (e.g. CEE-000527). */
+export async function changeOrderDocketByNoAction(id: unknown, docketNo: unknown, reason: unknown, client?: unknown) {
+  return write(async (user) => {
+    const no = normalizeDocketNo(String(docketNo ?? ''));
+    const d = no ? await prisma.dockerPartyName.findFirst({ where: { docketNoQtnNo: { equals: no, mode: 'insensitive' } }, select: { id: true } }) : null;
+    if (!d) throw new UserError(`Docket ${String(docketNo ?? '').trim() || '(blank)'} not found.`);
+    return changeOrderDocket(toId(id, 'order'), d.id, String(reason ?? ''), user, { client: typeof client === 'string' && client.trim() ? client : undefined });
+  }, { roles: ADMIN_ROLES });
 }
 
 /** Admin: put the order on another docket (offer), with the reason; optional customer name fix. */

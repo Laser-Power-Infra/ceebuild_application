@@ -20,6 +20,7 @@ import { BillingTab } from '@/modules/billing/ui/BillingTab';
 import type { OrderDetail } from '../server/query';
 import { HOLD_STATUS, ORDER_STATUSES } from '../columns';
 import { OrderPoTab } from '@/modules/poIntake/ui/OrderPoTab';
+import { ChangeDocket } from './ChangeDocket';
 
 // Business-process order: plan -> make -> inspect/galvanise -> ship -> bill.
 const TABS: { key: OrderTab; label: string }[] = [
@@ -150,6 +151,11 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
 
       <div role="tabpanel">
         {tab === 'summary' && <OrderSummaryTab order={order} role={role} onChanged={reloadOrder} />}
+        {tab === 'po' && role === 'Admin' && (
+          <div className="mb-3">
+            <ChangeDocket orderId={order.id} docketNo={order.docketNo} client={order.client} onChanged={reloadOrder} />
+          </div>
+        )}
         {tab === 'po' && <OrderPoTab orderId={order.id} role={role} onChanged={reloadOrder} />}
         {tab === 'bom' && <BomTab orderId={order.id} role={role} quotedMt={order.quotedMt} onChanged={reloadOrder} />}
         {tab === 'indent' && <IndentTab orderId={order.id} role={role} onChanged={reloadOrder} />}
