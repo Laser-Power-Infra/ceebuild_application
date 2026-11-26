@@ -400,7 +400,7 @@ export function normaliseExtraction(raw: RawExtraction, model: string, at = new 
   // schema has no room for more properties - see extract.ts).
   const allWarnings = (Array.isArray(raw.warnings) ? raw.warnings : []).map(str).filter((w): w is string => !!w);
   const tagged = (tag: string) => allWarnings.filter((w) => w.toUpperCase().startsWith(`${tag}:`)).map((w) => w.slice(tag.length + 1).trim());
-  const warnings = allWarnings.filter((w) => !/^(DOC|PENDING|LATEST):/i.test(w)).slice(0, 20);
+  const warnings = allWarnings.filter((w) => !/^(DOC|PENDING|LATEST|OTHER_PO):/i.test(w)).slice(0, 20);
   const rawDocs = [...(Array.isArray(raw.documents) ? raw.documents : []), ...tagged('DOC')];
   const rawPending = [...(Array.isArray(raw.pending) ? raw.pending : []), ...tagged('PENDING')];
   const documents: PoDocumentRead[] = rawDocs
@@ -429,7 +429,15 @@ export function normaliseExtraction(raw: RawExtraction, model: string, at = new 
     .filter((p): p is PoPendingItem => !!p)
     .slice(0, 10);
   const latestPosition = (str(raw.latestPosition) ?? tagged('LATEST')[0] ?? null)?.slice(0, 1000) ?? null;
-  return { fields, lines, bomPieces, documentType: str(raw.documentType), warnings, documents, pending, latestPosition, model, at };
+  const otherPos = tagged('OTHER_PO')
+    .map((t) => {
+      const [po, ...rest] = t.split('|');
+      const poNumber = str(po)?.slice(0, 100) ?? null;
+      return poNumber ? { poNumber, fileName: str(rest.join('|'))?.slice(0, 255) ?? null } : null;
+    })
+    .filter((x): x is { poNumber: string; fileName: string | null } => !!x)
+    .slice(0, 10);
+  return { fields, lines, bomPieces, documentType: str(raw.documentType), warnings, documents, pending, latestPosition, otherPos, model, at };
 }
 
 /** Customer + PO no. key for the duplicate check: case, spaces and punctuation ignored. */

@@ -184,6 +184,8 @@ export interface PoExtraction {
   pending?: PoPendingItem[];
   /** One or two lines: the position at the latest message, with its date. */
   latestPosition?: string | null;
+  /** Other, separate POs found in the same mail (each becomes its own intake). */
+  otherPos?: { poNumber: string; fileName: string | null }[];
   model: string;
   at: string;
 }

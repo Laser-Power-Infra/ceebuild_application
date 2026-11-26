@@ -16,12 +16,13 @@ import { getPlanSettings } from '@/modules/settings/server';
 import { createOrderInTx } from '@/modules/orders/server/mutations';
 import type { ConfirmIntakeInput, DocKind, IntakeDoc, IntakeReview } from '../types';
 import { extractPo, extractionFromAnswer, geminiRequestSpec } from './extract';
-import { getMailThread, poMailCandidates, searchMailThreads, type MailThread } from '@/lib/mailDb';
+import { getMailThread, poMailCandidates, searchMailThreads, type MailFile, type MailThread } from '@/lib/mailDb';
 import { callN8n, N8N_USER } from '@/lib/n8n';
 import { columnsFromFields } from './columns';
 import { runIndentJob, type JobResult } from './job';
 import { customerFromSender, issuedByUs, mailSkipReason, senderFromWarnings } from '@/lib/po/direction';
 import { archiveDate, threadHandled, type IntakeOfThread } from '@/lib/po/threadHandled';
+import { fileForPo, filesForPart, focusLine, partTargets, splitThreadId } from '@/lib/po/multiPo';
 
 const sql = Prisma.sql;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -470,15 +471,66 @@ const forN8n = (t: MailThread) => ({
     .map((f) => ({ name: f.name, driveId: f.driveId, kind: f.kind })),
 });
 
+type N8nMail = ReturnType<typeof forN8n> & { focus?: string };
+
+/** One separate PO of a multi-PO mail, read on its own (thread id "<thread>~<PO>", focus line for the AI). */
+const partForN8n = (t: MailThread, partId: string, poNumber: string, poFile: MailFile): N8nMail => ({
+  threadId: partId,
+  subject: t.subject,
+  sender: t.sender,
+  date: t.date,
+  mailText: t.text.slice(0, 6000),
+  files: filesForPart(t.files, poFile)
+    .slice(0, 8)
+    .map((f) => ({ name: f.name, driveId: f.driveId, kind: f === poFile ? ('PO' as const) : f.kind })),
+  focus: focusLine(poNumber, poFile.name),
+});
+
+/**
+ * The other POs of multi-PO mails read in the last `days` days: listed by the first reading
+ * (extraction.otherPos), not yet read on their own, and not already an order.
+ */
+async function pendingPoParts(days: number, limit: number): Promise<N8nMail[]> {
+  const read = await prisma.poIntake.findMany({
+    where: { source: 'N8N_MAIL', status: { in: ['EXTRACTED', 'CONFIRMED'] }, gmailMessageId: { startsWith: 'thread:' }, createdAt: { gte: new Date(Date.now() - days * 86400_000) } },
+    select: { gmailMessageId: true, extracted: true },
+    orderBy: { id: 'desc' },
+  });
+  const withOthers = read
+    .map((r) => ({ id: String(r.gmailMessageId).slice('thread:'.length), ex: r.extracted as unknown as PoExtraction | null }))
+    .filter((r) => !splitThreadId(r.id).part && (r.ex?.otherPos?.length ?? 0) > 0);
+  if (!withOthers.length) return [];
+  const orderPos = (await prisma.order.findMany({ select: { poNumber: true } })).map((o) => o.poNumber);
+  const out: N8nMail[] = [];
+  for (const r of withOthers) {
+    const t = await getMailThread(r.id);
+    if (!t) continue;
+    const targets = partTargets(r.id, r.ex?.fields?.poNumber?.value ?? null, r.ex?.otherPos ?? [], t.files, orderPos);
+    if (!targets.length) continue;
+    const done = await handledThreads(targets.map((x) => ({ threadId: x.partId, date: null })));
+    for (const x of targets) if (!done.has(x.partId)) out.push(partForN8n(t, x.partId, x.poNumber, x.file));
+    if (out.length >= limit) break;
+  }
+  return out.slice(0, limit);
+}
+
 /** For the n8n schedule: new customer-PO mails not read yet, plus the prompt / schema / model to read them with. */
 export async function n8nPoMails(days: number, limit: number) {
   const cands = await poMailCandidates(days, 60);
   const done = await handledThreads(cands);
-  const mails = cands
+  const mails: N8nMail[] = cands
     .filter((c) => !done.has(c.threadId) && !mailSkipReason(c.subject, c.sender).skip)
     .map(forN8n)
     .filter((m) => m.files.some((f) => f.kind === 'PO'))
     .slice(0, limit);
+  // Then the other POs of mails that carried several (each becomes its own intake / order).
+  if (mails.length < limit) {
+    try {
+      mails.push(...(await pendingPoParts(Math.max(days, 30), limit - mails.length)));
+    } catch (e) {
+      console.error('[n8n po-mails] other POs of a mail', e);
+    }
+  }
   return { ...geminiRequestSpec(), mails };
 }
 
@@ -501,7 +553,8 @@ const MAX_TOTAL_BYTES = 60 * 1024 * 1024;
  */
 export async function ingestN8nIntake(p: N8nIntakePayload) {
   const threadId = String(p.threadId ?? '').trim();
-  if (!/^[0-9a-zA-Z_-]{6,64}$/.test(threadId)) throw new UserError('threadId is missing or invalid.');
+  // "<thread>" or "<thread>~<PO key>" for one PO of a mail carrying several (see multiPo.ts).
+  if (!/^[0-9a-zA-Z_-]{6,64}(~[0-9A-Z-]{1,40})?$/.test(threadId)) throw new UserError('threadId is missing or invalid.');
   const ref = threadRef(threadId);
   const existing = await prisma.poIntake.findFirst({ where: { gmailMessageId: ref, status: { in: ['EXTRACTED', 'CONFIRMED'] } }, orderBy: { id: 'desc' } });
   if (existing) return { intakeId: existing.id, status: existing.status, duplicate: true };
@@ -610,16 +663,17 @@ export async function searchMailArchive(q: string) {
 }
 
 /** Ask n8n to read one mail now (the user picked it and ticked the files). Returns at once; poll intakeForThread. */
-export async function requestMailRead(threadId: string, picks: { name: string; kind: DocKind }[], user: AuthUser) {
+export async function requestMailRead(threadId: string, picks: { name: string; kind: DocKind }[], user: AuthUser, part?: { partId: string; focus: string }) {
   const t = await getMailThread(threadId);
   if (!t) throw new UserError('Mail not found in the mail archive.');
   const wanted = new Map(picks.map((p) => [p.name, p.kind]));
   const files = t.files.filter((f) => wanted.has(f.name) && f.driveId).map((f) => ({ name: f.name, driveId: f.driveId, kind: wanted.get(f.name) as DocKind }));
   if (!files.some((f) => f.kind === 'PO')) throw new UserError('Tick the PO copy and mark it as "PO copy".');
-  const old = await prisma.poIntake.findFirst({ where: { gmailMessageId: threadRef(threadId), status: { in: ['EXTRACTED', 'CONFIRMED'] } } });
+  const id = part?.partId ?? threadId;
+  const old = await prisma.poIntake.findFirst({ where: { gmailMessageId: threadRef(id), status: { in: ['EXTRACTED', 'CONFIRMED'] } } });
   if (old) return { intakeId: old.id as number | null, status: old.status, since: null as string | null };
   const since = new Date(Date.now() - 2000).toISOString();
-  await callN8n('ceebuild-read-po-mail', { ...geminiRequestSpec(), mails: [{ threadId, subject: t.subject, sender: t.sender, date: t.date, mailText: t.text.slice(0, 6000), files }], requestedBy: user.name });
+  await callN8n('ceebuild-read-po-mail', { ...geminiRequestSpec(), mails: [{ threadId: id, subject: t.subject, sender: t.sender, date: t.date, mailText: t.text.slice(0, 6000), files, ...(part ? { focus: part.focus } : {}) }], requestedBy: user.name });
   return { intakeId: null as number | null, status: 'QUEUED', since };
 }
 
@@ -803,9 +857,20 @@ export async function rereadIntake(intakeId: number, user: AuthUser) {
   };
   const ref = String(intake.gmailMessageId ?? '');
   if (intake.source === 'N8N_MAIL' && ref.startsWith('thread:')) {
-    const threadId = ref.slice('thread:'.length);
+    const fullId = ref.slice('thread:'.length);
+    const { threadId, part } = splitThreadId(fullId);
     const t = await getMailThread(threadId);
     if (!t) throw new UserError('Mail not found in the mail archive.');
+    if (part) {
+      // One PO of a multi-PO mail: read only its own PO file again.
+      const poNo = (intake.extracted as unknown as PoExtraction | null)?.fields?.poNumber?.value || part;
+      const poFile = fileForPo(t.files, part, null) ?? fileForPo(t.files, poNo, null);
+      if (!poFile) throw new UserError(`The PO file of ${poNo} was not found in the mail any more.`);
+      const partFiles = filesForPart(t.files, poFile).map((x) => ({ name: x.name, kind: (x === poFile ? 'PO' : x.kind) as DocKind }));
+      await supersede('n8n');
+      const r = await requestMailRead(threadId, partFiles, user, { partId: fullId, focus: focusLine(poNo, poFile.name) });
+      return { mode: 'mail' as const, threadId: fullId, ...r };
+    }
     const files = t.files.filter((x) => x.driveId && (x.kind === 'PO' || x.kind === 'BOM' || x.kind === 'DRAWING')).map((x) => ({ name: x.name, kind: x.kind as DocKind }));
     if (!files.some((x) => x.kind === 'PO')) throw new UserError('No PO copy found in the mail any more.');
     await supersede('n8n');

@@ -60,6 +60,11 @@ Besides real warnings, the "warnings" array carries tagged lines (exact prefixes
   e.g. "DOC: OFFER | AKS_Revised Price.pdf".
 - "PENDING: item | dd-mm-yyyy | who must act" - see pending below.
 - "LATEST: dd-mm-yyyy: ..." - see latestPosition below (one line at most).
+- "OTHER_PO: po number | file name" - one per OTHER, SEPARATE customer PO in the documents (a different PO number, not a
+  revision / amendment / annexure of the PO you read), e.g. "OTHER_PO: NC26Y-00008 | PO Ceebuild1 NC26Y-00008.PDF". A mail may
+  carry several POs: read ONE PO fully (the first PO document) into fields / lines, and list every other PO this way - each is
+  read separately as its own order. Never mix lines or values of two POs. Material clearances (MC), summary sheets and
+  letters are not POs.
 
 Document TYPE is one of: PO = the customer's
 purchase / work order or its revision / corrigendum; OFFER = a price offer / quotation / revised price list made by US (Ceebuild /
@@ -106,7 +111,7 @@ the PO documents; from the mail take only the customer's contact (signature), dr
 documentType - what the main document is. A PO issued BY Ceebuild to its own supplier (Ceebuild is the buyer: Ceebuild
 letterhead, PO no. like "CB-PO/125/2026-27", material delivered to Ceebuild's works at Dhulagarh / Sankrail), an invoice, a
 proforma, a quotation, a delivery-failure (bounce) mail or a letter is NOT_A_PO. warnings - anything the reviewer must know (illegible pages, two different
-PO numbers, totals that do not add up, documents that are not POs).`;
+PO numbers that are not separate POs, totals that do not add up, documents that are not POs).`;
 }
 
 export async function extractPo(files: GeminiFile[]): Promise<PoExtraction> {

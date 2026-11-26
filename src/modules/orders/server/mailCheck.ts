@@ -6,6 +6,7 @@ import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { getGeminiModel, parseGeminiAnswer } from '@/lib/gemini';
 import { callN8n, N8N_USER } from '@/lib/n8n';
 import { getMailThread, mailDbConfigured, searchMailThreads, type MailThread } from '@/lib/mailDb';
+import { splitThreadId } from '@/lib/po/multiPo';
 import {
   docKindOf,
   normaliseMailStatus,
@@ -41,7 +42,7 @@ async function orderThreads(order: { id: number; poNumber: string }): Promise<Ma
   const refs = await prisma.poIntake.findMany({ where: { orderId: order.id, gmailMessageId: { startsWith: 'thread:' } }, select: { gmailMessageId: true } });
   const byId = new Map<string, MailThread>();
   for (const r of refs) {
-    const t = await getMailThread(String(r.gmailMessageId).slice('thread:'.length));
+    const t = await getMailThread(splitThreadId(String(r.gmailMessageId).slice('thread:'.length)).threadId);
     if (t) byId.set(t.threadId, t);
   }
   const want = key(order.poNumber);
