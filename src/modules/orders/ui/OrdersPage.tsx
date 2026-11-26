@@ -9,6 +9,7 @@ import { listOrdersAction, listOrdersFacetAction } from '@/app/actions/orders';
 import { ORDER_COLUMNS, type OrderRow, type OrdersMeta } from '../columns';
 import { NewOrderDialog } from './NewOrderDialog';
 import { ReceivedPos } from './ReceivedPos';
+import { OrderNeeds } from './OrderNeeds';
 
 const canEditRole = (role: string) => role === 'Admin' || role === 'User';
 
@@ -29,6 +30,7 @@ export function OrdersPage({ role }: { role: string }) {
         <p className="text-xs text-slate-500">An order starts when an offer becomes a PO. Open an order for its BOM and execution registers.</p>
       </div>
       <ReceivedPos canEdit={canEditRole(role)} onCreated={() => setTableKey((k) => k + 1)} />
+      <OrderNeeds canEdit={canEditRole(role)} />
       <ServerTable<OrderRow, OrdersMeta>
         key={tableKey}
         tableId="orders"

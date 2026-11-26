@@ -200,6 +200,10 @@ model Order {
   jobStatus        String?   @map("job_status")
   jobNote          String?   @map("job_note")
   jobAt            DateTime? @map("job_at")
+  // What the order's mail threads say (MC, drawing, BOM, dispatch instruction, inspection, advance,
+  // pending items) - read by n8n + Gemini, see src/lib/orders/mailCheck.ts.
+  mailStatus       Json?     @map("mail_status")
+  mailStatusAt     DateTime? @map("mail_status_at")
 
   poLines              OrderPoLine[]
   documents            OrderDocument[]

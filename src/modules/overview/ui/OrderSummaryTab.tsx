@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { OrderNeeds } from '@/modules/orders/ui/OrderNeeds';
 import { Pencil } from 'lucide-react';
 import { Kpi, fmtNum } from '@/components/ServerTable';
 import { Button } from '@/components/ui/button';
@@ -39,6 +40,7 @@ export function OrderSummaryTab({ order, role, onChanged }: { order: OrderDetail
 
   return (
     <div className="flex flex-col gap-4">
+      <OrderNeeds orderId={order.id} canEdit={canEdit} />
       <FormError error={error} />
 
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm">

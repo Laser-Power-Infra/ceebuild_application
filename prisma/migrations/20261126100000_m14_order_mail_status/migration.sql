@@ -1,0 +1,2 @@
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "mail_status" JSONB;
+ALTER TABLE "orders" ADD COLUMN IF NOT EXISTS "mail_status_at" TIMESTAMP(3);
