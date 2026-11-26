@@ -21,6 +21,7 @@ import { callN8n, N8N_USER } from '@/lib/n8n';
 import { columnsFromFields } from './columns';
 import { runIndentJob, type JobResult } from './job';
 import { customerFromSender, issuedByUs, mailSkipReason, senderFromWarnings } from '@/lib/po/direction';
+import { archiveDate, threadHandled, type IntakeOfThread } from '@/lib/po/threadHandled';
 
 const sql = Prisma.sql;
 const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -440,20 +441,20 @@ export async function orderChecks(orderId: number, fields: Record<PoFieldKey, st
 
 /** PoIntake.gmailMessageId for mail-archive threads. */
 export const threadRef = (threadId: string) => `thread:${threadId}`;
-const MAX_FAILS = 3;
-
-/** Threads that already have an intake (read, confirmed, discarded, or failed MAX_FAILS times). */
-async function handledThreads(threadIds: string[]) {
-  if (!threadIds.length) return new Set<string>();
-  const rows = await prisma.poIntake.findMany({ where: { gmailMessageId: { in: threadIds.map(threadRef) } }, select: { gmailMessageId: true, status: true } });
-  const fails = new Map<string, number>();
-  const done = new Set<string>();
+/**
+ * Threads not to read again: read / confirmed, failed MAX_FAILS times, or discarded with no new
+ * message since (a discarded thread that gets a new message is read again - see threadHandled).
+ */
+async function handledThreads(threads: { threadId: string; date: string | null }[]) {
+  if (!threads.length) return new Set<string>();
+  const rows = await prisma.poIntake.findMany({ where: { gmailMessageId: { in: threads.map((t) => threadRef(t.threadId)) } }, select: { gmailMessageId: true, status: true, createdAt: true } });
+  const byThread = new Map<string, IntakeOfThread[]>();
   for (const r of rows) {
     const id = String(r.gmailMessageId).slice('thread:'.length);
-    if (r.status === 'FAILED') fails.set(id, (fails.get(id) ?? 0) + 1);
-    else done.add(id);
+    byThread.set(id, [...(byThread.get(id) ?? []), { status: r.status, createdAt: r.createdAt }]);
   }
-  for (const [id, n] of fails) if (n >= MAX_FAILS) done.add(id);
+  const done = new Set<string>();
+  for (const t of threads) if (threadHandled(byThread.get(t.threadId) ?? [], archiveDate(t.date))) done.add(t.threadId);
   return done;
 }
 
@@ -472,7 +473,7 @@ const forN8n = (t: MailThread) => ({
 /** For the n8n schedule: new customer-PO mails not read yet, plus the prompt / schema / model to read them with. */
 export async function n8nPoMails(days: number, limit: number) {
   const cands = await poMailCandidates(days, 60);
-  const done = await handledThreads(cands.map((c) => c.threadId));
+  const done = await handledThreads(cands);
   const mails = cands
     .filter((c) => !done.has(c.threadId) && !mailSkipReason(c.subject, c.sender).skip)
     .map(forN8n)
