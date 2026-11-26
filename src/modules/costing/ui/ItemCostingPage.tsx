@@ -34,6 +34,7 @@ import type { DrawingRow } from '../server/drawings';
 import type { CostingPreview, SavedCosting } from '../server/compute';
 import { Badge, DraftLinesEditor, DrawingExtractor, card, cellInput, inr, td, th } from './shared';
 import { FabDrawingsButton } from '@/modules/fabdrawings/ui/FabDrawingsButton';
+import { FabGeometryButtons } from '@/modules/fabdrawings/ui/FabGeometry';
 
 type Data = { item: ItemInfo; docket: DocketInfo | null; bom: ItemBomInfo | null; suggestions: DrawingSuggestion[]; costings: SavedCosting[] };
 
@@ -88,7 +89,7 @@ export function ItemCostingPage({ itemId, role }: { itemId: number; role: string
         <CreateBom data={data} canEdit={canEdit} mode={creating} setMode={setCreating} onDone={() => { setCreating(null); void load(); }} onError={setError} />
       ) : (
         <>
-          <BomCard data={data} bom={bom} canEdit={canEdit} reload={load} onError={setError} onNew={(m) => setCreating(m)} />
+          <BomCard role={role} data={data} bom={bom} canEdit={canEdit} reload={load} onError={setError} onNew={(m) => setCreating(m)} />
           <CostingCard data={data} bom={bom} canEdit={canEdit} role={role} reload={load} onError={setError} />
         </>
       )}
@@ -299,7 +300,7 @@ function EditCell({ line, field, disabled, onSaved, onError, numeric }: { line: 
   );
 }
 
-function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; bom: ItemBomInfo; canEdit: boolean; reload: () => void; onError: (e: string) => void; onNew: (m: 'ENQUIRY' | 'APPROVED') => void }) {
+function BomCard({ data, bom, canEdit, role, reload, onError, onNew }: { data: Data; bom: ItemBomInfo; canEdit: boolean; role: string; reload: () => void; onError: (e: string) => void; onNew: (m: 'ENQUIRY' | 'APPROVED') => void }) {
   const draft = bom.status === 'DRAFT';
   const locked = !canEdit || !draft;
   const [lib, setLib] = useState<null | { drawingNo: string; revision: string; approvalLetterNo: string; approvalDate: string; fileLink: string; itemType: string }>(null);
@@ -363,6 +364,7 @@ function BomCard({ data, bom, canEdit, reload, onError, onNew }: { data: Data; b
                   <Unlock /> Reopen
                 </Button>
                 <FabDrawingsButton bomId={bom.id} onError={onError} />
+                <FabGeometryButtons bomId={bom.id} role={role} onError={onError} />
                 {!bom.drawingId && (
                   <Button
                     size="sm"
@@ -627,7 +629,7 @@ function CostingCard({ data, bom, canEdit, role, reload, onError }: { data: Data
           <input id="c-va" className={fieldCls} inputMode="decimal" placeholder={res?.minVaPct !== null && res?.minVaPct !== undefined ? String(res.minVaPct) : ''} value={va} onChange={(e) => setVa(e.target.value)} />
         </div>
         <div>
-          <label className={labelCls} htmlFor="c-date">Rates as on</label>
+          <label className={labelCls} htmlFor="c-date" title="Rates, section kg/m and planning settings as they were on this date (Rev 2 §6)">Rates &amp; masters as on</label>
           <input id="c-date" type="date" className={fieldCls} value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
         <div>

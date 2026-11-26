@@ -5,11 +5,13 @@ import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
 import { isOperation, machineCapacityPerDay, OP_UNIT } from '@/lib/planning/machines';
 import { RATE_UNITS, type MachineRow } from '../columns';
+import { applyDueVersions, recordMasterChanges } from '@/modules/masterVersions/server';
 
 // Ceebuild List of Machinery: list for everyone, edits Admin-only (enforced by the action).
 // Ranges mirror the CHECK constraint machines_chk in the migration.
 
 export async function listMachines(): Promise<MachineRow[]> {
+  await applyDueVersions(); // Rev 2 §6: future-dated values whose date has come
   const rows = await prisma.machine.findMany({
     orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
     include: { _count: { select: { productionEntries: true } } },
@@ -100,6 +102,7 @@ export async function createMachine(i: Input, user: AuthUser) {
   return prisma.$transaction(async (tx) => {
     if (await tx.machine.findUnique({ where: { code } })) throw new UserError(`Machine ${code} already exists.`);
     const m = await tx.machine.create({ data: { ...(data as Prisma.MachineCreateInput), code } });
+    await recordMasterChanges(tx, 'machines', code, null, data, user);
     await audit(tx, user, m.id, 'CREATED', null, JSON.stringify({ code, ...data }));
     return { id: m.id };
   });
@@ -119,6 +122,7 @@ export async function updateMachine(id: number, i: Input, user: AuthUser) {
     const hours = Number(data.hoursPerShift ?? before.hoursPerShift.toNumber());
     if (shifts * hours > 24) throw new UserError('Shifts x hours per shift cannot exceed 24 hours.');
     await tx.machine.update({ where: { id }, data });
+    await recordMasterChanges(tx, 'machines', before.code, before, data, user);
     for (const [k, v] of Object.entries(data)) {
       const old = (before as Record<string, unknown>)[k];
       const oldStr = old instanceof Prisma.Decimal ? old.toNumber() : old;

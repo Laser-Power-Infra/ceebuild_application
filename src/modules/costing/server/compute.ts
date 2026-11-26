@@ -9,6 +9,7 @@ import { computeCosting, setsFromItem, wastageFromPlan, type BillingBasis, type 
 import { classifyFab } from '@/lib/costing/fab';
 import { planIndent, type PlanPiece, type SectionInfo } from '@/lib/planning/cutting';
 import { getPlanSettings } from '@/modules/settings/server';
+import { planSettingsAsOn, sectionsAsOn } from '@/modules/masterVersions/server';
 import { cutSettingsOf } from '@/modules/rm/server/common';
 import { allRates } from './master';
 import { loadItem } from './itemBom';
@@ -82,13 +83,16 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
   const quoteDate = opts.quoteDate && /^\d{4}-\d{2}-\d{2}$/.test(opts.quoteDate) ? opts.quoteDate : today();
 
   const keys = [...new Set(bom.lines.map((l) => l.sectionKey).filter((k): k is string => !!k))];
-  const [sections, purchase, rates, settings] = await Promise.all([
+  const [sections, purchase, rates, settingsToday] = await Promise.all([
     prisma.sectionMaster.findMany({ where: { sectionKey: { in: keys } }, select: { sectionKey: true, label: true, kgPerM: true, maxBarMm: true, approved: true } }),
     prisma.rmPurchaseItem.findMany({ where: { active: true }, select: { sectionKey: true, label: true } }),
     allRates(),
     getPlanSettings(),
   ]);
-  const sectionKgm = Object.fromEntries(sections.map((s) => [s.sectionKey, s.kgPerM.toNumber()]));
+  // Rev 2 §6: re-cost "as on" the costing date – section kg/m and settings as they were that day.
+  const datedSections = await sectionsAsOn(keys, quoteDate);
+  const settings = await planSettingsAsOn(settingsToday, quoteDate);
+  const sectionKgm = Object.fromEntries(sections.map((s) => [s.sectionKey, datedSections.get(s.sectionKey)?.kgPerM ?? s.kgPerM.toNumber()]));
   const purchaseItems = Object.fromEntries(purchase.map((p) => [p.sectionKey, p.label]));
 
   // Structures: a mixed BOM takes each structure's own set count; a single structure with no count
@@ -165,7 +169,7 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
     const kgm = sectionKgm[l.sectionKey] ?? l.kgPerM;
     if (!kgm || !purchaseItems[l.sectionKey]) continue;
     const s = sections.find((x) => x.sectionKey === l.sectionKey);
-    info[l.sectionKey] = { label: s?.label ?? l.section ?? l.sectionKey, kgPerM: kgm, maxBarMm: s?.maxBarMm ?? null };
+    info[l.sectionKey] = { label: s?.label ?? l.section ?? l.sectionKey, kgPerM: kgm, maxBarMm: datedSections.get(l.sectionKey)?.maxBarMm !== undefined ? datedSections.get(l.sectionKey)!.maxBarMm ?? null : (s?.maxBarMm ?? null) };
     pieces.push({ markNo: l.markNo || `ROW ${l.rowNo}`, sectionKey: l.sectionKey, lengthMm: l.lengthMm, qty: Math.ceil(l.qtyPerSet * l.sets - 1e-9) });
   }
   if (pieces.length) {

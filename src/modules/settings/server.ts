@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
 import type { PlanSettingsValues } from './types';
+import { applyDueVersions, recordMasterChanges } from '@/modules/masterVersions/server';
 
 export type { PlanSettingsValues } from './types';
 
@@ -29,6 +30,7 @@ const DEFAULTS: PlanSettingsValues = {
 
 /** Plant planning defaults (single row id = 1; created by the migration, re-created if missing). */
 export async function getPlanSettings(): Promise<PlanSettingsValues> {
+  await applyDueVersions(); // Rev 2 §6: future-dated values whose date has come
   const row = await prisma.planSettings.findUnique({ where: { id: 1 } });
   if (!row) return DEFAULTS;
   return {
@@ -95,6 +97,7 @@ export async function updatePlanSettings(input: Record<string, unknown>, user: A
       create: { id: 1, ...data, updatedByName: user.name },
       update: { ...data, updatedByName: user.name },
     });
+    await recordMasterChanges(tx, 'plan_settings', '1', before as unknown as Record<string, unknown>, data, user);
     const changes = Object.keys(data).filter((k) => String(before[k as keyof PlanSettingsValues]) !== String(data[k]));
     if (changes.length) {
       await tx.editLog.createMany({

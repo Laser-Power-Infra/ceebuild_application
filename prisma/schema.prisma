@@ -970,6 +970,7 @@ model ItemBom {
   groups   ItemBomGroup[]
   costings ItemCosting[]
   fabDrawingSets FabDrawingSet[]
+  drawingFeatures DrawingFeature[]
 
   @@index([itemId])
   @@index([docketId])
@@ -1271,6 +1272,8 @@ model FabDrawingSet {
   confirmedByName String?   @map("confirmed_by_name")
   confirmedAt     DateTime? @map("confirmed_at")
   confirmRemarks  String?   @map("confirm_remarks")
+  // Production confirmation: the "to be confirmed" points ticked ([{ text, ok }]).
+  confirmedItems  Json?     @map("confirmed_items")
   createdById     Int?      @map("created_by_id")
   createdByName   String?   @map("created_by_name")
   createdAt       DateTime  @default(now()) @map("created_at")
@@ -1300,4 +1303,64 @@ model FabDrawingIssue {
 
   @@index([setId])
   @@map("fab_drawing_issues")
+}
+
+// Rev 2 §6: a value of one field of a master record (section, machine, planning setting) from a date.
+// The master row holds today's value; "as on <date>" reads the latest version on or before the date.
+model MasterVersion {
+  id            Int      @id @default(autoincrement())
+  // section_master | machines | plan_settings
+  tableName     String   @map("table_name")
+  // section_key | machine code | "1"
+  recordKey     String   @map("record_key")
+  field         String
+  value         String?
+  validFrom     DateTime @map("valid_from") @db.Date
+  // false = a future-dated value not yet copied to the master row.
+  applied       Boolean  @default(true)
+  reason        String?
+  changedById   Int?     @map("changed_by_id")
+  changedByName String?  @map("changed_by_name")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([tableName, recordKey, field, validFrom], map: "master_versions_lookup_idx")
+  @@map("master_versions")
+}
+
+// Geometry the BOM lacks, per mark (M14 fabrication drawings part 2): holes / slots / bends / welds /
+// notches. Linked to the item BOM, and to its approved drawing so the next order of that drawing reuses it.
+model DrawingFeature {
+  id            Int       @id @default(autoincrement())
+  itemBomId     Int?      @map("item_bom_id")
+  itemBom       ItemBom?  @relation(fields: [itemBomId], references: [id], onDelete: Cascade)
+  drawingId     Int?      @map("drawing_id")
+  markNo        String    @map("mark_no")
+  // HOLE | SLOT | BEND | WELD | NOTCH
+  kind          String
+  // Positions from end A, mm, comma separated ("50, 475, 1600").
+  positions     String?
+  diaMm         Decimal?  @map("dia_mm") @db.Decimal(8, 2)
+  // Gauge / offset from the heel or edge, mm.
+  offsetMm      Decimal?  @map("offset_mm") @db.Decimal(8, 2)
+  // Leg / face (e.g. "leg A", "web").
+  face          String?
+  count         Int?
+  bendAngle     Decimal?  @map("bend_angle") @db.Decimal(6, 2)
+  bendRadius    Decimal?  @map("bend_radius") @db.Decimal(8, 2)
+  // FILLET | BUTT | TACK | PLUG
+  weldType      String?   @map("weld_type")
+  weldSize      Decimal?  @map("weld_size") @db.Decimal(6, 2)
+  weldLength    Decimal?  @map("weld_length") @db.Decimal(8, 2)
+  weldPitch     Decimal?  @map("weld_pitch") @db.Decimal(8, 2)
+  // DRAWING (on the customer drawing) | STANDARD (from the rules) | MANUAL
+  source        String    @default("MANUAL")
+  toConfirm     Boolean   @default(false) @map("to_confirm")
+  note          String?
+  createdByName String?   @map("created_by_name")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  @@index([itemBomId], map: "drawing_features_item_bom_idx")
+  @@index([drawingId, markNo], map: "drawing_features_drawing_idx")
+  @@map("drawing_features")
 }

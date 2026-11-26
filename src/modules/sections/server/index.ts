@@ -9,6 +9,7 @@ import { recheckOpenUploads } from '@/modules/bom/server/mutations';
 import { readWorkbook, sheetCells } from '@/modules/bom/server/workbook';
 import type { TablePage, TableQuery } from '@/components/data-table/types';
 import { EDITABLE_SECTION_FIELDS, type SectionRow } from '../columns';
+import { applyDueVersions, recordMasterChanges } from '@/modules/masterVersions/server';
 
 const sql = Prisma.sql;
 
@@ -28,6 +29,7 @@ const SPEC: TableSpec = {
 };
 
 export async function listSections(query: TableQuery): Promise<TablePage<SectionRow>> {
+  await applyDueVersions(); // Rev 2 §6: future-dated values whose date has come
   const { rows, agg } = await fetchPage<SectionRow, { total: number }>(SPEC, query, sql`count(*)::int AS total`);
   return { rows: plain(rows), total: agg.total };
 }
@@ -54,6 +56,7 @@ export async function upsertSection(input: Record<string, unknown>, user: AuthUs
   const result = await prisma.$transaction(async (tx) => {
     const before = await tx.sectionMaster.findUnique({ where: { sectionKey: key } });
     const row = await tx.sectionMaster.upsert({ where: { sectionKey: key }, create: { sectionKey: key, ...data }, update: data });
+    await recordMasterChanges(tx, 'section_master', key, before, data, user);
     await tx.editLog.create({
       data: {
         tableName: 'section_master',
@@ -89,6 +92,9 @@ export async function updateSectionField(id: number, field: string, value: strin
     else if (field === 'grade') data.grade = text.slice(0, 50) || null;
     else data.source = text.slice(0, 200) || null;
     await tx.sectionMaster.update({ where: { id }, data });
+    // Rev 2 §6: a renamed section keeps its dated history; other fields get a version from today.
+    if (data.sectionKey && data.sectionKey !== row.sectionKey) await tx.masterVersion.updateMany({ where: { tableName: 'section_master', recordKey: row.sectionKey }, data: { recordKey: String(data.sectionKey) } });
+    else await recordMasterChanges(tx, 'section_master', row.sectionKey, row, data as Record<string, unknown>, user);
     const old = field === 'approved' ? (row.approved ? 'Yes' : 'No') : String((row as Record<string, unknown>)[field] ?? '');
     await tx.editLog.create({ data: { tableName: 'section_master', recordId: id, fieldName: field, oldValue: old, newValue: text, ...auditUser(user) } });
     return { id };
@@ -149,9 +155,10 @@ export async function importSections(buffer: Buffer, fileName: string, user: Aut
     let added = 0;
     let updated = 0;
     for (const s of rows) {
-      const exists = await tx.sectionMaster.findUnique({ where: { sectionKey: s.key }, select: { id: true } });
+      const exists = await tx.sectionMaster.findUnique({ where: { sectionKey: s.key } });
       const data = { label: s.label, kgPerM: s.kgPerM, grade: s.grade, approved: s.approved, source: fileName.slice(0, 200) };
       await tx.sectionMaster.upsert({ where: { sectionKey: s.key }, create: { sectionKey: s.key, ...data }, update: data });
+      await recordMasterChanges(tx, 'section_master', s.key, exists, data, user, `Imported from ${fileName.slice(0, 100)}`);
       if (exists) updated++;
       else added++;
     }
