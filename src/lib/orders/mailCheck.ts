@@ -182,7 +182,9 @@ export function orderNeeds(f: OrderFacts, m: OrderMailStatus | null): OrderNeeds
 
   // PO data.
   const missing: string[] = [];
-  if (!f.deliveryDue) missing.push('delivery / completion date');
+  // "Dispatch on receipt of the DI" POs: the dispatch instruction is the delivery date.
+  const diIn = t?.dispatchInstruction.status === 'DONE' || hasFile(f, /disp\w*[\s_-]*instr/i);
+  if (!f.deliveryDue && !diIn) missing.push('delivery / completion date');
   if (f.contractValue === null) missing.push('PO value');
   if (f.gstPct === null) missing.push('GST %');
   if (!f.paymentTerms) missing.push('payment terms');
