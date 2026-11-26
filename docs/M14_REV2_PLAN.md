@@ -94,6 +94,30 @@ For each: BOM → costing → cost sheet with ESTIMATE flags → offer (Quotatio
    Drawing-standards master, revisions, issue to Satya + "confirmed by production" gate). Test = KESCo Rev 0. Plan + date by 26-11.
 
 ## Status log
+- 26-11 afternoon – §6, §10 checks, fabrication drawings part 2 (backup `backups/live-before-m14-versions-features-20261126-1532.dump`;
+  migrations `20261126160000_m14_master_versions`, `20261126170000_m14_drawing_features` applied):
+  - §6 effective-dated masters: `master_versions` (one field of a section / machine / planning setting from a date). Every
+    edit of those masters keeps a dated version (first change also keeps the old value as the baseline); Admin "Date-wise
+    values" panel on GTP Sections, Machines and Planning Settings: new value from a back-dated, today's or future date with a
+    reason, plus the history (from / to / in force / from date). The master row always holds today's value; future values are
+    copied on their date. Costing "Rates & masters as on <date>" now also takes section kg/m, longest bar and planning
+    settings as on that date. Quotation snapshots are frozen JSON, so back-dated changes never alter a quoted offer.
+  - §10 machine master: live list checked against the Rev 2 list – already identical (working: PP1, PP11, UP-1 x1, SH1,
+    PP4/5/8/9/12/14/15/16/17, BULL, PP3, PP13, PP6, hydraulic press, W1/W2/W3, 201i, ARC1, annealing; excluded PP2, PP7,
+    PP10, LN1/LN2, D1/D3). Rockwell tester, bar bender and electro-plating are not production machines (not in the master).
+  - §10 LCC vs INDT/2627/0001: indent (Samrat, 03-11) found in the mail archive and attached to order 5 (LCC 42008150).
+    `scripts/m14_lcc_indent_check.ts` runs the dashboard planner on the party BOM (MSDSS Rev 1, with the 08-10 clarification
+    ISMC 125 = 125x65x5.3): **129 bars, 10,618.3 kg (IS) – all 15 bar lines identical**; plates 760 nos = 760; total at IS −3 %
+    12,332.2 kg vs 12,332.36. Note: ISMC 125/150/200, ISA 90x90x6 and the pipes are not in the GTP section master (the order
+    indent would use the BOM kg/m with a warning).
+  - Fabrication drawings part 2: `drawing_features` (holes / slots / bends / welds / notches per mark, source drawing /
+    standard / manual, "to confirm" flag), entered on the item BOM ("Holes / bends / welds") and reused by the next BOM of the
+    same approved drawing; printed on the member sheets and cutting list; open points only where geometry is missing.
+    "Drawing revisions": PDF kept per Rev, Issue (Admin; to / cc, logged – mail sent by hand until an n8n sender exists, then
+    "Mark sent"), "Confirmed by production" (tick each to-confirm point or give remarks); a Rev whose BOM changed is OUT OF
+    DATE and cannot be issued or confirmed; issuing / confirming supersedes older Revs. **Cutting gate**: cropping /
+    shearing entries of an order are refused until the latest Rev of every drawing of its docket is confirmed and up to
+    date (Admin override with a reason, audited); orders whose docket has no drawing yet are not held.
 - 25-11 10:15 – deploy of `9971291` **did not happen**: the commit dropped `src/lib/gemini.ts` (build failed). Restored in `dfb1365`; server restarted 10:17.
 - 25-11 10:35 backup `backups/live-before-m14-25nov-20261125-1035.dump`; migration `20261125100000_m14_25nov` applied (delivery state,
   item HSN, BOM load basis / sets per truck / painted, `quotation_snapshots`, `erp_po_lines`, `erp_indent_lines`, `freight_history`).
