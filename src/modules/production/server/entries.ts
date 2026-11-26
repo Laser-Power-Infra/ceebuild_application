@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
+import { cuttingGate } from '@/modules/fabdrawings/server/sets';
 import { fetchFacet, fetchPage, plain, type FieldSql, type TableSpec } from '@/lib/serverTable';
 import { isOperation, operationsOf, OPERATION_LABELS, unitsPerPiece, type Operation } from '@/lib/planning/machines';
 import type { TablePage, TableQuery } from '@/components/data-table/types';
@@ -61,15 +62,17 @@ export const listEntriesFacet = (orderId: number | null, key: string, query: Tab
 
 /** Pick-lists for the entry form: the order's BOM marks (with the operations each needs) and active machines. */
 export async function entryOptions(orderId: number): Promise<EntryOptions> {
-  const [boms, saved, machines] = await Promise.all([
+  const [boms, saved, machines, gate] = await Promise.all([
     loadBoms([orderId]),
     loadSavedRoutings([orderId]),
     prisma.machine.findMany({ where: { active: true }, orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }], select: { id: true, code: true, name: true, operation: true } }),
+    cuttingGate(orderId),
   ]);
   const bom = boms.get(orderId);
   return {
     marks: (bom?.marks ?? []).map((m) => ({ markNo: m.markNo, qty: m.qty, operations: operationsOf(effectiveRouting(m, saved.get(orderId)).routing) })),
     machines: machines.filter((m) => isOperation(m.operation)).map((m) => ({ ...m, operation: m.operation as Operation })),
+    cuttingHeld: gate.ok ? null : gate.reason,
   };
 }
 
@@ -130,6 +133,18 @@ export async function addEntry(orderId: number, i: Record<string, unknown>, user
     if (!isOperation(machine.operation)) throw new UserError(`Machine ${machine.code} has an unknown operation.`);
     const op = machine.operation;
 
+    // M14 part 2 cutting gate: cropping / shearing only after production confirmed the fabrication
+    // drawing (orders whose docket has drawings). Admin may override with a reason (audited).
+    let gateOverride: string | null = null;
+    if (op === 'CROPPING' || op === 'SHEARING') {
+      const gate = await cuttingGate(orderId);
+      if (!gate.ok) {
+        const why = String(i.overrideReason ?? '').trim();
+        if (user.role !== 'Admin' || !why) throw new UserError(`${gate.reason} Cutting is held${user.role === 'Admin' ? ' – give an override reason to record it anyway' : ' until production confirms the drawing (or an Admin overrides with a reason)'}.`);
+        gateOverride = `${gate.reason} Override: ${why}`.slice(0, 1000);
+      }
+    }
+
     const bom = (await loadBoms([orderId])).get(orderId);
     const mark = bom?.marks.find((m) => m.markNo === markNo);
     if (!mark) throw new UserError(`Mark ${markNo} is not in the order's current BOM.`);
@@ -171,6 +186,9 @@ export async function addEntry(orderId: number, i: Record<string, unknown>, user
         ...auditUser(user),
       },
     });
+    if (gateOverride) {
+      await tx.editLog.create({ data: { tableName: 'production_entries', recordId: row.id, fieldName: 'CUTTING_GATE_OVERRIDE', oldValue: null, newValue: gateOverride, ...auditUser(user) } });
+    }
     return { id: row.id, remaining: required - done.pieces - pieces };
   });
 }

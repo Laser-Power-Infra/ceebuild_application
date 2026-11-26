@@ -5,6 +5,7 @@
 // Geometry the BOM lacks is never invented: hole dia / gauge / edge come from the standards and are
 // listed as design decisions; hole count and positions not given are listed "to be confirmed".
 
+import { geometryByMark, type FabFeature, type MarkGeometry } from './geometry';
 import { boltDia, finishNote, gaugeFor, generalNotes, holeDia, holeMethod, meshTack, minEdge, sectionGeom, DEFAULT_STANDARDS, type DrawingStandard, type SectionGeom } from './standards';
 
 export interface FabBomLine {
@@ -170,10 +171,12 @@ function bendWeldOf(l: FabBomLine, bom: FabBom): string {
   return '–';
 }
 
-export function buildFabModel(input: { bom: FabBom; header: FabHeader; standards?: DrawingStandard[]; features?: FabHoleFeature[] }): FabModel {
+export function buildFabModel(input: { bom: FabBom; header: FabHeader; standards?: DrawingStandard[]; features?: FabHoleFeature[]; geometry?: FabFeature[] }): FabModel {
   const { bom, header } = input;
   const stds = input.standards ?? DEFAULT_STANDARDS;
   const features = new Map((input.features ?? []).map((f) => [f.markNo, f]));
+  // Part 2: holes / slots / bends / welds / notches entered per mark (drawing_features).
+  const geo: Map<string, MarkGeometry> = geometryByMark(input.geometry ?? []);
   const drawingNoBase = `CB/${header.clientCode}/${header.itemCode}`;
 
   const groups: FabBomGroup[] = bom.groups.length ? bom.groups : [{ id: null, name: bom.structureType ?? 'Structure', drawingNo: bom.drawingRef, sets: null }];
@@ -202,7 +205,8 @@ export function buildFabModel(input: { bom: FabBom; header: FabHeader; standards
     }
     const geom = sectionGeom(section);
     const gauge = geom.shape === 'ANGLE' && geom.a ? gaugeFor(geom.a, stds) : null;
-    const f = features.get(markNo) ?? null;
+    const f = features.get(markNo) ?? geo.get(markNo.toUpperCase())?.holes ?? null;
+    const gm = geo.get(markNo.toUpperCase());
     const dia = f?.diaMm ?? hole;
     members.set(k, {
       key: k,
@@ -216,14 +220,17 @@ export function buildFabModel(input: { bom: FabBom; header: FabHeader; standards
       gaugeMm: f?.offsetMm ?? gauge,
       edgeMm: dia ? minEdge(dia, geom.shape === 'FLAT' ? geom.a : null, stds) : null,
       holes: f,
-      bendWeld: bendWeldOf(l, bom),
-      notes: [],
+      bendWeld: gm?.bendWeld ?? bendWeldOf(l, bom),
+      notes: gm ? [...gm.lines] : [],
     });
   }
   for (const m of members.values()) {
-    if (m.holes) {
+    const gm = geo.get(m.markNo.toUpperCase());
+    if (m.holes && m.holes.positionsMm.length === 0) {
+      m.notes.unshift(`${gm?.holeCount ?? '?'} holes ${m.holeDiaMm ?? '?'} dia – positions TO CONFIRM.`);
+    } else if (m.holes) {
       const src = m.holes.source === 'DRAWING' ? 'from the approved drawing' : m.holes.source === 'MANUAL' ? 'entered by hand' : 'from the drawing standards';
-      m.notes.push(`${m.holes.positionsMm.length} holes ${m.holeDiaMm ?? '?'} dia at ${m.holes.positionsMm.join(' / ')} from end A (${src})${m.holes.toConfirm ? ' – TO CONFIRM' : ''}.`);
+      m.notes.unshift(`${m.holes.positionsMm.length} holes ${m.holeDiaMm ?? '?'} dia at ${m.holes.positionsMm.join(' / ')} from end A (${src})${m.holes.toConfirm ? ' – TO CONFIRM' : ''}.`);
       if (m.holes.note) m.notes.push(m.holes.note);
     } else {
       const parts = [m.holeDiaMm ? `hole dia ${m.holeDiaMm} by standard` : 'hole dia not known (no bolt size on the BOM)'];
@@ -234,12 +241,13 @@ export function buildFabModel(input: { bom: FabBom; header: FabHeader; standards
     if (m.geom.shape === 'ANGLE' && !m.gaugeMm) m.notes.push(`Gauge for a ${m.geom.a ?? '?'} mm leg is not in the standards – to confirm.`);
     if (m.lengthMm === null) m.notes.push('Cut length missing on the BOM – to confirm.');
     if (m.bendWeld.startsWith('bend')) m.notes.push('Bent member: developed length = BOM length; bend details to confirm.');
+    else if (gm?.bends) m.notes.push('Bent member: developed length = BOM length (the drawing never changes a length).');
   }
 
   // ---- cutting list per structure
   const cutRow = (l: FabBomLine, sets: number | null): CutRow => {
     const m = members.get(`${markOf(l)}|${(l.section ?? '').trim() || '–'}|${l.lengthMm ?? ''}`)!;
-    const holes = m.holes ? `${m.holes.positionsMm.length} x ${m.holeDiaMm ?? '?'}${m.holes.toConfirm ? ' (TBC)' : ''}` : m.holeDiaMm ? `${m.holeDiaMm} dia – TBC` : 'TBC';
+    const holes = m.holes && m.holes.positionsMm.length === 0 ? `${geo.get(m.markNo.toUpperCase())?.holeCount ?? '?'} x ${m.holeDiaMm ?? '?'} (pos. TBC)` : m.holes ? `${m.holes.positionsMm.length} x ${m.holeDiaMm ?? '?'}${m.holes.toConfirm ? ' (TBC)' : ''}` : m.holeDiaMm ? `${m.holeDiaMm} dia – TBC` : 'TBC';
     return {
       markNo: m.markNo,
       description: m.description,
@@ -305,12 +313,16 @@ export function buildFabModel(input: { bom: FabBom; header: FabHeader; standards
   // ---- to be confirmed by production before cutting
   const noHoles = [...members.values()].filter((m) => !m.holes).map((m) => m.markNo);
   if (noHoles.length) toConfirm.push(`Hole count and positions not defined for: ${[...new Set(noHoles)].join(', ')} (member sheets show hole dia / gauge / edge from the standards only).`);
-  const tbcHoles = [...members.values()].filter((m) => m.holes?.toConfirm).map((m) => m.markNo);
+  const tbcHoles = [...members.values()].filter((m) => m.holes?.toConfirm || (m.holes && m.holes.positionsMm.length === 0)).map((m) => m.markNo);
   if (tbcHoles.length) toConfirm.push(`Hole positions marked TO CONFIRM for: ${tbcHoles.join(', ')}.`);
   if (angleLegs.length) toConfirm.push('Gauge line(s) above against the plant jigs / practice.');
   if (mesh) toConfirm.push(`Mesh tack weld ${meshTack(stds).lengthMm} @ ${meshTack(stds).pitchMm} c/c.`);
   const bent = [...members.values()].filter((m) => m.bendWeld.startsWith('bend')).map((m) => m.markNo);
   if (bent.length) toConfirm.push(`Bend details (angle, inside radius) for: ${bent.join(', ')}.`);
+  const tbcOther = [...members.values()].filter((m) => { const g = geo.get(m.markNo.toUpperCase()); return g?.toConfirm && !m.holes?.toConfirm; }).map((m) => m.markNo);
+  if (tbcOther.length) toConfirm.push(`Bend / weld / notch details marked TO CONFIRM for: ${[...new Set(tbcOther)].join(', ')}.`);
+  const geoMarks = [...geo.keys()].filter((k) => ![...members.values()].some((m) => m.markNo.toUpperCase() === k));
+  if (geoMarks.length) toConfirm.push(`Geometry entered for marks not in this BOM: ${geoMarks.join(', ')} – check the mark numbers.`);
   const noSets = groups.filter((g) => g.sets === null && cutLines.some((l) => groupOf(l) === g)).map((g) => g.name);
   if (noSets.length) toConfirm.push(`Set count not on the BOM for: ${noSets.join(', ')} – total qty left blank.`);
   const noLen = cutLines.filter((l) => l.lengthMm === null || l.qtyPerSet === null).map(markOf);

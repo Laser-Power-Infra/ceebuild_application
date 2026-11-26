@@ -90,6 +90,8 @@ export interface ProgressRow {
 }
 
 export interface EntryOptions {
+  /** M14 part 2: why cropping / shearing is held (fabrication drawing not confirmed), else null. */
+  cuttingHeld: string | null;
   marks: { markNo: string; qty: number; operations: Operation[] }[];
   machines: { id: number; code: string; name: string; operation: Operation }[];
 }

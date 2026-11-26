@@ -1,6 +1,11 @@
 # M14 – Fabrication drawings from the BOM: plan (25-11-2026)
 
 Request: Puja, 25-11-2026. Flow: order → BOM → approved drawing → RM indent → **fabrication drawing** → production confirms → cutting.
+**Status 26-11:** slice 1 (25-11: standards master, A3 PDF, cutting list) and part 2 (26-11: geometry per mark with
+library reuse, revisions with stored PDF, issue log, production confirmation, out-of-date check, cutting gate) are live.
+Still open: assembly templates (panel / gate GA views), hole / bend counts into `piece_routings`, the n8n mail sender to
+Satya (needs his e-mail and the sending account), Lanarsy and JSW templates.
+
 Inputs: `docs/m14-rev2-reference/` (her generator `.py.txt`, KESCo Rev 0 PDF, KESCo BOM xlsx). Plan only; no code yet.
 
 ## 1. What we build

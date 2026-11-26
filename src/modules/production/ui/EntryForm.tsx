@@ -21,7 +21,7 @@ export function EntryForm({ orderId: fixedOrderId, onClose, onSaved }: { orderId
   const [hits, setHits] = useState<OrderHit[]>([]);
   const [picked, setPicked] = useState<OrderHit | null>(null);
   const [opts, setOpts] = useState<EntryOptions | null>(null);
-  const [v, setV] = useState({ date: today(), shift: 'A', machineId: '', markNo: '', pieces: '', operatorName: '', remarks: '' });
+  const [v, setV] = useState({ date: today(), shift: 'A', machineId: '', markNo: '', pieces: '', operatorName: '', remarks: '', overrideReason: '' });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -125,6 +125,13 @@ export function EntryForm({ orderId: fixedOrderId, onClose, onSaved }: { orderId
               <label className={labelCls} htmlFor="pe-remarks">Remarks</label>
               <input id="pe-remarks" maxLength={1000} className={fieldCls} value={v.remarks} onChange={set('remarks')} />
             </div>
+            {opts?.cuttingHeld && machine && (machine.operation === 'CROPPING' || machine.operation === 'SHEARING') && (
+              <div className="col-span-2 rounded-lg border border-red-200 bg-red-50 p-2 text-xs text-red-800" role="alert">
+                <p className="font-semibold">Cutting held: {opts.cuttingHeld}</p>
+                <label className="mt-1 block font-semibold" htmlFor="pe-override">Admin override reason (logged)</label>
+                <input id="pe-override" maxLength={500} className={fieldCls} value={v.overrideReason} onChange={set('overrideReason')} placeholder="e.g. Satya confirmed by phone; mail to follow" />
+              </div>
+            )}
           </div>
         )}
         <FormError error={error} />
