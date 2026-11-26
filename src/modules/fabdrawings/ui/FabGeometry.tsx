@@ -29,6 +29,9 @@ function openPdf(base64: string, fileName: string) {
   URL.revokeObjectURL(a.href);
 }
 
+/** Management (Admin) copied on every drawing issue. */
+const MANAGEMENT_CC = 'puja.agarwal@laserpowerinfra.com';
+
 const fmtDt = (s: string | null) => (s ? new Date(s).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '');
 
 /** Part 2 on a confirmed item BOM: geometry per mark, and the drawing revisions (issue / confirm). */
@@ -268,7 +271,7 @@ function DrawingSets({ bomId, role, onClose, onError }: { bomId: number; role: s
   const [issuing, setIssuing] = useState<number | null>(null);
   const [confirming, setConfirming] = useState<number | null>(null);
   const [to, setTo] = useState('');
-  const [cc, setCc] = useState('');
+  const [cc, setCc] = useState(MANAGEMENT_CC);
   const [sent, setSent] = useState(false);
   const [ticked, setTicked] = useState<Set<number>>(new Set());
   const [remarks, setRemarks] = useState('');
