@@ -208,7 +208,12 @@ export function orderNeeds(f: OrderFacts, m: OrderMailStatus | null): OrderNeeds
   else if (t?.bom.status !== 'NOT_NEEDED') needs.push({ item: 'BOM', from: 'Customer', note: t?.bom.note ?? 'No BOM / cutting list in the mails.' });
 
   // Hold and the indent job.
-  if (f.onHold) needs.push({ item: 'Order on hold', from: 'Customer', note: f.holdReason ?? 'On hold.' });
+  if (f.onHold) {
+    // MC and drawing approval are in the mails: what still holds the order is our own work (inspection call, dispatch).
+    if (t?.mc.status === 'DONE' && (t.drawing.status === 'DONE' || f.drawingStatus === 'APPROVED'))
+      needs.push({ item: 'Release the hold', from: 'Puja (Admin)', note: `MC and drawing approval are now in the mails. The hold says "${(f.holdReason ?? '').slice(0, 160)}" – if that is done or is our own work, release the hold on the PO tab so the indent can run.` });
+    else needs.push({ item: 'Order on hold', from: 'Customer', note: f.holdReason ?? 'On hold.' });
+  }
   if (f.jobStatus === 'INDENT_DRAFTED') have.push('RM indent drafted');
   else if (!f.onHold) needs.push({ item: 'RM indent', from: 'Dashboard', note: f.jobNote ?? 'Indent not drafted yet.' });
 
@@ -224,11 +229,17 @@ export function orderNeeds(f: OrderFacts, m: OrderMailStatus | null): OrderNeeds
     have.push(`Dispatch instruction${w ? ` (${w})` : ''}`);
   }
   if (t?.inspection.status === 'DONE') have.push(`Inspection done${when(t.inspection) ? ` (${when(t.inspection)})` : ''}`);
-  else if (t?.inspection.status === 'PENDING') needs.push({ item: 'Inspection', from: 'Customer', note: t.inspection.note ?? 'Inspection call open.' });
+  else if (t?.inspection.status === 'PENDING') {
+    const ours = /(send|raise|offer)\w*\s.*inspection call|request\w*\s.*(ceebuild|supplier|souvik|us)|from (ceebuild|souvik)/i.test(t.inspection.note ?? '');
+    needs.push({ item: 'Inspection', from: ours ? 'Puja (Admin)' : 'Customer', note: `${t.inspection.note ?? 'Inspection open.'}${ours ? ' – we raise the inspection call.' : ''}` });
+  }
 
   // Open points the latest mail names that are not covered above.
+  const said = `${needs.map((n) => `${n.item} ${n.note}`).join(' ')} ${have.join(' ')}`.toLowerCase();
   for (const p of m?.pending ?? []) {
-    if (needs.some((n) => n.note.toLowerCase().includes(p.item.toLowerCase()))) continue;
+    // Already covered above (same key word, e.g. "Inspection call request" vs the inspection point).
+    const keys = p.item.toLowerCase().match(/[a-z]{5,}/g) ?? [];
+    if (keys.some((k) => !['request', 'issue', 'issuance', 'pending', 'materials', 'material', 'revised', 'revision'].includes(k) && said.includes(k.replace(/s$/, '')))) continue;
     const ours = /ceebuild|laser|puja|our|us\b/i.test(p.who ?? '');
     needs.push({ item: p.item, from: ours ? 'Puja (Admin)' : 'Customer', note: `Open at the latest mail${p.since ? ` (${p.since})` : ''}${p.who ? ` – ${p.who} to act` : ''}.` });
   }
