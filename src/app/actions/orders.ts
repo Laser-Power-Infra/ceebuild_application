@@ -3,7 +3,7 @@
 import { read, write, cleanQuery, toId } from '@/lib/actionResult';
 import { ADMIN_ROLES } from '@/lib/auth/server';
 import { getOrder, listOrders, listOrdersFacet, searchDockets } from '@/modules/orders/server/query';
-import { createOrder, deleteOrder, updateOrderTerms } from '@/modules/orders/server/mutations';
+import { createOrder, changeOrderDocket, deleteOrder, updateOrderTerms } from '@/modules/orders/server/mutations';
 
 export async function listOrdersAction(query: unknown) {
   return read(() => listOrders(cleanQuery(query)));
@@ -35,6 +35,11 @@ export async function createOrderAction(input: unknown) {
       user,
     ),
   );
+}
+
+/** Admin: put the order on another docket (offer), with the reason; optional customer name fix. */
+export async function changeOrderDocketAction(id: unknown, docketId: unknown, reason: unknown, client?: unknown) {
+  return write((user) => changeOrderDocket(toId(id, 'order'), toId(docketId, 'docket'), String(reason ?? ''), user, { client: typeof client === 'string' ? client : undefined }), { roles: ADMIN_ROLES });
 }
 
 export async function deleteOrderAction(id: unknown) {
