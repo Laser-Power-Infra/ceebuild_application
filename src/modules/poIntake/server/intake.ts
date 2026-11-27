@@ -748,6 +748,14 @@ export type AutoOrderResult = { intakeId: number; created: boolean; orderId?: nu
  * the same party that matches. The order's remarks say it was made automatically and what to check;
  * anything else stays on Orders -> "Received POs not yet orders" for a person to finish.
  */
+const OLD_PO_DAYS = 30;
+/** PO date (as read) more than 30 days ago. */
+function isOldPo(poDate: string | null | undefined) {
+  const iso = parseDate(poDate);
+  const at = iso ? new Date(`${iso.slice(0, 10)}T00:00:00Z`).getTime() : NaN;
+  return Number.isFinite(at) && Date.now() - at > OLD_PO_DAYS * 86400000;
+}
+
 export async function autoCreateOrder(intakeId: number): Promise<AutoOrderResult> {
   const review = await getIntakeReview(intakeId);
   if (review.status !== 'EXTRACTED') return { intakeId, created: false, reason: `intake is ${review.status.toLowerCase()}` };
@@ -763,6 +771,9 @@ export async function autoCreateOrder(intakeId: number): Promise<AutoOrderResult
     return { intakeId, created: false, discarded: true, reason: ours };
   }
   if (review.duplicateOf) return { intakeId, created: false, reason: `PO ${review.duplicateOf.poNumber} is already order #${review.duplicateOf.orderId}.` };
+  // Old POs (read late, e.g. the backlog before automatic reading) may already be supplied: a person decides.
+  if (isOldPo(f.poDate.value))
+    return { intakeId, created: false, reason: `PO dated ${f.poDate.value} is older than ${OLD_PO_DAYS} days – check and confirm by hand.` };
   const { pick: docket, why } = autoDocketPick(review.dockets, { endClient: f.endClient.value, project: f.project.value, poDate: parseDate(f.poDate.value) }, await docketDates(review.dockets.map((d) => d.id)));
   if (!docket) return { intakeId, created: false, reason: `Docket not chosen automatically: ${why}.` };
 
@@ -831,7 +842,9 @@ export async function receivedPosNotOrders() {
       const auto = autoDocketPick(rv.dockets, { endClient: f.endClient.value, project: f.project.value, poDate: parseDate(f.poDate.value) }, await docketDates(rv.dockets.map((d) => d.id)));
       const reason = rv.duplicateOf
         ? `Already order #${rv.duplicateOf.orderId} (PO ${rv.duplicateOf.poNumber})`
-        : !auto.pick
+        : isOldPo(f.poDate.value)
+          ? `Old PO (dated ${f.poDate.value}) – check it is not already supplied, then choose the docket and confirm`
+          : !auto.pick
           ? `Choose the docket: ${auto.why}`
           : 'Some PO fields could not be saved as read – open it, check and confirm';
       out.push({ intakeId: r.id, subject: rv.mailSubject, customer: f.customerName.value, poNumber: f.poNumber.value, poDate: f.poDate.value, totalValue: f.totalValue.value, reason });
