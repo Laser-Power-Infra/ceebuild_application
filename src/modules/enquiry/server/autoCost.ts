@@ -5,7 +5,7 @@ import type { AuthUser } from '@/lib/auth/server';
 import { normalizeDocketNo } from '@/lib/dockets';
 import { toNum } from '@/lib/bom/parse';
 import { createBomFromDrawing } from '@/modules/costing/server/itemBom';
-import { lastQuoted, saveCosting } from '@/modules/costing/server/compute';
+import { saveCosting } from '@/modules/costing/server/compute';
 
 // Rev 2 §2 E4-E5 (stage 2, first part): as soon as an enquiry docket exists, every item gets a draft
 // price the same day, without waiting for missing inputs:
@@ -80,10 +80,11 @@ export async function autoCostEnquiry(intakeId: number): Promise<AutoCostResult 
         });
         continue;
       }
-      const last = await lastQuoted(null, it.ourItemName);
+      const last = await sameItemQuoted(it);
       if (last) {
         const q = toNum(it.qty);
-        lines.push({ ...base, basis: 'LAST_QUOTED', rate: last.value, rateUnit: 'Rs/kg', total: q !== null && /^(KG|KGS)$/i.test(it.uom ?? '') ? Math.round(q * last.value * 100) / 100 : null, note: `ESTIMATE: last quoted Rs ${last.value}/kg (${last.ref}) – subject to drawing / BOM` });
+        const unitMatch = (it.uom ?? '').trim().toUpperCase() === last.unit;
+        lines.push({ ...base, basis: 'LAST_QUOTED', rate: last.value, rateUnit: `Rs/${last.unit.toLowerCase()}`, total: q !== null && unitMatch ? Math.round(q * last.value * 100) / 100 : null, note: `ESTIMATE: same item last quoted Rs ${last.value}/${last.unit.toLowerCase()} (${last.ref}) – subject to drawing / BOM` });
         continue;
       }
       lines.push({ ...base, basis: 'NONE', note: 'No approved drawing or earlier price: BOM / drawing needed from the party' });
@@ -105,63 +106,58 @@ export async function autoCostEnquiry(intakeId: number): Promise<AutoCostResult 
 }
 
 /**
- * Every docket (typed on the dashboard or made from a mail): items without a price get one right away.
- *   1. a BOM exists        -> costed with the Costing Master and APPLIED (item price = costing price)
- *   2. same item quoted before in the same unit (Rs/SQM, Rs/set, Rs/kg ...) -> that price, logged as ESTIMATE
- *   3. structure costed before (Rs/kg)       -> that rate for a KG item, logged as ESTIMATE
- * Nothing found: the price stays empty ("BOM / drawing needed"). Prices already typed are never changed.
+ * Every docket (typed on the dashboard or made from a mail) gets DRAFT prices right away, Puja's rule
+ * (Rev 2 §2 stage 2): nothing is put on the item or the quotation without approval.
+ *   - docket made from an enquiry -> autoCostEnquiry (drawing BOM costing / last quoted ESTIMATE / needs BOM),
+ *     shown on Quotation -> Enquiries.
+ *   - item with a BOM             -> M14 costing saved NOT applied (item costing page: check, then Apply).
+ * Item prices typed or applied by a person are never changed.
  */
 export async function autoPriceDocket(docketNo: string | null | undefined, user: AuthUser = SYSTEM) {
   const no = docketNo ? normalizeDocketNo(docketNo) : null;
-  if (!no) return { priced: 0, open: 0 };
+  if (!no) return { drafts: 0 };
+  const docket = await prisma.dockerPartyName.findUnique({ where: { docketNoQtnNo: no }, select: { id: true } });
+  const intake = docket ? await prisma.enquiryIntake.findFirst({ where: { docketId: docket.id }, orderBy: { id: 'desc' }, select: { id: true } }) : null;
+  if (intake) {
+    const r = await autoCostEnquiry(intake.id);
+    return { drafts: r?.lines.filter((l) => l.basis !== 'NONE').length ?? 0 };
+  }
   const items = await prisma.itemTable.findMany({ where: { docketNoQtnNo: no, OR: [{ price: null }, { price: '' }] }, orderBy: { id: 'asc' } });
   const quoteDate = new Date().toISOString().slice(0, 10);
-  let priced = 0;
+  let drafts = 0;
   for (const it of items) {
     try {
       const bom = await prisma.itemBom.findFirst({ where: { itemId: it.id }, orderBy: { id: 'desc' } });
-      if (bom) {
-        const c = await saveCosting(bom.id, { quoteDate, apply: true }, user);
-        if (c.applied) {
-          priced++;
-          continue;
-        }
-      }
-      // No BOM yet: only the SAME material and size quoted before in the same unit (e.g. "GI Flat 50x6"
-      // = "GI FLAT SIZE:50MM X 6MM"). Never a price of another item of the same category (27-11: GI flats got
-      // Rs 115/kg from a nut & bolt line). Anything else waits for the M14 BOM costing.
-      const key = itemKey(it.itemNameParty);
-      const unit = (it.uomOfQtn || it.uom || '').trim().toUpperCase();
-      if (!key || !unit) continue;
-      const cands = await prisma.itemTable.findMany({
-        where: {
-          id: { not: it.id },
-          docketNoQtnNo: { not: no },
-          price: { not: null },
-          NOT: { price: '' },
-          OR: [{ uomOfQtn: { equals: unit, mode: 'insensitive' } }, { uomOfQtn: null, uom: { equals: unit, mode: 'insensitive' } }],
-        },
-        orderBy: { id: 'desc' },
-        take: 3000,
-        select: { price: true, docketNoQtnNo: true, itemNameParty: true },
-      });
-      const prev = cands.find((c) => itemKey(c.itemNameParty) === key);
-      const price: number | null = toNum(prev?.price);
-      const ref = prev ? `${prev.docketNoQtnNo ?? 'earlier docket'} "${String(prev.itemNameParty).slice(0, 60)}"` : '';
-      const uomOfQtn = unit;
-      if (!(price && price > 0)) continue;
-      await prisma.$transaction([
-        prisma.itemTable.update({ where: { id: it.id }, data: { price: String(price), uomOfQtn } }),
-        prisma.editLog.create({
-          data: { tableName: 'iteam-table', recordId: it.id, fieldName: 'price', oldValue: null, newValue: `${price} per ${uomOfQtn ?? 'unit'} (AUTO ESTIMATE: same item last quoted in ${ref} – check)`, userId: user.id || null, userName: user.name },
-        }),
-      ]);
-      priced++;
+      if (!bom) continue;
+      await saveCosting(bom.id, { quoteDate, apply: false }, user);
+      drafts++;
     } catch (e) {
-      console.error('[auto price]', no, it.id, (e as Error).message);
+      console.error('[auto price draft]', no, it.id, (e as Error).message);
     }
   }
-  return { priced, open: items.length - priced };
+  return { drafts };
+}
+
+/** Puja's "last quoted" for a draft: the same material + size quoted before in the same unit (see itemKey). */
+async function sameItemQuoted(it: { id: number; itemNameParty: string | null; uom: string | null; uomOfQtn: string | null; docketNoQtnNo: string | null }) {
+  const key = itemKey(it.itemNameParty);
+  const unit = (it.uomOfQtn || it.uom || '').trim().toUpperCase();
+  if (!key || !unit) return null;
+  const cands = await prisma.itemTable.findMany({
+    where: {
+      id: { not: it.id },
+      docketNoQtnNo: { not: it.docketNoQtnNo },
+      price: { not: null },
+      NOT: { price: '' },
+      OR: [{ uomOfQtn: { equals: unit, mode: 'insensitive' } }, { uomOfQtn: null, uom: { equals: unit, mode: 'insensitive' } }],
+    },
+    orderBy: { id: 'desc' },
+    take: 3000,
+    select: { price: true, docketNoQtnNo: true, itemNameParty: true },
+  });
+  const prev = cands.find((c) => itemKey(c.itemNameParty) === key);
+  const v = toNum(prev?.price);
+  return v && v > 0 ? { value: v, unit, ref: `${prev!.docketNoQtnNo ?? 'earlier docket'} "${String(prev!.itemNameParty).slice(0, 50)}"` } : null;
 }
 
 /**
