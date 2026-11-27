@@ -179,6 +179,10 @@ if (GOOGLE_ENABLED) {
 
 export const authOptions: NextAuthOptions = {
   secret: process.env.AUTH_SECRET,
+  // The same app is used over HTTPS (ceebuild.gmdalui.co.in) AND plain HTTP on the LAN (192.168.1.190:6011).
+  // NEXTAUTH_URL is https, which would make next-auth use __Secure-/__Host- cookies that a browser drops
+  // over http, so LAN login failed. Plain cookie names work on both (src/proxy.ts reads the same name).
+  useSecureCookies: false,
   session: { strategy: 'jwt', maxAge: 12 * 60 * 60 },
   pages: { signIn: '/login', error: '/login' },
   providers,

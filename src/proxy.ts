@@ -27,7 +27,8 @@ export async function proxy(req: NextRequest) {
   // n8n endpoints check their own API key (src/lib/n8n.ts).
   if (pathname.startsWith('/api/n8n/')) return NextResponse.next();
 
-  const session = await getToken({ req, secret: process.env.AUTH_SECRET });
+  // secureCookie: false = the plain cookie name set by authOptions.useSecureCookies (LAN http + https).
+  const session = await getToken({ req, secret: process.env.AUTH_SECRET, secureCookie: false });
 
   // No redirect away from /login or /signup when a cookie exists: the cookie may be stale (user
   // disabled, password/role changed, cookie from another server), and the user must be able to
