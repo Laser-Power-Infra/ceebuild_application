@@ -903,11 +903,8 @@ const DocketGroup = memo(function DocketGroup({ doc, items, showAll, active, cha
                 <div className={cn('sticky top-9 flex h-11 items-center gap-1 pl-2.5 pr-1', changed && 'cell-saved')}>
                   <div className="min-w-0 flex-1">
                     <div className="flex h-4 items-center gap-1.5">
-                      <span
-                        data-tip={`${no || 'No docket number'} · #${doc.id}\nCreated ${fullDate}${doc.address ? `\n${doc.address}` : ''}`}
-                        data-tip-always=""
-                        className="truncate font-semibold text-[#0f62fe]"
-                      >
+                      {/* No hover card on the docket number (not needed, 27-11). */}
+                      <span className="truncate font-semibold text-[#0f62fe]">
                         {no || '-'}
                       </span>
                       {count > 1 && (
