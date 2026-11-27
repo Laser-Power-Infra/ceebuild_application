@@ -1348,11 +1348,39 @@ export default function Dashboard() {
     });
   };
 
-  const performDeleteDocket = async (id: number, docketNo: string | null) => {
+  const performDeleteDocket = async (id: number, docketNo: string | null, withOrders = false) => {
     try {
-      const res = await fetch(`/api/dockets?id=${id}`, {
+      const res = await fetch(`/api/dockets?id=${id}${withOrders ? '&withOrders=1' : ''}`, {
         method: 'DELETE',
       });
+      if (res.status === 409 && !withOrders) {
+        const data = await res.json().catch(() => ({}));
+        const orders: { id: number; poNumber: string }[] = Array.isArray(data.orders) ? data.orders : [];
+        if (orders.length) {
+          const docLabel = docketNo || '#' + id;
+          // Second confirmation: the docket has PO order(s) - delete them together (Admin only).
+          setTimeout(
+            () =>
+              setConfirmState({
+                title: `Docket ${docLabel} has ${orders.length} order(s)`,
+                message: (
+                  <>
+                    Deleting docket <strong>{docLabel}</strong> also deletes its order(s){' '}
+                    <strong>{orders.map((o) => o.poNumber).join(', ')}</strong> with their BOM, indents, dispatch and all
+                    register entries. A snapshot of everything stays in the Audit Log.
+                  </>
+                ),
+                confirmLabel: 'Delete docket and order(s)',
+                requireText: docketNo || String(id),
+                onConfirm: () => performDeleteDocket(id, docketNo, true),
+              }),
+            0
+          );
+          return;
+        }
+        showToast(`Error: ${data.error || 'Failed to delete docket'}`);
+        return;
+      }
 
       if (res.ok) {
         setDockets((prev) => prev.filter((doc) => doc.id !== id));

@@ -400,10 +400,11 @@ export async function DELETE(req: Request) {
     if (!docket) return NextResponse.json({ error: 'Record not found' }, { status: 404 });
 
     // An order (PO) is linked to this docket; the foreign key would block the delete anyway.
-    const orders = await prisma.order.count({ where: { docketId: id } });
-    if (orders > 0) {
+    const linked = await prisma.order.findMany({ where: { docketId: id }, select: { id: true, poNumber: true } });
+    // Orders block the delete unless the Admin confirmed a second time to delete them too (withOrders=1).
+    if (linked.length > 0 && searchParams.get('withOrders') !== '1') {
       return NextResponse.json(
-        { error: `This docket has ${orders} order(s) (PO). Delete the order(s) on the Orders page first.` },
+        { error: `This docket has ${linked.length} order(s) (PO): ${linked.map((o) => o.poNumber).join(', ')}.`, orders: linked },
         { status: 409 },
       );
     }
@@ -414,6 +415,16 @@ export async function DELETE(req: Request) {
       const docketNo = normalizeDocketNo(docket.docketNoQtnNo);
       const itemWhere = { docketNoQtnNo: { equals: docketNo, mode: 'insensitive' as const } };
       const items = docketNo ? await tx.itemTable.findMany({ where: itemWhere }) : [];
+      // Orders of this docket (only reached after the second confirmation): their registers go with them
+      // (ON DELETE CASCADE); each order's snapshot stays in the audit log, like "Delete order".
+      for (const o of linked) {
+        const order = await tx.order.findUnique({ where: { id: o.id } });
+        await tx.order.delete({ where: { id: o.id } });
+        await tx.poIntake.updateMany({ where: { orderId: o.id }, data: { orderId: null } });
+        await tx.editLog.create({
+          data: { tableName: 'orders', recordId: o.id, fieldName: 'DELETED', oldValue: JSON.stringify(order), newValue: `Deleted with docket ${docket.docketNoQtnNo ?? id}`, ...auditUser(user) },
+        });
+      }
       if (docketNo) {
         await tx.itemTable.deleteMany({ where: itemWhere });
       }
