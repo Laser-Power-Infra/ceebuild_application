@@ -294,7 +294,8 @@ export async function saveCosting(
     const u = String(p.itemUom ?? '').trim().toUpperCase();
     const perMt = /^(MT|TON|TONNE|TONNES|MTS)$/.test(u);
     // Per kg for weight items and mixed BOMs; per set only for a single structure quoted in sets.
-    const perKg = p.setsBasis === 'WEIGHT' || p.setsBasis === 'STRUCTURES' || !r.perSet;
+    // An item quoted in KG is always priced per kg (27-11: CEE-000535, 2,550 KG, got Rs 29 lakh "per SET").
+    const perKg = /^(KG|KGS)$/.test(u) || p.setsBasis === 'WEIGHT' || p.setsBasis === 'STRUCTURES' || !r.perSet;
     const billed = r.perSet && !perKg ? (r.groups[0]?.billedWtPerSet ?? 0) : r.perSet ? (r.groups[0]?.billedWtPerSet ?? 0) : r.structure.billedWtKg;
     return {
       price: String(perMt ? r2(r.structure.sellPerKg * f * 1000) : perKg ? r2(r.structure.sellPerKg * f) : r2(r.perSet!.sell * f)),
