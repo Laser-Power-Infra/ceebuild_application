@@ -177,3 +177,59 @@ export function itemKey(name: string | null | undefined): string | null {
   const extra = /\b(WITH|CLAMP|BOLT|BOLTS|NUT|NUTS|N\s*&\s*B|HOLDING|SUPPORT|ASSEMBL\w*|SET|STRUCTURE|FABRICATED)\b/.test(s.replace(shape, '')) ? '|+' : '';
   return `${coat}|${shape}|${dims.join('X')}${extra}`;
 }
+
+export interface DraftPrice {
+  price: number;
+  unit: string;
+  /** M14_DRAFT = unapplied BOM costing, ENQUIRY = enquiry draft, ESTIMATE = same item last quoted. */
+  source: 'M14_DRAFT' | 'ENQUIRY' | 'ESTIMATE';
+  note: string;
+}
+
+/**
+ * Draft prices for items that have no price yet, for the docket table (shown grey, never saved on the
+ * item: Puja's rule - a price is applied only after approval). One query per source, not per item.
+ */
+export async function draftPrices(items: { id: number; itemNameParty: string | null; uom: string | null; uomOfQtn: string | null; price: string | null; docketNoQtnNo: string | null }[], docketIds: number[]) {
+  const open = items.filter((i) => !String(i.price ?? '').trim());
+  const out: Record<number, DraftPrice> = {};
+  if (!open.length) return out;
+  const ids = open.map((i) => i.id);
+  const isKg = (u: string | null) => /^(KG|KGS|MT)$/i.test((u ?? '').trim());
+  // 1. M14 costing saved but not applied (latest per item).
+  const costs = await prisma.itemCosting.findMany({ where: { itemId: { in: ids }, applied: false }, orderBy: { id: 'desc' }, select: { id: true, itemId: true, sellPerKg: true, sellPerSet: true } });
+  for (const c of costs) {
+    if (out[c.itemId]) continue;
+    const it = open.find((i) => i.id === c.itemId)!;
+    const perKg = isKg(it.uomOfQtn || it.uom) || c.sellPerSet.toNumber() === 0;
+    out[c.itemId] = { price: perKg ? c.sellPerKg.toNumber() : c.sellPerSet.toNumber(), unit: perKg ? 'KG' : (it.uomOfQtn || it.uom || 'SET').toUpperCase(), source: 'M14_DRAFT', note: `M14 BOM costing #${c.id} (draft) – open the item costing and Apply` };
+  }
+  // 2. Enquiry draft (autoCost on the enquiry row).
+  if (docketIds.length) {
+    const intakes = await prisma.enquiryIntake.findMany({ where: { docketId: { in: docketIds }, NOT: { autoCost: { equals: Prisma.DbNull } } }, select: { autoCost: true } });
+    for (const r of intakes)
+      for (const l of ((r.autoCost as unknown as AutoCostResult | null)?.lines ?? [])) {
+        if (out[l.itemId] || !ids.includes(l.itemId) || !(typeof l.rate === 'number' && l.rate > 0)) continue;
+        out[l.itemId] = { price: l.rate, unit: String(l.rateUnit ?? '').replace(/^Rs\//i, '').toUpperCase() || 'KG', source: 'ENQUIRY', note: l.note };
+      }
+  }
+  // 3. Same material + size last quoted in the same unit.
+  const rest = open.filter((i) => !out[i.id] && itemKey(i.itemNameParty));
+  if (rest.length) {
+    const priced = await prisma.itemTable.findMany({ where: { price: { not: null }, NOT: { price: '' } }, orderBy: { id: 'desc' }, take: 5000, select: { itemNameParty: true, price: true, uom: true, uomOfQtn: true, docketNoQtnNo: true } });
+    const best = new Map<string, { price: number; ref: string }>();
+    for (const p of priced) {
+      const k = itemKey(p.itemNameParty);
+      const v = toNum(p.price);
+      if (!k || !(v && v > 0)) continue;
+      const any = `${k}#${(p.uomOfQtn || p.uom || '').trim().toUpperCase()}`;
+      if (!best.has(any)) best.set(any, { price: v, ref: `${p.docketNoQtnNo ?? 'earlier docket'} "${String(p.itemNameParty).slice(0, 50)}"` });
+    }
+    for (const it of rest) {
+      const unit = (it.uomOfQtn || it.uom || '').trim().toUpperCase();
+      const hit = best.get(`${itemKey(it.itemNameParty)}#${unit}`);
+      if (hit && !String(hit.ref).startsWith(String(it.docketNoQtnNo))) out[it.id] = { price: hit.price, unit, source: 'ESTIMATE', note: `ESTIMATE: same item last quoted in ${hit.ref} – subject to BOM / approval` };
+    }
+  }
+  return out;
+}

@@ -829,6 +829,23 @@ const DocketGroup = memo(function DocketGroup({ doc, items, showAll, active, cha
         clamp={c.key === 'itemNameParty'}
       />
     );
+    // Price empty: show the automatic draft (M14 costing / enquiry draft / same-item estimate) in grey.
+    // Puja's rule: it is not saved on the item until someone applies the costing or types the price.
+    const draft = (item as DocketItem & { draftPrice?: { price: number; unit: string; source: string; note: string } }).draftPrice;
+    if (c.key === 'price' && !value && draft)
+      return (
+        <div className="flex flex-col">
+          {text}
+          <Link
+            href={`/costing/${item.id}`}
+            title={`${draft.note}. Not applied yet – check, then Apply on the costing page or type the price.`}
+            className="px-2.5 pb-1 text-[11px] italic text-slate-500 hover:text-[#0f62fe] hover:underline"
+          >
+            draft ₹{draft.price.toLocaleString('en-IN', { maximumFractionDigits: 2 })}/{draft.unit.toLowerCase()}
+            {draft.source === 'ESTIMATE' ? ' (est.)' : ''}
+          </Link>
+        </div>
+      );
     if (c.key !== 'itemNameParty') return text;
     // M14: every docket item gets its BOM + costing (Create BOM from a drawing, cost from the Costing Master).
     const bomLink = (

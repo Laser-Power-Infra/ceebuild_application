@@ -1,4 +1,4 @@
-import { autoPriceDocket } from '@/modules/enquiry/server/autoCost';
+import { autoPriceDocket, draftPrices } from '@/modules/enquiry/server/autoCost';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, auditUser, pickFields, EDITOR_ROLES, ADMIN_ROLES } from '@/lib/auth/server';
@@ -87,6 +87,13 @@ export async function GET(req: Request) {
       const items = (d.docketNoQtnNo && itemsByNo.get(normalizeDocketNo(d.docketNoQtnNo))) || [];
       return { ...d, items, itemCount: items.length };
     });
+    // Grey draft price for items without one (Puja's rule: shown, applied only after approval).
+    try {
+      const drafts = await draftPrices(docketsWithItems.flatMap((d) => d.items), docketsWithItems.map((d) => d.id));
+      for (const d of docketsWithItems) d.items = d.items.map((i) => (drafts[i.id] ? { ...i, draftPrice: drafts[i.id] } : i)) as typeof d.items;
+    } catch (e) {
+      console.error('[dockets] draft prices', e);
+    }
 
     let stateOptionsList: string[] = [];
     let docketOptionsList: string[] = [];
