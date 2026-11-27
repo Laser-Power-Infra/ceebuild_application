@@ -127,38 +127,33 @@ export async function autoPriceDocket(docketNo: string | null | undefined, user:
           continue;
         }
       }
-      if (!it.ourItemName) continue;
-      const unit = (it.uomOfQtn || it.uom || '').trim();
-      // The same item quoted before in the same unit (e.g. DTR fencing Rs/SQM).
-      const prev = unit
-        ? await prisma.itemTable.findFirst({
-            where: {
-              id: { not: it.id },
-              ourItemName: { equals: it.ourItemName, mode: 'insensitive' },
-              price: { not: null },
-              NOT: { price: '' },
-              OR: [{ uomOfQtn: { equals: unit, mode: 'insensitive' } }, { uomOfQtn: null, uom: { equals: unit, mode: 'insensitive' } }],
-            },
-            orderBy: { id: 'desc' },
-            select: { price: true, docketNoQtnNo: true },
-          })
-        : null;
-      let price: number | null = toNum(prev?.price);
-      let ref = prev ? `${prev.docketNoQtnNo ?? 'earlier docket'}` : '';
-      let uomOfQtn = unit || null;
-      if (!(price && price > 0) && /^(KG|KGS)$/i.test(unit)) {
-        const last = await lastQuoted(null, it.ourItemName);
-        if (last) {
-          price = last.value;
-          ref = last.ref;
-          uomOfQtn = 'KG';
-        }
-      }
+      // No BOM yet: only the SAME material and size quoted before in the same unit (e.g. "GI Flat 50x6"
+      // = "GI FLAT SIZE:50MM X 6MM"). Never a price of another item of the same category (27-11: GI flats got
+      // Rs 115/kg from a nut & bolt line). Anything else waits for the M14 BOM costing.
+      const key = itemKey(it.itemNameParty);
+      const unit = (it.uomOfQtn || it.uom || '').trim().toUpperCase();
+      if (!key || !unit) continue;
+      const cands = await prisma.itemTable.findMany({
+        where: {
+          id: { not: it.id },
+          docketNoQtnNo: { not: no },
+          price: { not: null },
+          NOT: { price: '' },
+          OR: [{ uomOfQtn: { equals: unit, mode: 'insensitive' } }, { uomOfQtn: null, uom: { equals: unit, mode: 'insensitive' } }],
+        },
+        orderBy: { id: 'desc' },
+        take: 3000,
+        select: { price: true, docketNoQtnNo: true, itemNameParty: true },
+      });
+      const prev = cands.find((c) => itemKey(c.itemNameParty) === key);
+      const price: number | null = toNum(prev?.price);
+      const ref = prev ? `${prev.docketNoQtnNo ?? 'earlier docket'} "${String(prev.itemNameParty).slice(0, 60)}"` : '';
+      const uomOfQtn = unit;
       if (!(price && price > 0)) continue;
       await prisma.$transaction([
         prisma.itemTable.update({ where: { id: it.id }, data: { price: String(price), uomOfQtn } }),
         prisma.editLog.create({
-          data: { tableName: 'iteam-table', recordId: it.id, fieldName: 'price', oldValue: null, newValue: `${price} per ${uomOfQtn ?? 'unit'} (AUTO ESTIMATE: last quoted, ${ref} – check)`, userId: user.id || null, userName: user.name },
+          data: { tableName: 'iteam-table', recordId: it.id, fieldName: 'price', oldValue: null, newValue: `${price} per ${uomOfQtn ?? 'unit'} (AUTO ESTIMATE: same item last quoted in ${ref} – check)`, userId: user.id || null, userName: user.name },
         }),
       ]);
       priced++;
@@ -167,4 +162,19 @@ export async function autoPriceDocket(docketNo: string | null | undefined, user:
     }
   }
   return { priced, open: items.length - priced };
+}
+
+/**
+ * Material + size key of an item line: "GI Flat 50x6 mm Riser" -> "GI|FLAT|50X6", "GI FLAT SIZE:50MM X 6MM (2\" x 1/4\")"
+ * -> "GI|FLAT|50X6", "MS ANGLE ISA 5050 SIZE 50MM X 50MM X 6MM" -> "MS|ANGLE|50X50X6". Null when no shape or size is found.
+ */
+export function itemKey(name: string | null | undefined): string | null {
+  const s = String(name ?? '').toUpperCase().replace(/\(.*?\)/g, ' ');
+  const shape = s.match(/\b(FLAT|ANGLE|CHANNEL|ROD|PIPE|BEAM|STRIP|PLATE|BOLT|NUT|WASHER|CLAMP|FENCING|MESH)\b/)?.[1];
+  if (!shape) return null;
+  const m = s.match(/(\d+(?:\.\d+)?)\s*(?:MM)?\s*[X\*]\s*(\d+(?:\.\d+)?)(?:\s*(?:MM)?\s*[X\*]\s*(\d+(?:\.\d+)?))?/);
+  if (!m) return null;
+  const dims = [m[1], m[2], m[3]].filter(Boolean).map((d) => String(Number(d)));
+  const coat = /\b(GI|GALV|GALVANI[SZ]ED|HDG)\b/.test(s) ? 'GI' : 'MS';
+  return `${coat}|${shape}|${dims.join('X')}`;
 }
