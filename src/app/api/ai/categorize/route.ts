@@ -1,3 +1,4 @@
+import { autoPriceDocket } from '@/modules/enquiry/server/autoCost';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { autoDetectOurItemNot } from '@/lib/classifier';
@@ -403,6 +404,10 @@ ITEM_ID: [id] | TYPE OF ITEM: [Value] | Our item Name: [Value]`;
         }
       }
     }
+
+    // Now that "Our item name" is known, price the items that still have none (last quoted / BOM).
+    for (const no of new Set(updatedItemsResults.map((u: any) => u.docketNoQtnNo).filter(Boolean)))
+      await autoPriceDocket(no as string).catch((e) => console.error('[auto price] after AI autofill', no, e));
 
     return NextResponse.json({
       message: `AI Autofill complete! Categorized ${updatedItemsResults.length} items.`,

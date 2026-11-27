@@ -1,3 +1,4 @@
+import { autoPriceDocket } from '@/modules/enquiry/server/autoCost';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, auditUser, pickFields, EDITOR_ROLES, ADMIN_ROLES } from '@/lib/auth/server';
@@ -272,6 +273,8 @@ export async function POST(req: Request) {
     }
     const createdItemsCount = validItems.length;
     const renumbered = !!requestedDocketNo && finalDocketNo !== requestedDocketNo;
+    // Items get their price right away (BOM costing or last quoted price); never blocks the docket.
+    if (createdItemsCount) await autoPriceDocket(finalDocketNo).catch((e) => console.error('[auto price] docket', finalDocketNo, e));
 
     return NextResponse.json(
       { docket: createdDocket, createdItemsCount, renumbered, requestedDocketNo: requestedDocketNo || null },

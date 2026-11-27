@@ -103,3 +103,68 @@ export async function autoCostEnquiry(intakeId: number): Promise<AutoCostResult 
   await prisma.enquiryIntake.update({ where: { id: intakeId }, data: { autoCost: result as unknown as Prisma.InputJsonValue } });
   return result;
 }
+
+/**
+ * Every docket (typed on the dashboard or made from a mail): items without a price get one right away.
+ *   1. a BOM exists        -> costed with the Costing Master and APPLIED (item price = costing price)
+ *   2. same item quoted before in the same unit (Rs/SQM, Rs/set, Rs/kg ...) -> that price, logged as ESTIMATE
+ *   3. structure costed before (Rs/kg)       -> that rate for a KG item, logged as ESTIMATE
+ * Nothing found: the price stays empty ("BOM / drawing needed"). Prices already typed are never changed.
+ */
+export async function autoPriceDocket(docketNo: string | null | undefined, user: AuthUser = SYSTEM) {
+  const no = docketNo ? normalizeDocketNo(docketNo) : null;
+  if (!no) return { priced: 0, open: 0 };
+  const items = await prisma.itemTable.findMany({ where: { docketNoQtnNo: no, OR: [{ price: null }, { price: '' }] }, orderBy: { id: 'asc' } });
+  const quoteDate = new Date().toISOString().slice(0, 10);
+  let priced = 0;
+  for (const it of items) {
+    try {
+      const bom = await prisma.itemBom.findFirst({ where: { itemId: it.id }, orderBy: { id: 'desc' } });
+      if (bom) {
+        const c = await saveCosting(bom.id, { quoteDate, apply: true }, user);
+        if (c.applied) {
+          priced++;
+          continue;
+        }
+      }
+      if (!it.ourItemName) continue;
+      const unit = (it.uomOfQtn || it.uom || '').trim();
+      // The same item quoted before in the same unit (e.g. DTR fencing Rs/SQM).
+      const prev = unit
+        ? await prisma.itemTable.findFirst({
+            where: {
+              id: { not: it.id },
+              ourItemName: { equals: it.ourItemName, mode: 'insensitive' },
+              price: { not: null },
+              NOT: { price: '' },
+              OR: [{ uomOfQtn: { equals: unit, mode: 'insensitive' } }, { uomOfQtn: null, uom: { equals: unit, mode: 'insensitive' } }],
+            },
+            orderBy: { id: 'desc' },
+            select: { price: true, docketNoQtnNo: true },
+          })
+        : null;
+      let price: number | null = toNum(prev?.price);
+      let ref = prev ? `${prev.docketNoQtnNo ?? 'earlier docket'}` : '';
+      let uomOfQtn = unit || null;
+      if (!(price && price > 0) && /^(KG|KGS)$/i.test(unit)) {
+        const last = await lastQuoted(null, it.ourItemName);
+        if (last) {
+          price = last.value;
+          ref = last.ref;
+          uomOfQtn = 'KG';
+        }
+      }
+      if (!(price && price > 0)) continue;
+      await prisma.$transaction([
+        prisma.itemTable.update({ where: { id: it.id }, data: { price: String(price), uomOfQtn } }),
+        prisma.editLog.create({
+          data: { tableName: 'iteam-table', recordId: it.id, fieldName: 'price', oldValue: null, newValue: `${price} per ${uomOfQtn ?? 'unit'} (AUTO ESTIMATE: last quoted, ${ref} – check)`, userId: user.id || null, userName: user.name },
+        }),
+      ]);
+      priced++;
+    } catch (e) {
+      console.error('[auto price]', no, it.id, (e as Error).message);
+    }
+  }
+  return { priced, open: items.length - priced };
+}
