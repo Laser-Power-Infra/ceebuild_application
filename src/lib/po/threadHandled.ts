@@ -12,7 +12,16 @@ export const MAX_DISCARDS = 3;
 export interface IntakeOfThread {
   status: string;
   createdAt: Date;
+  error?: string | null;
 }
+
+/**
+ * A failure of the AI service itself (credits used up, quota, Gemini down) says nothing about the mail:
+ * it does not count towards MAX_FAILS, so the mail is read again once the service works (27-11-2026:
+ * Gemini prepay credits ran out and every PO / enquiry mail failed).
+ */
+export const SERVICE_ERROR = /\b(402|429|500|502|503|504)\b|credits? (are )?depleted|quota|RESOURCE_EXHAUSTED|billing|UNAVAILABLE|overloaded/i;
+export const countsAsFail = (i: { status: string; error?: string | null }) => i.status === 'FAILED' && !SERVICE_ERROR.test(String(i.error ?? ''));
 
 /** Archive dates look like "2026-11-26 05:43:03" (no zone): read as UTC. */
 export function archiveDate(v: string | null | undefined): Date | null {
@@ -24,7 +33,7 @@ export function archiveDate(v: string | null | undefined): Date | null {
 
 export function threadHandled(intakes: IntakeOfThread[], lastMessage: Date | null): boolean {
   if (intakes.some((i) => i.status === 'EXTRACTED' || i.status === 'CONFIRMED')) return true;
-  if (intakes.filter((i) => i.status === 'FAILED').length >= MAX_FAILS) return true;
+  if (intakes.filter(countsAsFail).length >= MAX_FAILS) return true;
   const discards = intakes.filter((i) => i.status === 'DISCARDED');
   if (!discards.length) return false;
   if (discards.length >= MAX_DISCARDS || !lastMessage) return true;

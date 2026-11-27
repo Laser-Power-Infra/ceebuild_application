@@ -5,6 +5,7 @@ import { UserError } from '@/lib/actionResult';
 import { getGeminiModel, parseGeminiAnswer } from '@/lib/gemini';
 import { recentCeebuildThreads, type MailThread } from '@/lib/mailDb';
 import { missedMails, missedMailsText, type MissedMail } from '@/lib/mailCoverage';
+import { countsAsFail } from '@/lib/po/threadHandled';
 import { nextDocketNumber, isUniqueViolation } from '@/lib/docketNumber';
 import { autoCostEnquiry } from './autoCost';
 import { classifyMail, enquiryCandidate, enquiryNoKey, MAIL_CLASSES, partyKey, type MailClass } from '@/lib/enquiry/classify';
@@ -104,12 +105,14 @@ const OWN_SENDER = /@ceebuildcompany\.com/i;
 /** Threads already handled (any status but FAILED, or FAILED 3 times). */
 async function handledThreads(ids: string[]) {
   if (!ids.length) return new Set<string>();
-  const rows = await prisma.enquiryIntake.findMany({ where: { threadRef: { in: ids.map(threadRef) } }, select: { threadRef: true, status: true } });
+  const rows = await prisma.enquiryIntake.findMany({ where: { threadRef: { in: ids.map(threadRef) } }, select: { threadRef: true, status: true, error: true } });
   const fails = new Map<string, number>();
   const done = new Set<string>();
   for (const r of rows) {
     const id = r.threadRef.slice('thread:'.length);
-    if (r.status === 'FAILED') fails.set(id, (fails.get(id) ?? 0) + 1);
+    if (r.status === 'FAILED') {
+      if (countsAsFail(r)) fails.set(id, (fails.get(id) ?? 0) + 1);
+    }
     else done.add(id);
   }
   for (const [id, n] of fails) if (n >= MAX_FAILS) done.add(id);

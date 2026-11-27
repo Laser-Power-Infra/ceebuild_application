@@ -448,11 +448,11 @@ export const threadRef = (threadId: string) => `thread:${threadId}`;
  */
 async function handledThreads(threads: { threadId: string; date: string | null }[]) {
   if (!threads.length) return new Set<string>();
-  const rows = await prisma.poIntake.findMany({ where: { gmailMessageId: { in: threads.map((t) => threadRef(t.threadId)) } }, select: { gmailMessageId: true, status: true, createdAt: true } });
+  const rows = await prisma.poIntake.findMany({ where: { gmailMessageId: { in: threads.map((t) => threadRef(t.threadId)) } }, select: { gmailMessageId: true, status: true, createdAt: true, error: true } });
   const byThread = new Map<string, IntakeOfThread[]>();
   for (const r of rows) {
     const id = String(r.gmailMessageId).slice('thread:'.length);
-    byThread.set(id, [...(byThread.get(id) ?? []), { status: r.status, createdAt: r.createdAt }]);
+    byThread.set(id, [...(byThread.get(id) ?? []), { status: r.status, createdAt: r.createdAt, error: r.error }]);
   }
   const done = new Set<string>();
   for (const t of threads) if (threadHandled(byThread.get(t.threadId) ?? [], archiveDate(t.date))) done.add(t.threadId);
