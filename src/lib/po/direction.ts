@@ -12,6 +12,8 @@ const BOUNCE_SENDER = /mailer-daemon|postmaster|mail delivery subsystem/i;
 /** Our purchase team's subject style: "P.O-125/Durga Trading Company/FLAT AND SQUARE BAR/5-11-26", "CEEBUILD-P.O REQUIRED-...". */
 const OUR_PO_SUBJECT = /^(\s*(re|fwd?|fw)\s*:\s*)*P\.\s*O\.?\s*-?\s*\d{1,5}\s*\//i;
 const PO_REQUIRED_SUBJECT = /\bP\.?\s*O\.?\s+REQUIRED\b/i;
+/** Our internal task mails ("M14 – Correction to E5 ...") quote "purchase order" but are never one. */
+const INTERNAL_TASK_SUBJECT = /^(\s*(re|fwd?|fw)\s*:\s*)*M\d{2}\s*[–-]/i;
 /** Our own PO numbers: CB-PO/125/2026-27, CB/PO/..., CEEBUILD/PO/... */
 const OUR_PO_NO = /^\s*(CB|CEE\s*BUILD|CEEBUILD|CBCPL)\s*[-/ ]\s*P\.?\s*O\b/i;
 /** Our works (Clipcon Complex, NH-6/16, Dhulagarh, Sankrail, Howrah). */
@@ -25,6 +27,7 @@ export function mailSkipReason(subject: string | null | undefined, sender?: stri
   const from = String(sender ?? '');
   if (BOUNCE_SUBJECT.test(s) || BOUNCE_SENDER.test(from)) return { skip: true, reason: 'Bounce / auto-reply mail, not a PO.' };
   if (OUR_PO_SUBJECT.test(s) || PO_REQUIRED_SUBJECT.test(s)) return { skip: true, reason: 'Our own PO to a supplier (purchase), not a customer PO.' };
+  if (INTERNAL_TASK_SUBJECT.test(s)) return { skip: true, reason: 'Internal task mail, not a customer PO.' };
   return { skip: false };
 }
 

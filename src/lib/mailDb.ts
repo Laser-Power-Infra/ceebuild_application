@@ -10,6 +10,7 @@ export type { MailFile, MailFileKind } from '@/lib/mailFiles';
  *   GET {MAIL_API_URL}/api/db-emails/ceebuild-po?days=&limit=   PO-looking Ceebuild mails
  *   GET {MAIL_API_URL}/api/db-emails/ceebuild-po?q=&limit=      search
  *   GET {MAIL_API_URL}/api/db-emails/ceebuild-po?threadId=      one thread
+ *   GET {MAIL_API_URL}/api/db-emails/ceebuild-po?all=1&days=    every Ceebuild thread (also without files)
  * MAIL_API_URL = http://192.168.1.190:6002 (the portal on the office LAN). Every attachment is
  * already on Google Drive (`attach_links`); n8n downloads the PO copies from there.
  */
@@ -78,6 +79,12 @@ export function searchMailThreads(q: string, limit = 30) {
   const words = q.trim();
   return words.length >= 2 ? fetchThreads({ q: words.slice(0, 200), limit }) : fetchThreads({ days: 60, limit });
 }
+
+/**
+ * Every Ceebuild thread of the last `days` days, with or without attachments, newest first
+ * (enquiry reading and the daily "mails not read" check). Needs the portal route's `all=1`.
+ */
+export const recentCeebuildThreads = (days: number, limit = 500) => fetchThreads({ all: 1, days, limit: Math.min(limit, 500) });
 
 export async function getMailThread(threadId: string): Promise<MailThread | null> {
   return (await fetchThreads({ threadId, limit: 1 }))[0] ?? null;

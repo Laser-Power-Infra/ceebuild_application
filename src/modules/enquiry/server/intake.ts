@@ -3,10 +3,11 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { UserError } from '@/lib/actionResult';
 import { getGeminiModel, parseGeminiAnswer } from '@/lib/gemini';
-import { searchMailThreads, type MailThread } from '@/lib/mailDb';
+import { recentCeebuildThreads, type MailThread } from '@/lib/mailDb';
+import { missedMails, missedMailsText, type MissedMail } from '@/lib/mailCoverage';
 import { nextDocketNumber, isUniqueViolation } from '@/lib/docketNumber';
 import { autoCostEnquiry } from './autoCost';
-import { classifyMail, enquiryNoKey, ENQUIRY_SEARCH_WORDS, MAIL_CLASSES, partyKey, type MailClass } from '@/lib/enquiry/classify';
+import { classifyMail, enquiryCandidate, enquiryNoKey, MAIL_CLASSES, partyKey, type MailClass } from '@/lib/enquiry/classify';
 
 // Rev 2 §2 stage 1 (E1-E3, E6 tracker): n8n lists new mails of info@ that look like enquiries
 // (mail archive search), reads each with Gemini (same paid key as PO intake) and posts the answer
@@ -131,12 +132,11 @@ const forN8n = (t: MailThread, cls: MailClass) => ({
 /** For n8n: mails of the last `days` days that look like enquiries and were not read yet (oldest first). */
 export async function n8nEnquiryMails(days: number, limit: number, backfill = false) {
   const since = Date.now() - days * 86400000;
-  const seen = new Map<string, MailThread>();
-  // One archive search per word, run together (each takes a few seconds).
-  const found = await Promise.all(ENQUIRY_SEARCH_WORDS.map((w) => searchMailThreads(w, 100)));
-  for (const list of found) for (const t of list) if (!seen.has(t.threadId)) seen.set(t.threadId, t);
-  const cands = [...seen.values()]
+  // Every Ceebuild thread of the period, WITH OR WITHOUT attachments: many enquiries carry the BOQ in
+  // the mail text only ("Tender Enquiry for Earthmat ...", "Require 33 KV line material").
+  const cands = (await recentCeebuildThreads(days))
     .filter((t) => t.date && new Date(t.date.replace(' ', 'T') + '+05:30').getTime() >= since)
+    .filter((t) => enquiryCandidate(t.subject, t.sender, t.files.map((f) => f.name).join(', ')))
     // Our own quotation mails ("Quotation CEE-000534 ...") are not enquiries. A customer's RFQ thread whose
     // latest message is our reply still is (the archive shows the latest sender).
     .filter((t) => !(OWN_SENDER.test(t.sender ?? '') && /CEE-?\d{4,}/i.test(t.subject ?? '') && !/\b(rfq|enquiry|inquiry|boq)\b/i.test(t.subject ?? '')))
@@ -420,7 +420,7 @@ export interface ReminderRow {
 }
 
 /** E5 escalation list for the daily n8n mail: due date passed, due within 2 days, drafts waiting, backlog. */
-export async function enquiryReminders(): Promise<{ rows: ReminderRow[]; red: number; text: string }> {
+export async function enquiryReminders(): Promise<{ rows: ReminderRow[]; red: number; text: string; missed: MissedMail[] }> {
   const rows = (await enquiryTracker()).filter((r) => !r.outcome && !r.ordered && !r.sentOn);
   const out: ReminderRow[] = [];
   for (const r of rows) {
@@ -436,7 +436,16 @@ export async function enquiryReminders(): Promise<{ rows: ReminderRow[]; red: nu
   out.sort((a, b) => order[a.severity] - order[b.severity] || (a.daysToDue ?? 999) - (b.daysToDue ?? 999));
   const line = (x: ReminderRow) =>
     `- [${x.severity}] ${x.docketNo ?? 'no docket'} | ${x.partyName ?? '?'} | ${String(x.subject ?? '').slice(0, 80)}${x.dueDate ? ` | due ${x.dueDate}` : ''}\n  ${x.reason}`;
-  return { rows: out, red: out.filter((x) => x.severity === 'RED').length, text: out.length ? out.map(line).join('\n') : 'No open enquiry needs action.' };
+  // Safety net: PO / enquiry mails of the last 2 days that neither n8n reader recorded (listed first).
+  let missed: MissedMail[] = [];
+  try {
+    missed = await missedMails(2);
+  } catch (e) {
+    console.error('[enquiry reminders] missed mails check', e);
+  }
+  const body = out.length ? out.map(line).join('\n') : 'No open enquiry needs action.';
+  const text = missed.length ? `${missedMailsText(missed)}\n\n${body}` : body;
+  return { rows: out, red: out.filter((x) => x.severity === 'RED').length + missed.length, text, missed };
 }
 
 export interface EnquiryRow {
