@@ -236,7 +236,34 @@ export interface DocketMatch {
   group: 'SAME_PARTY' | 'OTHER';
   /** Same party AND (same utility or matching items): the offer this PO most likely answers. */
   relevant: boolean;
+  /** PO lines whose rate equals this offer's quoted rate (within RATE_EXACT_PCT), of the PO lines with a rate. */
+  rateExact?: number;
+  rateLines?: number;
 }
+
+/** A PO rate within this % of our quoted rate counts as "the same rate" (rounding on the PO). */
+export const RATE_EXACT_PCT = 0.5;
+
+/**
+ * Dockets loaded in bulk on 26-08-2026 (CEE-000278 ... 000517) carry the load date, not the offer
+ * date: a docket date before this is unknown, never "made after the PO".
+ */
+export const DOCKET_DATES_FROM = '2026-09-01';
+
+/** PO lines with a rate, and how many of them equal the rate quoted in this offer. */
+export function rateHits(lines: PoLineDraft[], items: DocketCandidate['items']): { exact: number; lines: number } {
+  const withRate = lines.filter((l) => l.unitRate !== null && l.unitRate !== undefined && l.unitRate > 0);
+  if (!withRate.length || !items.length) return { exact: 0, lines: withRate.length };
+  let exact = 0;
+  for (const l of matchQuotedItems(withRate, items)) {
+    const c = compareRate(l);
+    if (c && Math.abs(c.diffPct) <= RATE_EXACT_PCT) exact++;
+  }
+  return { exact, lines: withRate.length };
+}
+
+/** Strong enough to name the offer on its own: 2+ lines and 30 %+ of the PO lines at exactly the quoted rate. */
+export const rateMatchStrong = (d: Pick<DocketMatch, 'rateExact' | 'rateLines'>) => (d.rateExact ?? 0) >= 2 && (d.rateExact ?? 0) / Math.max(1, d.rateLines ?? 0) >= 0.3;
 
 const UTILITY_ALIASES: [RegExp, string][] = [
   [/south bihar|sbpdcl/i, 'SBPDCL'],
@@ -260,7 +287,7 @@ export const docketSeq = (no: string | null | undefined) => Number(String(no ?? 
  * parties follow (group OTHER) by score.
  */
 export function rankDockets(
-  po: { customer: string | null; endClient: string | null; project: string | null; lines: { description: string; qty: number | null; unit: string | null }[] },
+  po: { customer: string | null; endClient: string | null; project: string | null; lines: { description: string; qty: number | null; unit: string | null; unitRate?: number | null }[] },
   dockets: DocketCandidate[],
 ): DocketMatch[] {
   const target = [utilityKey(po.endClient), utilityKey(po.project)].filter(Boolean) as string[];
@@ -291,13 +318,27 @@ export function rankDockets(
       score += 3;
       reasons.push('costed BOM on file');
     }
+    // The surest sign: the PO's rates are exactly the rates we quoted in this offer.
+    const hits = nameSim >= 0.5 ? rateHits(po.lines as PoLineDraft[], d.items) : { exact: 0, lines: 0 };
+    if (hits.exact) {
+      score += Math.min(30, hits.exact * 5);
+      reasons.unshift(`rates match this offer on ${hits.exact} of ${hits.lines} lines`);
+    }
     const group: DocketMatch['group'] = nameSim >= 0.5 ? 'SAME_PARTY' : 'OTHER';
-    const relevant = group === 'SAME_PARTY' && (reasons.some((r) => r.startsWith('utility')) || best > 0.3 || !target.length);
-    return { id: d.id, docketNo: d.docketNo, party: d.party, utility: d.utility, score: Math.round(score * 10) / 10, reasons, hasBom: d.hasBom, orders: d.orders, group, relevant };
+    const strong = rateMatchStrong({ rateExact: hits.exact, rateLines: hits.lines });
+    const relevant = group === 'SAME_PARTY' && (strong || reasons.some((r) => r.startsWith('utility')) || best > 0.3 || !target.length);
+    return { id: d.id, docketNo: d.docketNo, party: d.party, utility: d.utility, score: Math.round(score * 10) / 10, reasons, hasBom: d.hasBom, orders: d.orders, group, relevant, rateExact: hits.exact, rateLines: hits.lines };
   });
   const same = ranked
     .filter((r) => r.group === 'SAME_PARTY')
-    .sort((a, b) => Number(b.relevant) - Number(a.relevant) || docketSeq(b.docketNo) - docketSeq(a.docketNo) || b.id - a.id);
+    .sort(
+      (a, b) =>
+        Number(rateMatchStrong(b)) - Number(rateMatchStrong(a)) ||
+        (rateMatchStrong(a) && rateMatchStrong(b) ? (b.rateExact ?? 0) - (a.rateExact ?? 0) : 0) ||
+        Number(b.relevant) - Number(a.relevant) ||
+        docketSeq(b.docketNo) - docketSeq(a.docketNo) ||
+        b.id - a.id,
+    );
   if (same[0]?.relevant) same[0].reasons.unshift(same.filter((x) => x.relevant).length > 1 ? 'latest revision for this party' : 'offer to this party');
   const other = ranked.filter((r) => r.group === 'OTHER' && r.score >= 20).sort((a, b) => b.score - a.score || b.id - a.id);
   return [...same, ...other];
@@ -353,10 +394,29 @@ export function autoDocketPick(
 ): { pick: DocketMatch | null; why: string } {
   let c = dockets.filter((d) => d.group === 'SAME_PARTY' && d.relevant);
   if (!c.length) return { pick: null, why: 'no offer (docket) to this party matches' };
+  // A known docket date (not the 26-08 bulk load) well after the PO date: not the offer it answers.
+  const known = (id: number) => {
+    const v = docketDates?.get(id);
+    return v && v >= DOCKET_DATES_FROM ? v : null;
+  };
+  const limit = po.poDate ? new Date(new Date(`${po.poDate}T00:00:00Z`).getTime() + 7 * 86400_000).toISOString().slice(0, 10) : null;
+  const inTime = (d: DocketMatch) => !limit || !known(d.id) || (known(d.id) as string) <= limit;
+  // 1. Exact rates: the PO's rates are the rates of ONE offer (clearly more lines than any other).
+  const util = utilityKey(po.endClient) || utilityKey(po.project);
+  const byRate = c
+    .filter((d) => rateMatchStrong(d) && inTime(d))
+    .filter((d) => {
+      const du = utilityKey(d.utility);
+      return !util || !du || du === util || du.includes(util) || util.includes(du);
+    })
+    .sort((a, b) => (b.rateExact ?? 0) - (a.rateExact ?? 0));
+  if (byRate.length && (byRate.length === 1 || (byRate[0].rateExact ?? 0) >= 2 * (byRate[1].rateExact ?? 0))) {
+    return { pick: byRate[0], why: `PO rates = this offer's rates on ${byRate[0].rateExact} of ${byRate[0].rateLines} lines` };
+  }
+  // 2. Otherwise by party / utility / items / latest revision.
   // An offer made well after the PO date cannot be what the PO answers (7 days' grace for late entry).
-  if (po.poDate && docketDates) {
-    const limit = new Date(new Date(`${po.poDate}T00:00:00Z`).getTime() + 7 * 86400_000).toISOString().slice(0, 10);
-    const dated = c.filter((d) => !docketDates.get(d.id) || (docketDates.get(d.id) as string) <= limit);
+  if (limit && docketDates) {
+    const dated = c.filter(inTime);
     if (!dated.length) return { pick: null, why: `the offers to this party were made after the PO date ${po.poDate}` };
     c = dated;
   }

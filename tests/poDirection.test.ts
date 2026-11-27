@@ -77,3 +77,22 @@ test('orders are made automatically only with an unambiguous docket', () => {
   assert.equal(autoDocketPick(aks, { endClient: 'UPCL', project: null, poDate: '2026-08-25' }, dates).pick?.docketNo, 'CEE-000410');
   assert.equal(autoDocketPick([dm(7, 'CEE-1', 'X', [], 'OTHER')], { endClient: null, project: null }).pick, null);
 });
+
+test('exact PO rates name the offer; bulk-load docket dates are not offer dates', () => {
+  const r = (id: number, no: string, utility: string | null, exact: number, lines: number, reasons: string[] = []): DocketMatch => ({ ...dm(id, no, utility, reasons), rateExact: exact, rateLines: lines });
+  // UPCL second lot (26-11): only CEE-000414 has the PO's rates; newer Laser offers for other utilities do not.
+  const laser = [r(30, 'CEE-000524', 'AIIB Project APDCL', 0, 12, ['items match 72%']), r(20, 'CEE-000422', 'DHBVN', 1, 12), r(12, 'CEE-000414', 'UPCL', 7, 12, ['utility UPCL'])];
+  const dates = new Map([[30, '2026-09-20'], [20, '2026-08-26'], [12, '2026-08-26']]);
+  const p = autoDocketPick(laser, { endClient: 'UPCL', project: null, poDate: '2026-05-16' }, dates);
+  assert.equal(p.pick?.docketNo, 'CEE-000414');
+  assert.match(p.why, /7 of 12/);
+  // Two offers with the same rates: a person chooses.
+  const tie = [r(2, 'CEE-2', 'UPCL', 4, 10), r(1, 'CEE-1', 'UPCL', 3, 10)];
+  assert.equal(autoDocketPick(tie, { endClient: 'UPCL', project: null }).pick?.docketNo ?? null, null);
+  // One-line POs (one rate) are not enough on their own.
+  const one = [r(2, 'CEE-2', null, 1, 1, ['items match 40%']), r(1, 'CEE-1', null, 1, 1, ['items match 40%'])];
+  assert.equal(autoDocketPick(one, { endClient: null, project: null }).pick, null);
+  // A known (after 01-09-2026) docket date long after the PO still rules the offer out.
+  const late = [r(9, 'CEE-000530', 'UPCL', 5, 6)];
+  assert.equal(autoDocketPick(late, { endClient: 'UPCL', project: null, poDate: '2026-08-01' }, new Map([[9, '2026-10-30']])).pick, null);
+});
