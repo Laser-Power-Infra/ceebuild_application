@@ -112,7 +112,7 @@ const providers: Provider[] = [
       async authorize(credentials, req) {
         const email = (credentials?.email || '').trim().toLowerCase();
         const password = credentials?.password || '';
-        if (!email || !password) throw new Error('Email and password are required.');
+        if (!email || !password) throw new Error('User ID and password are required.');
 
         const headers = (req?.headers || {}) as Record<string, string | undefined>;
         const ip = (headers['x-forwarded-for'] || '').split(',')[0].trim() || headers['x-real-ip'] || 'local';
@@ -127,7 +127,7 @@ const providers: Provider[] = [
 
         if (!user || !valid || !user.isActive || !isRole(user.role)) {
           recordFailure(key);
-          throw new Error('Invalid email or password.');
+          throw new Error('Invalid user ID or password.');
         }
 
         failures.delete(key);

@@ -3,16 +3,15 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { signIn } from 'next-auth/react';
-import { Mail, KeyRound, UserPlus, IdCard } from 'lucide-react';
+import { User, KeyRound, UserPlus, IdCard } from 'lucide-react';
 
-const MIN_PASSWORD_LENGTH = 10; // keep in sync with src/lib/auth/password.ts
 
 const inputClass =
   'w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-slate-900 font-bold';
 
 export default function SignupPage() {
   const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
@@ -30,7 +29,7 @@ export default function SignupPage() {
       const res = await fetch('/api/auth/signup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, username, password }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -38,7 +37,7 @@ export default function SignupPage() {
         return;
       }
       // Account created: sign straight in with the same credentials.
-      const login = await signIn('credentials', { email, password, redirect: false });
+      const login = await signIn('credentials', { email: username.trim().toLowerCase(), password, redirect: false });
       window.location.href = login?.ok && !login.error ? '/' : '/login';
     } catch {
       setError('Could not reach the server. Please try again.');
@@ -74,28 +73,29 @@ export default function SignupPage() {
         <form onSubmit={handleSubmit} className="space-y-4 text-xs font-medium">
           <div>
             <label htmlFor="name" className="font-semibold text-slate-700 block mb-1.5">
-              Full name
+              Full name <span className="font-medium text-slate-400">(optional)</span>
             </label>
             <div className="relative">
               <IdCard className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input id="name" type="text" required maxLength={100} autoComplete="name" autoFocus value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
+              <input id="name" type="text" maxLength={100} autoComplete="name" value={name} onChange={(e) => setName(e.target.value)} className={inputClass} />
             </div>
           </div>
 
           <div>
-            <label htmlFor="email" className="font-semibold text-slate-700 block mb-1.5">
-              Email
+            <label htmlFor="username" className="font-semibold text-slate-700 block mb-1.5">
+              User ID <span className="font-medium text-slate-400">(any name, e.g. tanmoy, or your email)</span>
             </label>
             <div className="relative">
-              <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <User className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
-                id="email"
-                type="email"
+                id="username"
+                type="text"
                 required
-                maxLength={254}
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                autoFocus
+                maxLength={100}
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value.replace(/\s/g, ''))}
                 className={inputClass}
               />
             </div>
@@ -103,11 +103,11 @@ export default function SignupPage() {
 
           <div>
             <label htmlFor="password" className="font-semibold text-slate-700 block mb-1.5">
-              Password <span className="font-medium text-slate-400">(at least {MIN_PASSWORD_LENGTH} characters)</span>
+              Password
             </label>
             <div className="relative">
               <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input id="password" type="password" required minLength={MIN_PASSWORD_LENGTH} autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} />
+              <input id="password" type="password" required autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} className={inputClass} />
             </div>
           </div>
 
@@ -117,7 +117,7 @@ export default function SignupPage() {
             </label>
             <div className="relative">
               <KeyRound className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input id="confirm" type="password" required minLength={MIN_PASSWORD_LENGTH} autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className={inputClass} />
+              <input id="confirm" type="password" required autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} className={inputClass} />
             </div>
           </div>
 

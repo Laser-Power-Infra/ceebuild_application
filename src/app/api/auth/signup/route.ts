@@ -40,27 +40,29 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const name = typeof body.name === 'string' ? body.name.trim() : '';
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  // "User ID" can be any name ("tanmoy") or an email. Login lower-cases what is typed, so it is stored lower-case.
+  const login = (typeof body.username === 'string' ? body.username : typeof body.email === 'string' ? body.email : '').trim().toLowerCase();
+  const name = (typeof body.name === 'string' ? body.name.trim() : '') || login;
   const password = typeof body.password === 'string' ? body.password : '';
+  const isEmail = login.includes('@');
 
-  if (!name || name.length > 100) {
-    return NextResponse.json({ error: 'Full name is required (max 100 characters).' }, { status: 400 });
+  if (!login || login.length > 100 || /\s/.test(login)) {
+    return NextResponse.json({ error: 'Enter a user ID (no spaces, max 100 characters).' }, { status: 400 });
   }
-  if (email.length > 254 || !EMAIL_RE.test(email)) {
-    return NextResponse.json({ error: 'Enter a valid email address.' }, { status: 400 });
+  if (isEmail && !EMAIL_RE.test(login)) {
+    return NextResponse.json({ error: 'Enter a valid email address, or a user ID without "@".' }, { status: 400 });
+  }
+  if (name.length > 100) {
+    return NextResponse.json({ error: 'Name is too long (max 100 characters).' }, { status: 400 });
   }
   if (password.length < MIN_PASSWORD_LENGTH || password.length > 200) {
-    return NextResponse.json(
-      { error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: 'Enter a password.' }, { status: 400 });
   }
+  const email = isEmail ? login : null;
 
   try {
     const user = await prisma.user.create({
-      // The required username column just mirrors the email for self sign-ups.
-      data: { username: email, email, name, role: 'User', passwordHash: await hashPassword(password) },
+      data: { username: login, email, name, role: 'User', passwordHash: await hashPassword(password) },
     });
 
     if (!entry || Date.now() - entry.first > WINDOW_MS) signups.set(ip, { count: 1, first: Date.now() });
@@ -72,17 +74,17 @@ export async function POST(req: Request) {
         recordId: user.id,
         fieldName: 'ALL_FIELDS',
         oldValue: 'NONE (New Record)',
-        newValue: JSON.stringify({ email, name, role: user.role, source: 'self sign-up' }),
+        newValue: JSON.stringify({ username: login, email, name, role: user.role, source: 'self sign-up' }),
         userId: user.id,
-        userName: `${user.name} (${email})`,
+        userName: `${user.name} (${login})`,
       },
     });
 
-    return NextResponse.json({ user: { id: user.id, email, name: user.name, role: user.role } });
+    return NextResponse.json({ user: { id: user.id, username: login, email, name: user.name, role: user.role } });
   } catch (error) {
     // P2002 = unique constraint (email, or a username that equals it).
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-      return NextResponse.json({ error: 'An account with this email already exists.' }, { status: 409 });
+      return NextResponse.json({ error: 'This user ID is already taken.' }, { status: 409 });
     }
     console.error('Sign-up error:', error);
     return NextResponse.json({ error: 'Sign up failed.' }, { status: 500 });

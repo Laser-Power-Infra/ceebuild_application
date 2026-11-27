@@ -16,7 +16,8 @@ function scrypt(password: string, salt: Buffer, keylen: number, opts: ScryptOpti
   });
 }
 
-export const MIN_PASSWORD_LENGTH = 10;
+// Any non-empty password is accepted (management decision 27-11-2026: users choose freely, e.g. "tanmoy@1233").
+export const MIN_PASSWORD_LENGTH = 1;
 
 export async function hashPassword(password: string): Promise<string> {
   if (!password || password.length < MIN_PASSWORD_LENGTH) {

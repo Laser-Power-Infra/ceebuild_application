@@ -110,7 +110,7 @@ function LoginForm() {
       <form onSubmit={handleSubmit} className="space-y-4 text-xs font-medium">
         <div>
           <label htmlFor="email" className="font-semibold text-slate-700 block mb-1.5">
-            Email
+            User ID or email
           </label>
           <div className="relative">
             <Mail className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
