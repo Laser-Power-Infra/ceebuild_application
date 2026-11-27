@@ -176,5 +176,8 @@ export function itemKey(name: string | null | undefined): string | null {
   if (!m) return null;
   const dims = [m[1], m[2], m[3]].filter(Boolean).map((d) => String(Number(d)));
   const coat = /\b(GI|GALV|GALVANI[SZ]ED|HDG)\b/.test(s) ? 'GI' : 'MS';
-  return `${coat}|${shape}|${dims.join('X')}`;
+  // A line that is more than the bare section (with clamp, nuts & bolts, holding, support, assembly ...) is
+  // a different product: "M.S. ANGLE 75X75X6 WITH HOLDING CLAMP, N & B" never prices a plain 75x75x6 angle.
+  const extra = /\b(WITH|CLAMP|BOLT|BOLTS|NUT|NUTS|N\s*&\s*B|HOLDING|SUPPORT|ASSEMBL\w*|SET|STRUCTURE|FABRICATED)\b/.test(s.replace(shape, '')) ? '|+' : '';
+  return `${coat}|${shape}|${dims.join('X')}${extra}`;
 }
