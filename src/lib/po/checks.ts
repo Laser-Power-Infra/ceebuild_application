@@ -217,6 +217,8 @@ export interface DocketCandidate {
   party: string | null;
   utility: string | null;
   state: string | null;
+  /** Delivery location of the offer ("Rangia, Assam", "Rohtas & Kaimur, Bihar"). */
+  site?: string | null;
   /** uom = unit the quantity is in; qtnUom = unit the price is per (iteam-table.uom_of_qtn); wt = unit weight text ("68 KG/NO"). */
   items: { id: number; name: string | null; uom: string | null; qty: string | null; price: string | null; qtnUom?: string | null; wt?: string | null }[];
   /** Confirmed item BOM / costing exists (the quotation BOM can be carried into the order). */
@@ -239,6 +241,8 @@ export interface DocketMatch {
   /** PO lines whose rate equals this offer's quoted rate (within RATE_EXACT_PCT), of the PO lines with a rate. */
   rateExact?: number;
   rateLines?: number;
+  /** The PO names the same place (town / district) as this offer's delivery location. */
+  siteHit?: string | null;
 }
 
 /** A PO rate within this % of our quoted rate counts as "the same rate" (rounding on the PO). */
@@ -287,7 +291,7 @@ export const docketSeq = (no: string | null | undefined) => Number(String(no ?? 
  * parties follow (group OTHER) by score.
  */
 export function rankDockets(
-  po: { customer: string | null; endClient: string | null; project: string | null; lines: { description: string; qty: number | null; unit: string | null; unitRate?: number | null }[] },
+  po: { customer: string | null; endClient: string | null; project: string | null; site?: string | null; lines: { description: string; qty: number | null; unit: string | null; unitRate?: number | null }[] },
   dockets: DocketCandidate[],
 ): DocketMatch[] {
   const target = [utilityKey(po.endClient), utilityKey(po.project)].filter(Boolean) as string[];
@@ -314,6 +318,12 @@ export function rankDockets(
       score += 5;
       reasons.push('quantity matches');
     }
+    // The place: "RANGIA RDSS PROJECT" vs "Rangia, Bongaigaon, North Lakhimpur, Assam".
+    const siteHit = placeHit(po.site, d.site);
+    if (siteHit) {
+      score += 12;
+      reasons.push(`site ${siteHit}`);
+    }
     if (d.hasBom) {
       score += 3;
       reasons.push('costed BOM on file');
@@ -327,7 +337,7 @@ export function rankDockets(
     const group: DocketMatch['group'] = nameSim >= 0.5 ? 'SAME_PARTY' : 'OTHER';
     const strong = rateMatchStrong({ rateExact: hits.exact, rateLines: hits.lines });
     const relevant = group === 'SAME_PARTY' && (strong || reasons.some((r) => r.startsWith('utility')) || best > 0.3 || !target.length);
-    return { id: d.id, docketNo: d.docketNo, party: d.party, utility: d.utility, score: Math.round(score * 10) / 10, reasons, hasBom: d.hasBom, orders: d.orders, group, relevant, rateExact: hits.exact, rateLines: hits.lines };
+    return { id: d.id, docketNo: d.docketNo, party: d.party, utility: d.utility, score: Math.round(score * 10) / 10, reasons, hasBom: d.hasBom, orders: d.orders, group, relevant, rateExact: hits.exact, rateLines: hits.lines, siteHit };
   });
   const same = ranked
     .filter((r) => r.group === 'SAME_PARTY')
@@ -413,6 +423,13 @@ export function autoDocketPick(
   if (byRate.length && (byRate.length === 1 || (byRate[0].rateExact ?? 0) >= 2 * (byRate[1].rateExact ?? 0))) {
     return { pick: byRate[0], why: `PO rates = this offer's rates on ${byRate[0].rateExact} of ${byRate[0].rateLines} lines` };
   }
+  // 1b. The one offer to this party for the same place (town / district named on the PO), in time.
+  const bySite = c.filter((d) => d.siteHit && inTime(d));
+  const sites = new Set(bySite.map((d) => d.siteHit));
+  if (bySite.length && sites.size === 1) {
+    const latest = [...bySite].sort((a, b) => docketSeq(b.docketNo) - docketSeq(a.docketNo))[0];
+    if (bySite.length === 1) return { pick: latest, why: `the only offer to this party for ${latest.siteHit}` };
+  }
   // 2. Otherwise by party / utility / items / latest revision.
   // An offer made well after the PO date cannot be what the PO answers (7 days' grace for late entry).
   if (limit && docketDates) {
@@ -438,4 +455,16 @@ export function autoDocketPick(
   // The latest revision wins (Puja's rule) when it also matches the items (about) best.
   if (itemPct(c[0]) >= 50 && best - itemPct(c[0]) <= 5) return done(c[0], 'latest revision, best item match');
   return { pick: null, why: `${c.length} offers to this party match (${c.slice(0, 4).map((d) => d.docketNo).join(', ')}) – choose one` };
+}
+
+/** Words that name no particular place. */
+const NOT_PLACE = new Set(['RDSS', 'PROJECT', 'PROJECTS', 'PKG', 'PACKAGE', 'AIIB', 'PHASE', 'DIST', 'DISTRICT', 'STORE', 'SITE', 'SUPPLY', 'WORKS', 'ROAD', 'NEAR', 'STATE', 'INDIA', 'LASER', 'POWER', 'INFRA', 'LIMITED', 'PVT', 'LTD', 'CIRCLE', 'DIVISION', 'NORTH', 'SOUTH', 'EAST', 'WEST', 'PASCHIM', 'PURBA', 'UPPER', 'LOWER', 'ASSAM', 'BIHAR', 'HARYANA', 'BENGAL', 'UTTARAKHAND', 'UTTAR', 'PRADESH', 'MAHARASHTRA', 'JHARKHAND', 'HIMACHAL', 'ODISHA', 'APDCL', 'SBPDCL', 'NBPDCL', 'WBSEDCL', 'UPCL', 'DHBVN', 'DHBVNL', 'UHBVNL', 'HPSEBL', 'CESC', 'KESCO', 'TRANSMISSION', 'LINE', 'SUBSTATION', 'SCHEME', 'AGAINST', 'FENCING', 'SOLAR', 'KUSUM', 'MATERIAL', 'MATERIALS', 'STRUCTURE', 'STRUCTURES']);
+const placeWords = (s: string | null | undefined) =>
+  new Set(String(s ?? '').toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/).filter((w) => w.length >= 5 && !NOT_PLACE.has(w)));
+/** A place word (town / district, 5+ letters) that both texts name, or null. */
+export function placeHit(poText: string | null | undefined, docketSite: string | null | undefined): string | null {
+  const a = placeWords(poText);
+  if (!a.size) return null;
+  for (const w of placeWords(docketSite)) if (a.has(w)) return w.charAt(0) + w.slice(1).toLowerCase();
+  return null;
 }

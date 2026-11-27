@@ -147,8 +147,8 @@ async function docketCandidates(customer: string | null, endClient: string | nul
   // Prefix of each token catches typos at the end ("VETURES" still starts with "VE").
   const pats = toks.map((t) => `%${t.slice(0, Math.max(3, Math.min(5, t.length - 2)))}%`);
   if (!pats.length) return [];
-  const dockets = await prisma.$queryRaw<{ id: number; docket_no: string | null; party: string | null; utility: string | null; state: string | null; orders: number }[]>(
-    sql`SELECT d.id, d.docket_no_qtn_no AS docket_no, d.party_name AS party, d.utility, d.state,
+  const dockets = await prisma.$queryRaw<{ id: number; docket_no: string | null; party: string | null; utility: string | null; state: string | null; site: string | null; orders: number }[]>(
+    sql`SELECT d.id, d.docket_no_qtn_no AS docket_no, d.party_name AS party, d.utility, d.state, d.delivery_location AS site,
           (SELECT count(*)::int FROM orders o WHERE o.docket_id = d.id) AS orders
         FROM "docket-party-name" d
         WHERE d.party_name ILIKE ANY (${pats}) OR d.utility ILIKE ANY (${pats})
@@ -171,6 +171,7 @@ async function docketCandidates(customer: string | null, endClient: string | nul
       party: d.party,
       utility: d.utility,
       state: d.state,
+      site: d.site,
       orders: d.orders,
       hasBom: withBom.has(d.id),
       items: items
@@ -272,7 +273,7 @@ export async function getIntakeReview(intakeId: number): Promise<IntakeReview> {
     findDuplicate(f.customerName.value, f.poNumber.value),
     libraryDrawings(f.drawingRef.value, f.approvalLetterNo.value),
   ]);
-  const ranked = rankDockets({ customer: f.customerName.value, endClient: f.endClient.value, project: f.project.value, lines: extraction.lines }, cands);
+  const ranked = rankDockets({ customer: f.customerName.value, endClient: f.endClient.value, project: f.project.value, site: [f.project.value, f.deliveryAddress.value].filter(Boolean).join(' '), lines: extraction.lines }, cands);
   const byId = new Map(cands.map((c) => [c.id, c]));
   // The customer's own offers first (latest revision pre-selected), other parties only as "other matches".
   const same = ranked.filter((r) => r.group === 'SAME_PARTY').slice(0, 8);
@@ -735,7 +736,7 @@ export async function attachN8nFile(intakeId: number, meta: { name: string; kind
 // ------------------------------------------------------------------ orders made automatically from PO mails
 
 /** Docket id -> the date it was entered (yyyy-mm-dd). */
-async function docketDates(ids: number[]) {
+export async function docketDates(ids: number[]) {
   const rows = ids.length ? await prisma.dockerPartyName.findMany({ where: { id: { in: ids } }, select: { id: true, createdAt: true } }) : [];
   return new Map(rows.map((r) => [r.id, r.createdAt.toISOString().slice(0, 10)]));
 }
