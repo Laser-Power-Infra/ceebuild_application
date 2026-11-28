@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { normalizeDocketNo } from '@/lib/dockets';
 import { ADMIN_ROLES } from '@/lib/auth/server';
 import { getOrder, listOrders, listOrdersFacet, searchDockets } from '@/modules/orders/server/query';
-import { createOrder, changeOrderDocket, deleteOrder, updateOrderTerms } from '@/modules/orders/server/mutations';
+import { createOrder, changeOrderDocket, deleteOrder, updateOrderTerms, cancelOrder, reopenOrder, setCancelledMt } from '@/modules/orders/server/mutations';
 
 export async function listOrdersAction(query: unknown) {
   return read(() => listOrders(cleanQuery(query)));
@@ -67,4 +67,22 @@ export async function updateOrderTermsAction(id: unknown, input: unknown) {
       user,
     ),
   );
+}
+
+/** Admin: cancel / supersede an order (FormData: reason, replacedByPo, cancelDate, note, file). */
+export async function cancelOrderAction(id: unknown, form: FormData) {
+  return write(async (user) => {
+    const f = form.get('file');
+    const file = f instanceof File && f.size > 0 ? { name: f.name, type: f.type, buffer: Buffer.from(await f.arrayBuffer()) } : null;
+    if (file && file.buffer.length > 15 * 1024 * 1024) throw new UserError('The attachment is larger than 15 MB.');
+    return cancelOrder(toId(id, 'order'), { reason: String(form.get('reason') ?? ''), replacedByPo: String(form.get('replacedByPo') ?? ''), cancelDate: String(form.get('cancelDate') ?? ''), note: String(form.get('note') ?? ''), file }, user);
+  }, { roles: ADMIN_ROLES });
+}
+
+export async function reopenOrderAction(id: unknown, why: unknown) {
+  return write((user) => reopenOrder(toId(id, 'order'), String(why ?? ''), user), { roles: ADMIN_ROLES });
+}
+
+export async function setCancelledMtAction(id: unknown, mt: unknown, why: unknown) {
+  return write((user) => setCancelledMt(toId(id, 'order'), mt, String(why ?? ''), user), { roles: ADMIN_ROLES });
 }

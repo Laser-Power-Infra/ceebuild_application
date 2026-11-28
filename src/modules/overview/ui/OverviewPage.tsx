@@ -78,7 +78,7 @@ export function OverviewPage() {
 
   const activeStage = st.filters.status?.length === 1 ? st.filters.status[0] : null;
   const showClosed = st.extra.closed === '1';
-  const funnel = stats?.funnel.filter((f) => showClosed || f.status !== 'Closed') ?? [];
+  const funnel = stats?.funnel.filter((f) => showClosed || !['Closed', 'Cancelled', 'Superseded'].includes(f.status)) ?? [];
   const maxOrders = Math.max(1, ...funnel.map((f) => f.orders));
 
   return (

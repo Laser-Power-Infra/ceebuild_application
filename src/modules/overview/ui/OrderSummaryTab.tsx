@@ -34,7 +34,7 @@ export function OrderSummaryTab({ order, role, onChanged }: { order: OrderDetail
 
   const p = data?.pipeline;
   const daysLate =
-    order.deliveryDue && !['Dispatched', 'Billed', 'Closed'].includes(order.status)
+    order.deliveryDue && !['Dispatched', 'Billed', 'Closed', 'Cancelled', 'Superseded'].includes(order.status)
       ? Math.floor((Date.now() - Date.parse(`${order.deliveryDue}T00:00:00`)) / 86_400_000)
       : null;
 

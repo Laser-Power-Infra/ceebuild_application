@@ -144,7 +144,7 @@ export function flagsSql(cfg: PlanSettingsValues): Prisma.Sql {
 /** Flag count per order, joinable as `fc` (order_id, n, high). */
 export function flagCountsSql(cfg: PlanSettingsValues): Prisma.Sql {
   return sql`(SELECT f.order_id, count(*)::int AS n, count(*) FILTER (WHERE f.severity = 'high')::int AS high
-    FROM (${flagsSql(cfg)}) f GROUP BY f.order_id)`;
+    FROM (${flagsSql(cfg)}) f JOIN orders co ON co.id = f.order_id AND co.cancel_status IS NULL GROUP BY f.order_id)`;
 }
 
 const SEVERITY_RANK: Record<FlagSeverity, number> = { high: 0, medium: 1, low: 2 };
@@ -152,7 +152,8 @@ const SEVERITY_RANK: Record<FlagSeverity, number> = { high: 0, medium: 1, low: 2
 /** All flags (optionally for some orders), most severe and oldest first. */
 export async function listFlags(orderIds?: number[]): Promise<OrderFlag[]> {
   const cfg = await getPlanSettings();
-  const where = orderIds?.length ? sql`WHERE f.order_id IN (${Prisma.join(orderIds)})` : sql``;
+  // A cancelled / superseded order raises no flag (nor the daily alert).
+  const where = orderIds?.length ? sql`WHERE o.cancel_status IS NULL AND f.order_id IN (${Prisma.join(orderIds)})` : sql`WHERE o.cancel_status IS NULL`;
   const rows = await prisma.$queryRaw<
     { orderId: number; poNumber: string; client: string | null; code: string; severity: FlagSeverity; title: string; detail: string; since: Date | null; tab: string; days: number | null }[]
   >(sql`SELECT f.order_id AS "orderId", o.po_number AS "poNumber", coalesce(nullif(o.client, ''), d.party_name) AS client,

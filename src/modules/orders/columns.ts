@@ -47,7 +47,11 @@ export const ORDER_STATUSES = [
   'Dispatched',
   'Billed',
   'Closed',
+  'Cancelled',
+  'Superseded',
 ] as const;
+/** Statuses that are out of open orders, pipeline MT, flags and the daily alert. */
+export const CLOSED_STATUSES: readonly string[] = ['Closed', 'Cancelled', 'Superseded'];
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 
 export const ORDER_COLUMNS: DataColumn<OrderRow>[] = [

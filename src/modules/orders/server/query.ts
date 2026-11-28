@@ -19,9 +19,15 @@ export const ORDER_STATS = sql`LEFT JOIN LATERAL (
     (SELECT u.status FROM bom_uploads u WHERE u.order_id = o.id ORDER BY u.id DESC LIMIT 1) AS bom_status,
     (SELECT sum(p.total_wt_kg) FROM bom_pieces p
        WHERE p.upload_id = (SELECT max(u.id) FROM bom_uploads u WHERE u.order_id = o.id)) AS bom_wt,
-    (SELECT sum(CASE WHEN upper(btrim(l.uom)) IN ${MT_UOMS} THEN ${num(sql`l.qty`)}
-                     WHEN upper(btrim(l.uom)) IN ${KG_UOMS} THEN ${num(sql`l.qty`)} / 1000 END)
-       FROM order_lines l WHERE l.order_id = o.id) AS quoted_mt,
+    -- Quoted MT is the PO's own quantity (lines read from the PO copy); the docket's item list is
+    -- shared by every order on that docket, so it is used only for an order without PO lines.
+    CASE WHEN EXISTS (SELECT 1 FROM order_po_lines pl WHERE pl.order_id = o.id)
+      THEN (SELECT sum(CASE WHEN upper(btrim(pl.unit)) IN ${MT_UOMS} THEN pl.qty
+                            WHEN upper(btrim(pl.unit)) IN ${KG_UOMS} THEN pl.qty / 1000 END)
+              FROM order_po_lines pl WHERE pl.order_id = o.id)
+      ELSE (SELECT sum(CASE WHEN upper(btrim(l.uom)) IN ${MT_UOMS} THEN ${num(sql`l.qty`)}
+                            WHEN upper(btrim(l.uom)) IN ${KG_UOMS} THEN ${num(sql`l.qty`)} / 1000 END)
+              FROM order_lines l WHERE l.order_id = o.id) END - coalesce(o.cancelled_mt, 0) AS quoted_mt,
     EXISTS (SELECT 1 FROM rm_indents ri WHERE ri.order_id = o.id AND ri.status = 'ISSUED') AS indent_issued,
     EXISTS (SELECT 1 FROM rm_receipts rr JOIN rm_receipt_lots rl ON rl.receipt_id = rr.id WHERE rr.order_id = o.id) AS rm_received,
     EXISTS (SELECT 1 FROM production_entries pe WHERE pe.order_id = o.id) AS in_production,
@@ -48,6 +54,8 @@ const FULLY_BILLED = sql`(${FULLY_DISPATCHED} AND s.inv_count > 0 AND (coalesce(
 
 /** Furthest step reached, derived from the data (never typed). See ORDER_STATUSES. */
 export const STATUS_SQL = sql`(CASE
+  WHEN o.cancel_status = 'SUPERSEDED' THEN 'Superseded'
+  WHEN o.cancel_status = 'CANCELLED' THEN 'Cancelled'
   WHEN ${FULLY_BILLED} AND coalesce(s.coll_total, 0) >= s.inv_total THEN 'Closed'
   WHEN ${FULLY_BILLED} THEN 'Billed'
   WHEN ${FULLY_DISPATCHED} THEN 'Dispatched'
@@ -129,6 +137,13 @@ export interface OrderDetail {
   poSource: string | null;
   onHold: boolean;
   holdReason: string | null;
+  cancelStatus: string | null;
+  cancelReason: string | null;
+  cancelNote: string | null;
+  cancelDate: string | null;
+  cancelledByName: string | null;
+  cancelledMt: number | null;
+  replacedByPo: string | null;
   jobStatus: string | null;
   jobNote: string | null;
   lines: { id: number; itemName: string | null; ourItemName: string | null; uom: string | null; qty: string | null; price: string | null; weightPerPiece: string | null }[];
@@ -144,7 +159,10 @@ export async function getOrder(id: number): Promise<OrderDetail | null> {
       o.contract_value::float AS "contractValue", to_char(o.delivery_due, 'YYYY-MM-DD') AS "deliveryDue",
       o.created_by_name AS "createdByName", o.created_at AS "createdAt",
       o.po_source AS "poSource", o.on_hold AS "onHold", o.hold_reason AS "holdReason",
-      o.job_status AS "jobStatus", o.job_note AS "jobNote"
+      o.job_status AS "jobStatus", o.job_note AS "jobNote",
+      o.cancel_status AS "cancelStatus", o.cancel_reason AS "cancelReason", o.cancel_note AS "cancelNote",
+      to_char(o.cancel_date, 'YYYY-MM-DD') AS "cancelDate", o.cancelled_by_name AS "cancelledByName", o.cancelled_mt::float AS "cancelledMt",
+      (SELECT r.po_number FROM orders r WHERE r.id = o.replaced_by_order_id) AS "replacedByPo"
     FROM orders o JOIN "docket-party-name" d ON d.id = o.docket_id ${ORDER_STATS}
     WHERE o.id = ${id}`);
   if (!rows[0]) return null;

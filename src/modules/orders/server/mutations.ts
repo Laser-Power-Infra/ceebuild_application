@@ -189,3 +189,104 @@ export async function updateOrderTerms(id: number, input: { contractValue?: unkn
     return { id };
   });
 }
+
+export const CANCEL_REASONS = { CLIENT_CANCELLED: 'Cancelled by client', SUPERSEDED: 'Superseded by new PO', DUPLICATE: 'Duplicate entry' } as const;
+
+export interface CancelOrderInput {
+  reason: string;
+  replacedByPo?: string | null;
+  cancelDate: string;
+  note?: string | null;
+  file?: { name: string; type: string; buffer: Buffer } | null;
+}
+
+/**
+ * Admin only (checked by the action). Cancelled, or Superseded when a replacing PO is named.
+ * Draft indents are voided; issued indents and cut material are flagged for transfer, never
+ * deleted. Every step is in the audit log.
+ */
+export async function cancelOrder(id: number, input: CancelOrderInput, user: AuthUser) {
+  const reason = String(input.reason ?? '').trim();
+  if (!(reason in CANCEL_REASONS)) throw new UserError('Choose a reason: cancelled by client, superseded by a new PO or duplicate entry.');
+  const date = String(input.cancelDate ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) throw new UserError('Cancellation date is required.');
+  const replPo = String(input.replacedByPo ?? '').trim();
+  const repl = replPo ? await prisma.order.findFirst({ where: { poNumber: { equals: replPo, mode: 'insensitive' } }, select: { id: true, poNumber: true } }) : null;
+  if (replPo && !repl) throw new UserError(`Replacing PO "${replPo}" is not in the orders list.`);
+  if (repl?.id === id) throw new UserError('An order cannot replace itself.');
+  if (reason === 'SUPERSEDED' && !repl) throw new UserError('Superseded needs the replacing PO.');
+  const note = String(input.note ?? '').trim().slice(0, 1000) || null;
+  let s3Key: string | null = null;
+  if (input.file?.buffer.length) {
+    const { archiveFile } = await import('@/lib/s3');
+    s3Key = await archiveFile('order-cancel', input.file.name, input.file.buffer, input.file.type || 'application/octet-stream');
+  }
+  return prisma.$transaction(async (tx) => {
+    const o = await tx.order.findUnique({ where: { id }, select: { poNumber: true, cancelStatus: true } });
+    if (!o) throw new UserError('Order not found.');
+    if (o.cancelStatus) throw new UserError(`Order is already ${o.cancelStatus.toLowerCase()}.`);
+    const status = repl ? 'SUPERSEDED' : 'CANCELLED';
+    await tx.order.update({
+      where: { id },
+      data: { cancelStatus: status, cancelReason: reason, cancelNote: note, cancelDate: new Date(`${date}T00:00:00Z`), replacedByOrderId: repl?.id ?? null, cancelledByName: user.name },
+    });
+    if (input.file?.buffer.length)
+      await tx.orderDocument.create({
+        data: { orderId: id, kind: 'CANCELLATION', fileName: input.file.name.slice(0, 255), s3Key, mimeType: input.file.type || null, sizeBytes: input.file.buffer.length, source: 'UPLOAD', uploadedByName: user.name },
+      });
+    // A cancelled order holds no indent or store stock: drafts are voided; issued ones are flagged.
+    const indents = await tx.rmIndent.findMany({ where: { orderId: id, status: { in: ['DRAFT', 'ISSUED'] } }, select: { id: true, indentNo: true, status: true, remarks: true } });
+    const voided: string[] = [];
+    const flagged: string[] = [];
+    for (const ind of indents) {
+      if (ind.status === 'DRAFT') {
+        await tx.rmIndent.update({ where: { id: ind.id }, data: { status: 'CANCELLED', remarks: `Order PO ${o.poNumber} ${status.toLowerCase()} ${date}` } });
+        voided.push(ind.indentNo);
+      } else {
+        await tx.rmIndent.update({ where: { id: ind.id }, data: { remarks: `${ind.remarks ? `${ind.remarks} | ` : ''}TRANSFER: order ${status.toLowerCase()} ${date} – move the material to another order` } });
+        flagged.push(ind.indentNo);
+      }
+    }
+    const detail = [
+      `${status}: ${CANCEL_REASONS[reason as keyof typeof CANCEL_REASONS]}`,
+      repl ? `replaced by PO ${repl.poNumber}` : null,
+      `date ${date}`,
+      note,
+      voided.length ? `draft indents voided: ${voided.join(', ')}` : null,
+      flagged.length ? `issued indents flagged for transfer: ${flagged.join(', ')}` : null,
+    ].filter(Boolean).join(' · ');
+    await tx.editLog.create({ data: { tableName: 'orders', recordId: id, fieldName: 'cancel_status', oldValue: null, newValue: detail, ...auditUser(user) } });
+    return { id, status, voided, flagged };
+  });
+}
+
+/** Admin only: reopen a cancelled / superseded order (voided indents stay voided). */
+export async function reopenOrder(id: number, why: string, user: AuthUser) {
+  const reason = String(why ?? '').trim();
+  if (!reason) throw new UserError('Give the reason for reopening.');
+  return prisma.$transaction(async (tx) => {
+    const o = await tx.order.findUnique({ where: { id }, select: { cancelStatus: true } });
+    if (!o) throw new UserError('Order not found.');
+    if (!o.cancelStatus) throw new UserError('Order is not cancelled.');
+    await tx.order.update({ where: { id }, data: { cancelStatus: null, cancelReason: null, cancelNote: null, cancelDate: null, replacedByOrderId: null, cancelledByName: null } });
+    await tx.editLog.create({ data: { tableName: 'orders', recordId: id, fieldName: 'cancel_status', oldValue: o.cancelStatus, newValue: `REOPENED: ${reason}`, ...auditUser(user) } });
+    return { id };
+  });
+}
+
+/** Admin only: partial cancellation. MT taken off the order (0 clears it); the balance stays open. */
+export async function setCancelledMt(id: number, mtRaw: unknown, why: string, user: AuthUser) {
+  const reason = String(why ?? '').trim();
+  if (!reason) throw new UserError('Give the reason for the quantity change.');
+  const s = String(mtRaw ?? '').replace(/,/g, '').trim();
+  const mt = s === '' ? 0 : Number(s);
+  if (!Number.isFinite(mt) || mt < 0 || mt > 100000) throw new UserError('Cancelled MT must be a positive number.');
+  return prisma.$transaction(async (tx) => {
+    const o = await tx.order.findUnique({ where: { id }, select: { cancelledMt: true } });
+    if (!o) throw new UserError('Order not found.');
+    const val = mt > 0 ? Math.round(mt * 1000) / 1000 : null;
+    await tx.order.update({ where: { id }, data: { cancelledMt: val } });
+    await tx.editLog.create({ data: { tableName: 'orders', recordId: id, fieldName: 'cancelled_mt', oldValue: o.cancelledMt?.toString() ?? null, newValue: `${val ?? 0} MT: ${reason}`, ...auditUser(user) } });
+    return { id };
+  });
+}

@@ -21,6 +21,7 @@ import type { OrderDetail } from '../server/query';
 import { HOLD_STATUS, ORDER_STATUSES } from '../columns';
 import { OrderPoTab } from '@/modules/poIntake/ui/OrderPoTab';
 import { ChangeDocket } from './ChangeDocket';
+import { CancelOrder } from './CancelOrder';
 
 // Business-process order: plan -> make -> inspect/galvanise -> ship -> bill.
 const TABS: { key: OrderTab; label: string }[] = [
@@ -81,6 +82,7 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
           </p>
         </div>
         <div className="flex-1" />
+        {role === 'Admin' && <CancelOrder order={order} onChanged={reloadOrder} />}
         {role === 'Admin' && (
           <Button
             variant="destructive"
@@ -109,6 +111,16 @@ export function OrderPage({ initial, role }: { initial: OrderDetail; role: strin
         ))}
       </ol>
 
+      {order.cancelStatus && (
+        <p role="status" className="rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs font-bold text-red-900">
+          {order.cancelStatus === 'SUPERSEDED' ? `Superseded by PO ${order.replacedByPo ?? '–'}` : 'Cancelled'} on {order.cancelDate ?? '–'}
+          {order.cancelReason ? ` · ${order.cancelReason.replace(/_/g, ' ').toLowerCase()}` : ''}
+          {order.cancelNote ? ` · ${order.cancelNote}` : ''} · by {order.cancelledByName ?? '–'}
+        </p>
+      )}
+      {!order.cancelStatus && order.cancelledMt ? (
+        <p className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">Partly cancelled: {order.cancelledMt} MT taken off this order (Quoted MT is the balance).</p>
+      ) : null}
       {order.onHold && (
         <button
           type="button"

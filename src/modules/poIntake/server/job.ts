@@ -131,10 +131,15 @@ const fromPo = (p: PoBomPiece): PieceIn => ({ ...p });
 async function loadBom(orderId: number, user: AuthUser, steps: string[]) {
   const [docs, uploads, order] = await Promise.all([
     prisma.orderDocument.findMany({ where: { orderId, kind: { in: ['BOM', 'DRAWING', 'PO'] } }, orderBy: { id: 'asc' } }),
-    prisma.bomUpload.findMany({ where: { orderId }, select: { fileName: true, source: true } }),
+    prisma.bomUpload.findMany({ where: { orderId }, select: { fileName: true, source: true, status: true } }),
     prisma.order.findUnique({ where: { id: orderId }, select: { poExtract: true } }),
   ]);
   const loaded = new Set(uploads.map((u) => u.fileName));
+  // A BOM already marked correct (e.g. a revised BOM uploaded by hand) is never replaced by the PO's own file.
+  if (uploads.some((u) => u.status === 'CORRECT')) {
+    steps.push('BOM: a BOM is already marked correct, the PO file is not re-loaded.');
+    return;
+  }
   const sheet = docs.find((d) => d.kind === 'BOM' && SHEET_RE.test(d.fileName));
   if (sheet) {
     if (loaded.has(sheet.fileName)) {

@@ -5,7 +5,7 @@ import { fetchFacet, fetchPage, plain, type TableSpec } from '@/lib/serverTable'
 import type { TablePage, TableQuery } from '@/components/data-table/types';
 import { getPlanSettings } from '@/modules/settings/server';
 import { ORDER_STATS, OUTSTANDING_SQL, STATUS_SQL } from '@/modules/orders/server/query';
-import { ORDER_STATUSES } from '@/modules/orders/columns';
+import { CLOSED_STATUSES, ORDER_STATUSES } from '@/modules/orders/columns';
 import { orderBottlenecks } from '@/modules/production/server/bottleneck';
 import { AGEING_SQL, INVOICE_OUTSTANDING } from '@/modules/registers/server/query';
 import { flagCountsSql, listFlags } from './flags';
@@ -55,8 +55,8 @@ async function overviewSpec(): Promise<TableSpec> {
       daysSincePo: { text: sql`(CURRENT_DATE - o.po_date)::text`, raw: sql`(CURRENT_DATE - o.po_date)`, kind: 'number', searchable: false },
       deliveryDue: { text: sql`to_char(o.delivery_due, 'YYYY-MM-DD')`, raw: sql`o.delivery_due`, kind: 'date', searchable: false },
       daysLate: {
-        text: sql`(CASE WHEN o.delivery_due < CURRENT_DATE AND ${STATUS_SQL} NOT IN ('Dispatched', 'Billed', 'Closed') THEN CURRENT_DATE - o.delivery_due END)::text`,
-        raw: sql`(CASE WHEN o.delivery_due < CURRENT_DATE AND ${STATUS_SQL} NOT IN ('Dispatched', 'Billed', 'Closed') THEN CURRENT_DATE - o.delivery_due END)`,
+        text: sql`(CASE WHEN o.delivery_due < CURRENT_DATE AND ${STATUS_SQL} NOT IN ('Dispatched', 'Billed', 'Closed', 'Cancelled', 'Superseded') THEN CURRENT_DATE - o.delivery_due END)::text`,
+        raw: sql`(CASE WHEN o.delivery_due < CURRENT_DATE AND ${STATUS_SQL} NOT IN ('Dispatched', 'Billed', 'Closed', 'Cancelled', 'Superseded') THEN CURRENT_DATE - o.delivery_due END)`,
         kind: 'number',
         searchable: false,
       },
@@ -77,7 +77,7 @@ async function overviewSpec(): Promise<TableSpec> {
 /** Open orders only unless extra.closed = "1"; extra.flagged = "1" keeps orders with flags. */
 function overviewExtra(query: TableQuery): Prisma.Sql[] {
   const out: Prisma.Sql[] = [];
-  if (String(query.extra?.closed ?? '') !== '1') out.push(sql`${STATUS_SQL} <> 'Closed'`);
+  if (String(query.extra?.closed ?? '') !== '1') out.push(sql`${STATUS_SQL} NOT IN ('Closed', 'Cancelled', 'Superseded')`);
   if (String(query.extra?.flagged ?? '') === '1') out.push(sql`coalesce(fc.n, 0) > 0`);
   return out;
 }
@@ -127,7 +127,7 @@ export async function overviewStats(): Promise<OverviewStats> {
   // Advance / on-account receipts are not on an invoice; add them to collected.
   const [onAccount] = await prisma.$queryRaw<{ amt: number }[]>(sql`SELECT coalesce(sum(amount), 0)::float AS amt FROM collections WHERE invoice_id IS NULL`);
   const map = new Map(byStatus.map((r) => [r.status, r]));
-  const open = byStatus.filter((r) => r.status !== 'Closed');
+  const open = byStatus.filter((r) => !CLOSED_STATUSES.includes(r.status));
   return {
     openOrders: open.reduce((a, r) => a + r.orders, 0),
     pipelineMt: open.reduce((a, r) => a + Math.max(0, r.mt), 0),

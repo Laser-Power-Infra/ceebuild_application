@@ -107,6 +107,12 @@ export function sectionKey(section: string | null | undefined): string | null {
   // Round bar: any of RB / ROD / ROUNDBAR / ROUND with a diameter, or a bare "16DIA".
   const rb = k.match(/^(?:MS)?(?:ROUNDBAR|ROUND|RODS?|RB|RD|BAR)?(\d+(?:\.\d+)?)DIA$/) ?? k.match(/^(?:MS)?(?:ROUNDBAR|ROUND|RODS?|RB|RD)?DIA(\d+(?:\.\d+)?)$/) ?? k.match(/^(?:MS)?(?:ROUNDBAR|ROUND|RODS?|RB|RD)(\d+(?:\.\d+)?)$/);
   if (rb) return `RB${rb[1]}`;
+  // Square bar "SQ bar 12" / "SQ.BAR 10X10" / "SQ12" -> SQ12 (a square side is given once).
+  const sq = k.match(/^(?:MS)?(?:SQUAREBAR|SQBAR|SQ)(\d+(?:\.\d+)?)(?:X(\d+(?:\.\d+)?))?$/);
+  if (sq && (!sq[2] || sq[2] === sq[1])) return `SQ${sq[1]}`;
+  // GI / MS pipe "Pipe 20 NB (B)", "25 NB GI PIPE" -> PIPE20NB (class kept out of the key).
+  const pipe = k.match(/^(?:GI|MS)?PIPE(\d+)NB/) ?? k.match(/^(\d+)NB(?:GI|MS)?PIPE/);
+  if (pipe) return `PIPE${pipe[1]}NB`;
   const fam: [RegExp, string][] = [
     [/^(?:MS)?(?:ANGLE|ANG|ISA|L)(?=\d)/, 'ISA'],
     [/^(?:MS)?(?:FLAT|FLT|FL|FT|PF|F)(?=\d)/, 'FLAT'],
@@ -118,6 +124,8 @@ export function sectionKey(section: string | null | undefined): string | null {
       break;
     }
   }
+  // "FT 75X40" in customer BOMs is the channel 75x40 (7.14 kg/m): no flat is 40 mm thick.
+  k = k.replace(/^FLAT(\d+)X(\d+)$/, (m, a, b) => (Number(b) >= 30 && Number(a) > Number(b) ? `ISMC${a}X${b}` : m));
   // A channel is named depth x flange; a third figure is the web thickness ("ISMC 75X40X6").
   k = k.replace(/^(ISMC\d+(?:\.\d+)?X\d+(?:\.\d+)?)X\d+(?:\.\d+)?$/, '$1');
   return k;

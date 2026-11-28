@@ -204,6 +204,17 @@ model Order {
   // pending items) - read by n8n + Gemini, see src/lib/orders/mailCheck.ts.
   mailStatus       Json?     @map("mail_status")
   mailStatusAt     DateTime? @map("mail_status_at")
+  // Cancellation (Admin): CANCELLED | SUPERSEDED (a replacing PO is named). A cancelled order leaves
+  // open orders, pipeline MT, flags and the daily alert; it stays under "Include closed orders".
+  cancelStatus     String?   @map("cancel_status")
+  // CLIENT_CANCELLED | SUPERSEDED | DUPLICATE
+  cancelReason     String?   @map("cancel_reason")
+  cancelNote       String?   @map("cancel_note")
+  cancelDate       DateTime? @map("cancel_date") @db.Date
+  replacedByOrderId Int?     @map("replaced_by_order_id")
+  cancelledByName  String?   @map("cancelled_by_name")
+  // Partial cancellation: MT taken off the order; the balance stays open.
+  cancelledMt      Decimal?  @map("cancelled_mt") @db.Decimal(12, 3)
 
   poLines              OrderPoLine[]
   documents            OrderDocument[]
