@@ -269,6 +269,18 @@ export async function relinkEnquiries() {
 }
 
 /** n8n posts back one mail it read. Idempotent per thread (a FAILED read may be retried). */
+const OUR_DOMAIN = /@ceebuildcompany.com/i;
+const REGRET_NOTE = /unable to (quote|offer|participate)|regret|not (an )?approved vendor|not in (our )?(manufacturing )?scope|out of (our )?scope|cannot (quote|offer)|not interested|do not manufacture/i;
+
+/** An enquiry mail with no item list and no files: no docket. Returns the intake fields, or null. */
+export function noItemsHold(e: { items?: unknown; notes?: unknown }, sender: string | null, fileCount: number) {
+  if ((Array.isArray(e.items) && e.items.length) || fileCount > 0) return null;
+  const notes = (Array.isArray(e.notes) ? e.notes : [e.notes]).filter(Boolean).map(String).join('; ');
+  if (OUR_DOMAIN.test(sender ?? '') && REGRET_NOTE.test(notes))
+    return { outcome: 'REGRET', outcomeNote: `Auto: our reply regretted it – ${notes}`.slice(0, 500), error: null };
+  return { outcome: null, outcomeNote: null, error: `No item list in the mail${notes ? ` – ${notes}` : ''}`.slice(0, 1000) };
+}
+
 export async function ingestEnquiry(p: N8nEnquiryPayload) {
   const threadId = String(p.threadId ?? '').trim();
   if (!/^[0-9a-zA-Z_-]{6,64}$/.test(threadId)) throw new UserError('threadId is missing or invalid.');
@@ -313,6 +325,14 @@ export async function ingestEnquiry(p: N8nEnquiryPayload) {
   if (p.backfill) {
     const row = await prisma.enquiryIntake.create({ data: { ...common, status: 'BACKLOG' } });
     return { id: row.id, status: row.status, docketId: null, docketNo: null };
+  }
+
+  // No item list and no files: no docket (the number is the Quotation No.). It waits in the
+  // tracker; if our own reply already regretted it, it is closed as REGRET.
+  const hold = noItemsHold(e, base.sender, (p.files ?? []).length);
+  if (hold) {
+    const row = await prisma.enquiryIntake.create({ data: { ...common, status: 'BACKLOG', ...hold } });
+    return { id: row.id, status: row.status, outcome: row.outcome, docketId: null, docketNo: null };
   }
 
   // New docket "Enquiry – to cost", items from the BOQ.
@@ -516,7 +536,9 @@ export async function enquiryTracker(): Promise<EnquiryRow[]> {
                 ? 'BOM ready – to cost'
                 : r.docketId
                   ? 'Docket – BOM to make'
-                  : r.status === 'BACKLOG'
+                  : r.status === 'BACKLOG' && r.error?.startsWith('No item list')
+                    ? 'No item list – get BOQ, then approve'
+                    : r.status === 'BACKLOG'
                     ? 'Backlog – no docket (approve to create)'
                     : 'Received';
     return {
