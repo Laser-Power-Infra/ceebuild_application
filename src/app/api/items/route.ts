@@ -337,6 +337,15 @@ export async function PUT(req: Request) {
     const id = body?.id;
     if (!id) return NextResponse.json({ error: 'Missing ID' }, { status: 400 });
     const data = pickFields(body, EDITABLE_ITEM_FIELDS) as Record<string, any>;
+    // C6 (Puja 28-11): a typed price is "manual – not system costed" and needs an Admin's approval.
+    if ('price' in data) {
+      data.priceSource = String(data.price ?? '').trim() ? 'MANUAL' : null;
+      data.priceApprovedBy = data.priceSource && user.role === 'Admin' ? user.name : null;
+    }
+    if (body?.approveManualPrice === true) {
+      if (user.role !== 'Admin') return NextResponse.json({ error: 'Only an Admin can approve a manual price.' }, { status: 403 });
+      data.priceApprovedBy = user.name;
+    }
     if (Object.keys(data).length === 0) {
       return NextResponse.json({ error: 'No editable fields supplied' }, { status: 400 });
     }

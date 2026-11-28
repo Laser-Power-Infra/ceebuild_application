@@ -29,6 +29,9 @@ model ItemTable {
   status           String?
   // HSN on the offer; blank = default from the item name (7308 structures, 8310 danger plates).
   hsn              String?
+  // C6: COSTING (applied BOM costing) | MANUAL (typed: flagged, needs Admin approval). Null = older rows.
+  priceSource      String?  @map("price_source")
+  priceApprovedBy  String?  @map("price_approved_by")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 

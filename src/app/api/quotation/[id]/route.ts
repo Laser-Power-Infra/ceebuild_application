@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { manualPrices } from '@/lib/manualPrice';
 import { normalizeDocketNo } from '@/lib/dockets';
 
 export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -45,9 +46,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
         where: { itemId: { in: items.map((i) => i.id) }, applied: true },
         orderBy: { id: 'desc' },
       });
+      const manual = await manualPrices(items);
       const withExtras: any[] = [];
       for (const item of items) {
-        withExtras.push(item);
+        withExtras.push(manual[item.id] ? { ...item, manualPrice: manual[item.id] } : item);
         const c = costings.find((x) => x.itemId === item.id);
         if (!c) continue;
         const sets = c.sets.toNumber();

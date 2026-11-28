@@ -1,4 +1,5 @@
 import { autoPriceDocket, draftPrices } from '@/modules/enquiry/server/autoCost';
+import { manualPrices } from '@/lib/manualPrice';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
 import { requireUser, auditUser, pickFields, EDITOR_ROLES, ADMIN_ROLES } from '@/lib/auth/server';
@@ -93,6 +94,13 @@ export async function GET(req: Request) {
       for (const d of docketsWithItems) d.items = d.items.map((i) => (drafts[i.id] ? { ...i, draftPrice: drafts[i.id] } : i)) as typeof d.items;
     } catch (e) {
       console.error('[dockets] draft prices', e);
+    }
+    // C6: typed prices are flagged "manual – not system costed" (Admin approval).
+    try {
+      const manual = await manualPrices(docketsWithItems.flatMap((d) => d.items));
+      for (const d of docketsWithItems) d.items = d.items.map((i) => (manual[i.id] ? { ...i, manualPrice: manual[i.id] } : i)) as typeof d.items;
+    } catch (e) {
+      console.error('[dockets] manual prices', e);
     }
 
     let stateOptionsList: string[] = [];

@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma';
 import { auditUser, type AuthUser } from '@/lib/auth/server';
 import { UserError } from '@/lib/actionResult';
 import { sectionKey, toNum } from '@/lib/bom/parse';
-import { RATE_KINDS, RATE_META, RATE_TYPES, RM_FAMILIES, normSubject, type RateKind, type RateRow } from '@/lib/costing/calc';
+import { RATE_KINDS, RATE_META, RATE_TYPES, RM_FAMILIES, STALE_RATE_DAYS, normSubject, type RateKind, type RateRow } from '@/lib/costing/calc';
 import { FAB_CAT_BY_CODE } from '@/lib/costing/fab';
 
 // Costing Master (Administration). Admin only: every change is a new, dated row plus an audit entry.
@@ -103,7 +103,9 @@ export async function listRates(): Promise<RateListRow[]> {
     const eff = ymd(r.effectiveFrom);
     const validTo = r.validTo ? ymd(r.validTo) : null;
     const current = currentIds.has(r.id);
-    const overdue = current && ((r.updateFreqDays != null && r.updateFreqDays > 0 && addDays(eff, r.updateFreqDays) < t) || (validTo !== null && validTo < t));
+    // C2 (Puja 28-11): zinc and steel RM rates are due weekly – older than 7 days is overdue (red).
+    const freq = r.updateFreqDays != null && r.updateFreqDays > 0 ? r.updateFreqDays : r.kind === 'ZINC_RATE' || r.kind === 'RM_RATE' ? STALE_RATE_DAYS : null;
+    const overdue = current && ((freq !== null && addDays(eff, freq) < t) || (validTo !== null && validTo < t));
     return {
       id: r.id,
       kind: r.kind,

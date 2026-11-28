@@ -50,6 +50,7 @@ export const RATE_KINDS = [
   'NB_MARGIN_PCT',
   'BOUGHT_OUT',
   'BO_MARGIN_PCT',
+  'SCRAP_RATE',
 ] as const;
 export type RateKind = (typeof RATE_KINDS)[number];
 
@@ -70,6 +71,7 @@ export const RATE_META: Record<RateKind, { label: string; units: string[]; subje
   LC_BG_PCT: { label: 'LC / BG charges', units: ['%'], subject: 'DEFAULT', perSubject: false },
   INSPECTION: { label: 'Inspection', units: ['Rs/kg'], subject: 'DEFAULT', perSubject: false },
   PACKING: { label: 'Packing', units: ['Rs/kg'], subject: 'DEFAULT', perSubject: false },
+  SCRAP_RATE: { label: 'Scrap credit (cut-offs under 300 mm)', units: ['Rs/kg'], subject: 'DEFAULT', perSubject: false },
   MIN_VA_PCT: { label: 'Minimum VA %', units: ['%'], subject: 'DEFAULT', perSubject: false },
   VA_PCT: { label: 'Default VA % (on full cost base incl. zinc)', units: ['%'], subject: 'DEFAULT', perSubject: false },
   NB_RATE: { label: 'Nuts & bolts', units: ['Rs/kg', 'Rs/set'], subject: 'Size (e.g. M16X40) or DEFAULT', perSubject: true },
@@ -296,8 +298,10 @@ export interface LineResult {
   fabCat: string | null;
   fabRate: number | null;
   fabUnit: string | null;
-  /** Per one set, Rs. */
+  /** Per one set, Rs. RM net of the scrap credit. */
   rm: number;
+  /** Scrap credit on the cutting wastage (cut-offs under 300 mm sold as scrap), Rs per set. */
+  scrapCredit?: number;
   fab: number;
   galv: number;
   freight: number;
@@ -393,6 +397,7 @@ export interface CostResult {
     pendingMasters: string[];
     /** Lines priced with a provisional (INTERIM) RM rate. */
     interimLines: string[];
+    staleRates?: string[];
     /** True when the price may be applied to the quotation. */
     ok: boolean;
     messages: string[];
@@ -435,6 +440,8 @@ export function computeCosting(input: CostInput): CostResult {
   const galvRate = input.galvanised ? take('GALV_RATE', null) : null;
   const zincRate = input.galvanised ? val(take('ZINC_RATE', null)) : 0;
   const galvTransport = input.galvanised ? val(take('GALV_TRANSPORT', null)) : 0;
+  // C5 (Puja 28-11): cutting wastage is credited back at the scrap rate (offcuts under 300 mm).
+  const scrapRate = val(take('SCRAP_RATE', null));
   // No destination = ex-works: no freight.
   const exWorks = !String(input.destState ?? '').trim();
   const loadBasis: LoadBasis = input.load?.basis === 'SPACE' ? 'SPACE' : 'WEIGHT';
@@ -661,7 +668,8 @@ export function computeCosting(input: CostInput): CostResult {
       wastagePct = val(take('WASTAGE_PCT', null));
       wastageSource = 'DEFAULT';
     }
-    const rm = black * rmRate.value * (1 + wastagePct / 100);
+    const scrapCredit = black * (wastagePct / 100) * scrapRate;
+    const rm = black * rmRate.value * (1 + wastagePct / 100) - scrapCredit;
     // Per-kg rates on the black weight, per-piece rates on the BOM qty.
     const fab = fabRateRow.unit === 'Rs/pc' ? qty * fabRateRow.value : black * fabRateRow.value;
     const rmInterim = isInterim(rmRate);
@@ -691,6 +699,7 @@ export function computeCosting(input: CostInput): CostResult {
       fabRate: fabRateRow.value,
       fabUnit: fabRateRow.unit,
       rm: r2(rm),
+      scrapCredit: r2(scrapCredit),
       fab: r2(fab),
       galv: r2(galv),
       freight: r2(freight),
@@ -765,6 +774,11 @@ export function computeCosting(input: CostInput): CostResult {
   if (missingMasters.length) messages.push(`Not yet in the masters (price cannot be applied): ${missingMasters.join('; ')}.`);
   if (familyLines.length) messages.push(`${familyLines.length} line(s) priced at the section-family RM rate (no rate for the exact size): ${familyLines.slice(0, 5).join('; ')}${familyLines.length > 5 ? ' …' : ''}.`);
   if (pendingMasters.length) messages.push(`Pending (flagged, costing not blocked): ${pendingMasters.join('; ')}.`);
+  // C2 (Puja 28-11): zinc and steel rates older than 7 days on the costing date are red-flagged.
+  const staleRates = [...used.values()]
+    .filter((r) => (r.kind === 'ZINC_RATE' || r.kind === 'RM_RATE') && daysBetween(r.effectiveFrom, input.quoteDate) > STALE_RATE_DAYS)
+    .map((r) => `${r.kind === 'ZINC_RATE' ? 'Zinc' : 'RM'} ${r.subject} Rs ${r.value} dated ${r.effectiveFrom} (${daysBetween(r.effectiveFrom, input.quoteDate)} days)`);
+  if (staleRates.length) messages.push(`RED FLAG – rate older than ${STALE_RATE_DAYS} days: ${staleRates.join('; ')}. Update the Costing Master.`);
   if (interimLines.length) messages.push(`${interimLines.length} line(s) use an INTERIM RM rate (supplier quote) – replace with the PO/GRN rate when purchase sends it.`);
   if (blank.length) messages.push(`${blank.length} line(s) have a blank weight, rate or set count.`);
   if (outside.length) messages.push(`${outside.length} line(s) use a section outside the RM purchase list (not costed).`);
@@ -832,11 +846,16 @@ export function computeCosting(input: CostInput): CostResult {
       missingMasters,
       pendingMasters,
       interimLines,
+      staleRates,
       ok: blank.length === 0 && outside.length === 0 && missingMasters.length === 0 && totalSets > 0 && costed.length > 0 && !belowMinVa,
       messages,
     },
   };
 }
+
+/** Zinc / steel rates older than this many days are red-flagged (C2). */
+export const STALE_RATE_DAYS = 7;
+export const daysBetween = (from: string, to: string) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000);
 
 export function setsFromItem(qty: number | null, uom: string | null, setWtKg: number): { sets: number; basis: 'SETS' | 'WEIGHT' | 'UNKNOWN' } {
   if (qty === null || !(qty > 0)) return { sets: 0, basis: 'UNKNOWN' };

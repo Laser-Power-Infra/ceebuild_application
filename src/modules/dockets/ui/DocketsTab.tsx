@@ -846,6 +846,32 @@ const DocketGroup = memo(function DocketGroup({ doc, items, showAll, active, cha
           </Link>
         </div>
       );
+    // C6 (Puja 28-11): a typed price is flagged "manual – not system costed" until an Admin approves it.
+    const manual = (item as DocketItem & { manualPrice?: { approvedBy: string | null } }).manualPrice;
+    if (c.key === 'price' && value && manual)
+      return (
+        <div className="flex flex-col">
+          {text}
+          <span
+            title="Typed price, not from a BOM costing. Cost it on the costing page, or an Admin approves it."
+            className={cn('mx-2.5 mb-1 w-fit rounded px-1.5 text-[10px] font-semibold', manual.approvedBy ? 'bg-amber-50 text-amber-800' : 'bg-rose-100 text-rose-800')}
+          >
+            manual – not system costed{manual.approvedBy ? ` · approved by ${manual.approvedBy}` : ' · Admin approval pending'}
+          </span>
+          {ctx.isAdmin && !manual.approvedBy && (
+            <button
+              type="button"
+              onClick={async () => {
+                const r = await fetch('/api/items', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: item.id, approveManualPrice: true }) });
+                if (r.ok) api.actions().refresh();
+              }}
+              className="mx-2.5 mb-1 w-fit text-[11px] font-semibold text-[#0f62fe] hover:underline"
+            >
+              Approve manual price
+            </button>
+          )}
+        </div>
+      );
     if (c.key !== 'itemNameParty') return text;
     // M14: every docket item gets its BOM + costing (Create BOM from a drawing, cost from the Costing Master).
     const bomLink = (

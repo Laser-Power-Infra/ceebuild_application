@@ -17,7 +17,7 @@ export interface FabCat {
 export const FAB_CATS: FabCat[] = [
   { code: 'CH_ANG', label: 'Channel & angle – cutting, punching, numbering', unit: 'Rs/kg', chartSr: '1' },
   { code: 'CLAMP_65_50', label: 'Clamps – FB 65x6, 50x10, 50x8, 50x6', unit: 'Rs/kg', chartSr: '2' },
-  { code: 'CLAMP_40', label: 'Clamps – FB 40x6, 40x5', unit: 'Rs/kg', chartSr: '3' },
+  { code: 'CLAMP_40', label: 'Clamps – FB 40x6, 40x5, 45x5', unit: 'Rs/kg', chartSr: '3' },
   { code: 'RADIUS_CLAMP', label: 'Radius clamps – FB 65x6, 50x10, 50x8, 50x6', unit: 'Rs/kg', chartSr: '4' },
   { code: 'WELDED', label: 'Welded materials (V-bracket, top cleat, J11V-KLIT) & all tower materials', unit: 'Rs/kg', chartSr: '5' },
   { code: 'TAPER_VCROSS', label: 'Taper cutting – V-cross (352DM)', unit: 'Rs/kg', chartSr: '6' },
@@ -36,7 +36,8 @@ export const isFabCat = (v: unknown): v is string => typeof v === 'string' && v 
 export const fabCatLabel = (code: string | null | undefined) => (code ? (FAB_CAT_BY_CODE[code]?.label ?? code) : '–');
 
 const CLAMP_A = new Set(['65X6', '50X10', '50X8', '50X6']);
-const CLAMP_B = new Set(['40X6', '40X5']);
+// 45x5 replaces 40x5 on the Lanarsy SBPDCL order (accepted 21-11-2026): same clamp work.
+const CLAMP_B = new Set(['40X6', '40X5', '45X5']);
 const CLAMP_C = new Set(['30X3', '25X3']);
 const WASHER = new Set(['50X5', '65X5', '50X50X5', '65X65X5']);
 

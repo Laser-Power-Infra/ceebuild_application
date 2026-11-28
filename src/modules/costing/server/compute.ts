@@ -76,6 +76,9 @@ export async function lastQuoted(structureType: string | null, ourItemName: stri
 }
 
 /** Everything the calculator needs, from the BOM, the masters and the docket. */
+/** C1: BOM weight x sets vs the enquiry / PO quantity – more than this % apart blocks Apply. */
+export const QTY_TOLERANCE_PCT = 5;
+
 export async function previewCosting(bomId: number, opts: { vaPct?: number | null; quoteDate?: string | null; discount?: DiscountInput | null }): Promise<CostingPreview> {
   const bom = await prisma.itemBom.findUnique({ where: { id: bomId }, include: { lines: { orderBy: { rowNo: 'asc' } }, groups: { orderBy: { seq: 'asc' } } } });
   if (!bom) throw new UserError('BOM not found.');
@@ -135,6 +138,10 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
     load: { basis: (bom.loadBasis === 'SPACE' ? 'SPACE' : 'WEIGHT') as LoadBasis, setsPerTruck: dec(bom.setsPerTruck) },
   };
   const qty = toNum(item.qty);
+  const uomU = String(item.uom ?? '').trim().toUpperCase().replace(/[.s]/g, '');
+  const qtyKgOf = qty === null ? null : /^(MT|TON|TONNE|TONNES|MTS)$/.test(uomU) ? qty * 1000 : /^(KG|KGS)$/.test(uomU) ? qty : null;
+  // C1 (Puja 28-11): BOM weight x sets must match the enquiry / PO quantity within 5%, else Apply is blocked.
+  let qtyMismatch: string | null = null;
   let setsBasis: CostingPreview['setsBasis'];
   let lines: CostLineInput[];
   if (mixed) {
@@ -145,8 +152,23 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
     });
   } else {
     const given = groups[0] ? dec(groups[0].sets) : null;
-    if (given !== null) {
+    if (given !== null && qtyKgOf) {
+      // A weight-quoted item: the set count comes from the quantity (so the item total = price x quantity);
+      // the BOM's own set count must agree with it within 5%.
+      const oneSet = computeCosting({ ...base, lines: bom.lines.map((l) => toLine(l, 1)), vaPct: opts.vaPct ?? null, planWastagePct: {} });
+      // Enquiry / PO quantities are theoretical black weights of every supplied piece.
+      const setWt = oneSet.structure.blackWtKg;
+      const bomKg = given * setWt;
+      const pct = qtyKgOf > 0 ? ((bomKg - qtyKgOf) / qtyKgOf) * 100 : 0;
+      if (Math.abs(pct) > QTY_TOLERANCE_PCT)
+        qtyMismatch = `BOM weight ${r3(bomKg / 1000)} MT (${given} set(s) x ${r3(setWt)} kg black) vs item quantity ${r3(qtyKgOf / 1000)} MT (${pct > 0 ? '+' : ''}${r2(pct)}%)`;
+      const d = setsFromItem(qty, item.uom, setWt);
+      setsBasis = qtyMismatch ? 'SETS' : d.basis;
+      lines = bom.lines.map((l) => toLine(l, qtyMismatch ? given : d.sets));
+    } else if (given !== null) {
       setsBasis = 'SETS';
+      if (qty !== null && qty > 0 && Math.abs(qty - given) > 1e-6 && /^(SET|SETS|NOS|NO|NUMBERS|PCS|EA)$/.test(uomU))
+        qtyMismatch = `BOM set count ${given} vs item quantity ${qty} ${item.uom}`;
       lines = bom.lines.map((l) => toLine(l, given));
     } else {
       // Weight of one set on the billing basis (billable lines only), to turn a KG/MT quantity into sets.
@@ -221,7 +243,13 @@ export async function previewCosting(bomId: number, opts: { vaPct?: number | nul
   const qtyKg = qty === null ? null : /^(MT|TON|TONNE|TONNES|MTS)$/.test(u) ? qty * 1000 : /^(KG|KGS)$/.test(u) ? qty : null;
   if (mixed && qtyKg) {
     const pct = r2(((netKg - qtyKg) / qtyKg) * 100);
+    if (Math.abs(pct) > QTY_TOLERANCE_PCT) qtyMismatch = `BOM weight ${r3(netKg / 1000)} MT (black, all supplied pieces) vs item quantity ${r3(qtyKg / 1000)} MT (${pct > 0 ? '+' : ''}${pct}%)`;
     result.checks.messages.push(`BOM net weight ${r3(netKg / 1000)} MT (billable ${r3(result.structure.billedWtKg / 1000)} MT) vs item quantity ${r3(qtyKg / 1000)} MT (${pct > 0 ? '+' : ''}${pct}%).`);
+  }
+  if (qtyMismatch) {
+    result.checks.ok = false;
+    (result.checks as { qtyMismatch?: string }).qtyMismatch = qtyMismatch;
+    result.checks.messages.unshift(`BLOCKED – quantity check: ${qtyMismatch}. Differs by more than ${QTY_TOLERANCE_PCT}%: correct the set count or the item quantity before applying.`);
   }
   if (setsBasis === 'UNKNOWN') result.checks.messages.push('Item quantity is blank: totals are for 0 sets.');
   if (bom.status !== 'CONFIRMED') result.checks.messages.push('BOM is still a draft: confirm it before applying the price.');
@@ -296,11 +324,17 @@ export async function saveCosting(
     // Per kg for weight items and mixed BOMs; per set only for a single structure quoted in sets.
     // An item quoted in KG is always priced per kg (27-11: CEE-000535, 2,550 KG, got Rs 29 lakh "per SET").
     const perKg = /^(KG|KGS)$/.test(u) || p.setsBasis === 'WEIGHT' || p.setsBasis === 'STRUCTURES' || !r.perSet;
+    // C1: for a weight-quoted item the per-kg price is the structure total / the quoted kg, so the
+    // docket value (price x quantity) is the same number as the item total.
+    const qKg = p.itemQty && p.itemQty > 0 ? (perMt ? p.itemQty * 1000 : /^(KG|KGS)$/.test(u) ? p.itemQty : null) : null;
+    const perKgPrice = qKg ? (r.structure.sell * f) / qKg : r.structure.sellPerKg * f;
     const billed = r.perSet && !perKg ? (r.groups[0]?.billedWtPerSet ?? 0) : r.perSet ? (r.groups[0]?.billedWtPerSet ?? 0) : r.structure.billedWtKg;
     return {
-      price: String(perMt ? r2(r.structure.sellPerKg * f * 1000) : perKg ? r2(r.structure.sellPerKg * f) : r2(r.perSet!.sell * f)),
+      price: String(perMt ? r2(perKgPrice * 1000) : perKg ? r2(perKgPrice) : r2(r.perSet!.sell * f)),
       uomOfQtn: perMt ? 'MT' : perKg ? 'KG' : 'SET',
       weightPerPiece: String(billed),
+      priceSource: 'COSTING',
+      priceApprovedBy: null as string | null,
     };
   })();
 

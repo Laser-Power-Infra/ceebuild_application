@@ -22,6 +22,8 @@ interface Docket {
 }
 
 interface Item {
+  /** C6: typed price, not from a BOM costing. */
+  manualPrice?: { approvedBy: string | null };
   /** String for the M14 separate N&B / bought-out lines. */
   id: number | string;
   itemNameParty: string | null;
@@ -517,6 +519,9 @@ export default function QuotationPage({ params }: { params: Promise<{ id: string
                           </td>
                           <td className="p-1.5 border border-blue-300 text-center font-extrabold text-blue-900 whitespace-nowrap">
                             {item.price || '-'}
+                            {item.manualPrice && (
+                              <div className="text-[9px] font-semibold text-rose-700 print:text-rose-700">manual – not system costed</div>
+                            )}
                           </td>
                           <td className="p-1.5 border border-blue-300 text-center font-bold text-slate-700 whitespace-nowrap">
                             {item.unitWtOfMemberKg || '-'}

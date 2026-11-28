@@ -7,6 +7,7 @@ import { toNum } from '@/lib/bom/parse';
 import { normalizeDocketNo } from '@/lib/dockets';
 import { offerHsn } from '@/lib/po/hsn';
 import { pickRate, RATE_KINDS, type RateRow } from '@/lib/costing/calc';
+import { manualPrices } from '@/lib/manualPrice';
 import { allRates } from './master';
 
 // Rev 2 §11: the quotation as quoted is frozen when it is sent or approved. A snapshot is never
@@ -98,6 +99,11 @@ export async function freezeQuotation(
   const status = (SNAPSHOT_STATUSES as readonly string[]).includes(String(input.status)) ? String(input.status) : 'SENT';
   const { docket, payload, total } = await buildPayload(docketId, quotedOn, input.prices);
   if (payload.items.length === 0) throw new UserError('The docket has no items to freeze.');
+  // C6: a typed (manual, not system-costed) price must be approved by an Admin before the offer is frozen.
+  const items = await prisma.itemTable.findMany({ where: { id: { in: payload.items.map((i) => i.itemId) } }, select: { id: true, price: true, priceSource: true, priceApprovedBy: true, itemNameParty: true } });
+  const manual = await manualPrices(items);
+  const pending = items.filter((i) => manual[i.id] && !manual[i.id].approvedBy && !(input.prices && input.prices[i.id]));
+  if (pending.length) throw new UserError(`Manual price(s) not approved by an Admin: ${pending.map((i) => `#${i.id} ${(i.itemNameParty ?? '').slice(0, 40)}`).join('; ')}. Approve them on the docket first.`);
   return prisma.$transaction(async (tx) => {
     const last = await tx.quotationSnapshot.findFirst({ where: { docketId }, orderBy: { rev: 'desc' }, select: { rev: true } });
     const rev = last ? last.rev + 1 : 0;
