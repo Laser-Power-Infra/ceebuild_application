@@ -750,6 +750,10 @@ export type AutoOrderResult = { intakeId: number; created: boolean; orderId?: nu
  * anything else stays on Orders -> "Received POs not yet orders" for a person to finish.
  */
 const OLD_PO_DAYS = 30;
+const DI_NUMBER = /(^|[^A-Z0-9])(DI|MC|MDCC)([^A-Z0-9]|$)/i;
+const DI_SUBJECT_RE = /dispatch\s+instruction|\bMDCC\b/i;
+const PO_SUBJECT_RE = /purchase\s+order|(^|[^A-Z0-9])P\.?O([^A-Z0-9]|$)/i;
+const DI_SUBJECT = { test: (s: string) => DI_SUBJECT_RE.test(s) && !PO_SUBJECT_RE.test(s) };
 /** PO date (as read) more than 30 days ago. */
 function isOldPo(poDate: string | null | undefined) {
   const iso = parseDate(poDate);
@@ -772,6 +776,9 @@ export async function autoCreateOrder(intakeId: number): Promise<AutoOrderResult
     return { intakeId, created: false, discarded: true, reason: ours };
   }
   if (review.duplicateOf) return { intakeId, created: false, reason: `PO ${review.duplicateOf.poNumber} is already order #${review.duplicateOf.orderId}.` };
+  // A dispatch instruction / MC mail carries the PO it belongs to, not a new PO (e.g. "PMPO/RDSS/PK-09/DI/310").
+  if (DI_NUMBER.test(String(f.poNumber.value ?? '')) || DI_SUBJECT.test(String(review.mailSubject ?? '')))
+    return { intakeId, created: false, discarded: true, reason: 'Dispatch instruction / clearance mail, not a new PO – add it on the order’s DI tab.' };
   // Old POs (read late, e.g. the backlog before automatic reading) may already be supplied: a person decides.
   if (isOldPo(f.poDate.value))
     return { intakeId, created: false, reason: `PO dated ${f.poDate.value} is older than ${OLD_PO_DAYS} days – check and confirm by hand.` };
